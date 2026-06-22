@@ -5,10 +5,89 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, corsHeaders, sbHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN } from './shared.js';
 
 // PWHL team ID → abbreviation map
 const PWHL_TEAM_CODES = { 1:'BOS', 2:'MIN', 3:'MTL', 4:'NY', 5:'OTT', 6:'TOR', 8:'SEA', 9:'VAN' };
+
+const PWHL_NEWS_SOURCES = [
+  {
+    // ESPN women's hockey RSS — works from Cloudflare IPs
+    id:     'espn-pwhl',
+    name:   'ESPN',
+    color:  '#FFFFFF',
+    bg:     '#cc0000',
+    url:    'https://www.espn.com/espn/rss/hockey/news',
+    type:   'espn',
+    filter: ['pwhl', "women's hockey", 'women', 'walter cup', 'frost', 'fleet', 'sceptres', 'victoire', 'sirens', 'charge', 'torrent', 'goldeneyes'],
+  },
+  {
+    // The Score hockey — works from Cloudflare IPs, filtered for PWHL
+    id:     'thescore-pwhl',
+    name:   'The Score',
+    color:  '#FFFFFF',
+    bg:     '#e8000d',
+    url:    'https://origin-feeds.thescore.com/hockey.rss',
+    type:   'rss',
+    filter: ['pwhl', 'walter cup', 'women'],
+  },
+  {
+    // The Athletic hockey via NYT — works from Cloudflare IPs
+    id:     'athletic-pwhl',
+    name:   'The Athletic',
+    color:  '#FFFFFF',
+    bg:     '#222222',
+    url:    'https://theathletic.com/rss/feed/?sport_name=nhl',
+    type:   'rss',
+    filter: ['pwhl', "women's hockey", 'walter cup', 'women'],
+  },
+  {
+    // Sportsnet — Canadian outlet with strong PWHL coverage
+    id:     'sportsnet-pwhl',
+    name:   'Sportsnet',
+    color:  '#000000',
+    bg:     '#d4a017',
+    url:    'https://www.sportsnet.ca/feed/',
+    type:   'rss',
+    filter: ['pwhl', 'walter cup', 'women'],
+  },
+];
+
+async function fetchPWHLNews(env) {
+  const allItems = [];
+  for (const source of PWHL_NEWS_SOURCES) {
+    // atom types require GH Actions (CF IPs blocked) — skip for now
+    if (source.type === 'atom') continue;
+    try {
+      console.log(`PWHL news: fetching ${source.id} from ${source.url}`);
+      const res = await fetch(source.url, {
+        headers: { 'User-Agent': 'EyeWall-Analytics/1.0', 'Accept': 'application/rss+xml,text/xml,*/*' },
+        cf: { cacheTtl: 0 },
+      });
+      console.log(`PWHL news: ${source.id} status=${res.status}`);
+      if (!res.ok) { console.warn(`PWHL news: ${source.id} failed ${res.status}`); continue; }
+      const xml = await res.text();
+      let parsed = source.type === 'espn' ? parseESPN(xml, source) : parseRSS(xml, source);
+      if (source.filter?.length) {
+        parsed = parsed.filter(item => {
+          const text = (item.title + ' ' + (item.excerpt || '')).toLowerCase();
+          return source.filter.some(kw => text.includes(kw));
+        });
+      }
+      allItems.push(...parsed);
+      console.log(`PWHL news: ${source.id} → ${parsed.length} items`);
+    } catch (err) {
+      console.warn(`PWHL news: ${source.id} error: ${err.message}`);
+    }
+  }
+  const seenIds = new Set();
+  const deduped = allItems
+    .filter(item => { if (seenIds.has(item.id)) return false; seenIds.add(item.id); return true; })
+    .sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
+  if (deduped.length > 0) await kvPut(env, 'pwhl:news', deduped, 1800);
+  return deduped;
+}
+
 
 export async function handlePWHL(request, env, ctx, url) {
   // ── PWHL endpoints ─────────────────────────────────────────────────────────
@@ -30,7 +109,7 @@ export async function handlePWHL(request, env, ctx, url) {
     // Compute L10 and streak per team from recent game log
     const teamStats = {};
     for (const g of games) {
-      for (const [tid, oppId, myScore, oppScore] of [
+      for (const [tid,, myScore, oppScore] of [
         [g.home_team_id, g.away_team_id, g.home_score, g.away_score],
         [g.away_team_id, g.home_team_id, g.away_score, g.home_score],
       ]) {
@@ -315,8 +394,8 @@ export async function handlePWHL(request, env, ctx, url) {
       }));
 
       // gameSummary: faceoff wins per skater + goalie stats
-      let faceoffStats = {};   // { player_id: { name, wins, attempts } }
-      let goalieStats  = [];   // [{ team_id, name, gp, saves, shots_against, toi }]
+      const faceoffStats = {};   // { player_id: { name, wins, attempts } }
+      const goalieStats  = [];   // [{ team_id, name, gp, saves, shots_against, toi }]
 
       if (summaryRes.ok) {
         try {
@@ -358,7 +437,7 @@ export async function handlePWHL(request, env, ctx, url) {
           };
           processGoalies(summary.homeTeam    || summary.home,      gameRow.home_team_id);
           processGoalies(summary.visitingTeam || summary.visiting,  gameRow.away_team_id);
-        } catch (_) { /* gameSummary parse failure — carry on */ }
+        } catch { /* gameSummary parse failure — carry on */ }
       }
 
       const payload = {
@@ -425,7 +504,6 @@ export async function handlePWHL(request, env, ctx, url) {
     }
     // Merge with any existing articles, deduplicate, sort newest first
     const existing = (await kvGet(env, 'pwhl:news')) || [];
-    const existingIds = new Set(existing.map(a => a.id));
     const merged = [
       ...articles,
       ...existing.filter(a => !articles.find(n => n.id === a.id)),
@@ -468,7 +546,6 @@ export async function handlePWHL(request, env, ctx, url) {
     const [skaters, goalies] = await Promise.all([skatersRes.json(), goaliesRes.json()]);
 
     // Fetch all player names
-    const pidsAll = [...new Set([...skaters.map(p=>p.player_id), ...goalies.map(g=>g.player_id)])];
     const nameRes = await fetch(
       `${SB_URL}/rest/v1/pwhl_players?select=player_id,first_name,last_name,position,team_id&limit=500`,
       { headers: sbH }
@@ -533,7 +610,6 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
     );
     if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
     const rows = await r.json();
-    const typeMap = { 'goal': 'g', 'shot_on_goal': 'g', 'missed_shot': 'm', 'blocked_shot': 'b' };
     // Normalise coordinates: fold to positive x (attacking direction)
     const shots = rows.map(r => {
       let x = parseFloat(r.x_norm), y = parseFloat(r.y_norm);
@@ -635,13 +711,6 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
     ]);
 
     if (!pbpRes.ok) return new Response(JSON.stringify({ error: `HockeyTech PBP ${pbpRes.status}` }), { status: 502, headers: corsHeaders() });
-
-    // JSONP unwrap — response is wrapped in parens: ([...])
-    const unwrapJsonp = (text) => {
-      text = text.trim();
-      if (text.startsWith('(')) text = text.slice(1, text.lastIndexOf(')'));
-      return JSON.parse(text);
-    };
 
     let rawEvents = [];
     try {
@@ -787,7 +856,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
     }
 
     // Parse gameSummary for goalie stats + faceoff pcts (best-effort, non-fatal)
-    let goalieStats = [], faceoffStats = {};
+    const goalieStats = [], faceoffStats = {};
     if (summaryRes.ok) {
       try {
         const summaryData = unwrapJsonp(await summaryRes.text());
@@ -817,7 +886,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
             faceoffStats[pid] = { wins, attempts: att, losses: att - wins };
           }
         }
-      } catch (_) { /* gameSummary parse failure — non-fatal */ }
+      } catch { /* gameSummary parse failure — non-fatal */ }
     }
 
     const ttl     = gameStatus === 'final' ? 3600 : 30;
