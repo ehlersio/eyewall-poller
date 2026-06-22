@@ -1,0 +1,26 @@
+name = "eyewall-poller"
+main = "src/worker.js"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+account_id = "178d2c4244e085446f83db4137cf8ff7"
+
+# Scheduled trigger — polls NHL API every 60s during the season.
+# Disabled in offseason by commenting out or setting a low-frequency cron.
+[triggers]
+crons = ["* * * * *"]
+
+# KV namespace binding
+[[kv_namespaces]]
+binding = "CACHE"
+id      = "08c4ef455c584c83a811a96aa3c620ed"
+
+# Secrets (set via `wrangler secret put <NAME>` — never commit values here):
+#   POLL_SECRET
+#   VAPID_PUBLIC_KEY
+#   VAPID_PRIVATE_KEY
+#   VAPID_SUBJECT
+#   NHL_SEASON        — e.g. "20252026" (flip each October)
+#
+# View current secrets: wrangler secret list
+# Set a secret:        wrangler secret put POLL_SECRET
