@@ -654,7 +654,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
 
     const r = await fetch(
       `${SB_URL}/rest/v1/pwhl_game_log?game_date=eq.${todayStr}&season_id=eq.${season}` +
-      `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_date,start_time&limit=10`,
+      `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_date&limit=10`,
       { headers: sbH }
     );
     if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
@@ -678,7 +678,6 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
         awayTeamCode: PWHL_TEAM_CODES[g.away_team_id] || String(g.away_team_id),
         homeScore:    g.home_score,
         awayScore:    g.away_score,
-        startTime:    g.start_time || null,
         status,
       };
     });
