@@ -138,7 +138,7 @@ export function parseRSS(xml, source) {
 
 // Parse ESPN RSS — uses <guid> as the canonical URL
 // Parse Reddit JSON API response
-function parseReddit(data, source) {
+export function parseReddit(data, source) {
   const posts = data?.data?.children || [];
   return posts
     .filter(p => {
@@ -181,7 +181,7 @@ function parseReddit(data, source) {
 }
 
 // Parse Sportsnet RSS — uses <headline> for title and CDATA <link>
-function parseSportsnet(xml, source) {
+export function parseSportsnet(xml, source) {
   const items = [];
   const chunks = xml.split('<item');
   for (const chunk of chunks.slice(1, 50)) {
@@ -218,7 +218,7 @@ function parseSportsnet(xml, source) {
 }
 
 // Parse Google News RSS
-function parseGoogleNews(xml, source) {
+export function parseGoogleNews(xml, source) {
   const items = [];
   const chunks = xml.split('<item');
   for (const chunk of chunks.slice(1, 15)) {
@@ -325,7 +325,7 @@ export function parseAtom(xml, source) {
 }
 
 
-function parseNHLNews(data) {
+export function parseNHLNews(data) {
   // NHL club-news returns { items: [...] } or { items: [] } off-season
   const items = data?.items || data?.content || [];
   if (!items.length) {
