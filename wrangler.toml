@@ -19,6 +19,10 @@ enabled = true
 binding = "CACHE"
 id      = "08c4ef455c584c83a811a96aa3c620ed"
 
+# AI binding
+[ai]
+binding = "AI"
+
 # Secrets (set via `wrangler secret put <NAME>` — never commit values here):
 #   POLL_SECRET
 #   VAPID_PUBLIC_KEY

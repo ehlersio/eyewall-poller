@@ -1338,7 +1338,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
     }
 
     const {
-      carAbbr, oppAbbr, periodLabel,
+      carAbbr, oppAbbr, carName, oppName, periodLabel,
       corsiForPct, carSOG, oppSOG, carGoals, oppGoals,
       carHits, carFOPct, carHDCF, oppHDCF,
       penaltyCount, carPenaltyCount,
@@ -1347,32 +1347,36 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       goals = [],
     } = body;
 
+    // Use full team names in prose so the model writes "the Fleet" not "BOS"
+    const carDisplay = carName || carAbbr;
+    const oppDisplay = oppName || oppAbbr;
+
     const isGame = periodKey === 'game';
 
     const goalLines = goals.map(g => {
-      const who = g.scorerName || (g.isCar ? carAbbr : oppAbbr);
+      const who = g.scorerName || (g.isCar ? carDisplay : oppDisplay);
       const str = g.strength && g.strength !== 'ev' ? ` (${g.strength.toUpperCase()})` : '';
       const per = isGame && g.period ? ` P${g.period}` : '';
-      return `${g.isCar ? carAbbr : oppAbbr}: ${who} at ${g.time}${per}${str}`;
+      return `${g.isCar ? carDisplay : oppDisplay}: ${who} at ${g.time}${per}${str}`;
     }).join('\n');
 
     const prompt = isGame
-      ? `You are Sticks, EyeWall Analytics' PWHL game analyst. Write a punchy 2-3 sentence final game summary.
-Game: ${carAbbr} vs ${oppAbbr}
-Score: ${carAbbr} ${carGoals}–${oppGoals} ${oppAbbr}
+      ? `You are Sticks, EyeWall Analytics' PWHL game analyst. Write a punchy 2-3 sentence final game summary. Use the full team names (e.g. "${carDisplay}", "${oppDisplay}") when referring to teams — never use abbreviations in the narrative.
+Game: ${carDisplay} (${carAbbr}) vs ${oppDisplay} (${oppAbbr})
+Score: ${carDisplay} ${carGoals}–${oppGoals} ${oppDisplay}
 Corsi For%: ${corsiForPct}% · SOG: ${carSOG}–${oppSOG} · HD Chances: ${carHDCF}–${oppHDCF}
-Faceoff Win%: ${carFOPct != null ? carFOPct + '%' : '—'} · Hits: ${carHits} · Penalties: ${carAbbr} ${carPenaltyCount}–${penaltyCount - carPenaltyCount} ${oppAbbr}
+Faceoff Win%: ${carFOPct != null ? carFOPct + '%' : '—'} · Hits: ${carHits} · Penalties: ${carDisplay} ${carPenaltyCount}–${penaltyCount - carPenaltyCount} ${oppDisplay}
 Goals:\n${goalLines || 'None'}
 ${primaryGoalieName ? `Goalie: ${primaryGoalieName}` : ''}
 Best period: ${bestPeriod?.period ? 'P' + bestPeriod.period + ' (' + bestPeriod.corsiForPct + '% CF)' : '—'}
 Worst period: ${worstPeriod?.period ? 'P' + worstPeriod.period + ' (' + worstPeriod.corsiForPct + '% CF)' : '—'}
 
 Write in plain text, no markdown, no bullet points. Be specific about what happened.`
-      : `You are Sticks, EyeWall Analytics' PWHL analyst. Write a punchy 1-2 sentence period summary.
-Period: ${periodLabel} — ${carAbbr} vs ${oppAbbr}
+      : `You are Sticks, EyeWall Analytics' PWHL analyst. Write a punchy 1-2 sentence period summary. Use the full team names (e.g. "${carDisplay}", "${oppDisplay}") — never abbreviations in the narrative.
+Period: ${periodLabel} — ${carDisplay} (${carAbbr}) vs ${oppDisplay} (${oppAbbr})
 Corsi For%: ${corsiForPct}% · SOG: ${carSOG}–${oppSOG} · HD Chances: ${carHDCF}–${oppHDCF}
 Goals: ${carGoals}–${oppGoals} · Hits: ${carHits} · Faceoffs: ${carFOPct != null ? carFOPct + '%' : '—'}
-Penalties this period: ${penaltyCount} (${carAbbr} took ${carPenaltyCount})
+Penalties this period: ${penaltyCount} (${carDisplay} took ${carPenaltyCount})
 ${goalLines ? 'Goals:\n' + goalLines : 'No goals this period.'}
 
 Write in plain text, no markdown. 1-2 sentences max.`;
