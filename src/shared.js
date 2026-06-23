@@ -344,3 +344,177 @@ export function parseNHLNews(data) {
     imageUrl:    item.thumbnail?.thumbnailUrl || item.images?.[0]?.url || null,
   })).filter(a => a.title);
 }
+
+// ── VAPID / Web Push ─────────────────────────────────────────
+
+// ── VAPID / Web Push ──────────────────────────────────────────
+
+export function base64urlToUint8Array(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const b   = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...b].map(c => c.charCodeAt(0)));
+}
+
+export function uint8ArrayToBase64url(arr) {
+  return btoa(String.fromCharCode(...arr))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+export async function buildVAPIDAuthHeader(endpoint, env) {
+  const audience = new URL(endpoint).origin;
+  const now      = Math.floor(Date.now() / 1000);
+
+  // Build JWT header + payload
+  const header  = { typ: 'JWT', alg: 'ES256' };
+  const payload = {
+    aud: audience,
+    exp: now + 12 * 3600,
+    sub: env.VAPID_SUBJECT || 'mailto:admin@eyewallanalytics.com',
+  };
+
+  const enc    = s => uint8ArrayToBase64url(new TextEncoder().encode(JSON.stringify(s)));
+  const toSign = `${enc(header)}.${enc(payload)}`;
+
+  // Import private key via JWK.
+  // VAPID_PRIVATE_KEY = base64url raw scalar (d).
+  // VAPID_PUBLIC_KEY  = base64url uncompressed EC point (0x04 || x || y, 65 bytes).
+  const pubBytes = base64urlToUint8Array(env.VAPID_PUBLIC_KEY);
+  // pubBytes[0] = 0x04 (uncompressed), then 32 bytes x, 32 bytes y
+  const x = uint8ArrayToBase64url(pubBytes.slice(1, 33));
+  const y = uint8ArrayToBase64url(pubBytes.slice(33, 65));
+
+  const privKey = await crypto.subtle.importKey(
+    'jwk',
+    { kty: 'EC', crv: 'P-256', d: env.VAPID_PRIVATE_KEY, x, y, ext: true },
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false, ['sign']
+  );
+
+  const sig = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    privKey,
+    new TextEncoder().encode(toSign)
+  );
+
+  const jwt = `${toSign}.${uint8ArrayToBase64url(new Uint8Array(sig))}`;
+  return `vapid t=${jwt}, k=${env.VAPID_PUBLIC_KEY}`;
+}
+
+// ── RFC 8291 Web Push encryption ─────────────────────────────
+// Encrypts notification payload per RFC 8291 (aes128gcm) so the
+// service worker can read e.data.json() directly — no KV fetch needed.
+
+export async function encryptPushPayload(sub, payloadObj) {
+  const plaintext = new TextEncoder().encode(JSON.stringify(payloadObj));
+
+  // Decode subscription keys
+  const p256dh = base64urlToUint8Array(sub.keys.p256dh);
+  const auth   = base64urlToUint8Array(sub.keys.auth);
+
+  // Generate ephemeral ECDH key pair
+  const ephemeral = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey', 'deriveBits']
+  );
+
+  // Import receiver's public key (p256dh)
+  const receiverKey = await crypto.subtle.importKey(
+    'raw', p256dh, { name: 'ECDH', namedCurve: 'P-256' }, false, []
+  );
+
+  // Derive shared ECDH secret
+  const sharedBits = await crypto.subtle.deriveBits(
+    { name: 'ECDH', public: receiverKey }, ephemeral.privateKey, 256
+  );
+
+  // Export ephemeral public key (uncompressed, 65 bytes)
+  const ephPub = new Uint8Array(await crypto.subtle.exportKey('raw', ephemeral.publicKey));
+
+  // Salt: 16 random bytes
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+
+  // HKDF-SHA-256 for PRK using auth secret
+  // PRK = HKDF-Extract(auth, IKM=sharedSecret)
+  const ikmKey = await crypto.subtle.importKey('raw', sharedBits, 'HKDF', false, ['deriveKey', 'deriveBits']);
+
+  // auth_info = "WebPush: info " || receiverKey || senderKey
+  const authInfo = new Uint8Array([
+    ...new TextEncoder().encode('WebPush: info '),
+    ...p256dh, ...ephPub
+  ]);
+
+  // PRK_key = HKDF(salt=auth, IKM=sharedBits, info=authInfo, length=32)
+  const prkBits = await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: auth, info: authInfo }, ikmKey, 256
+  );
+
+  const prkKey = await crypto.subtle.importKey('raw', prkBits, 'HKDF', false, ['deriveBits']);
+
+  // CEK = HKDF(salt=salt, IKM=PRK, info="Content-Encoding: aes128gcm ", length=16)
+  const cekInfo = new TextEncoder().encode('Content-Encoding: aes128gcm ');
+  const cekBits = await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt, info: cekInfo }, prkKey, 128
+  );
+
+  // Nonce = HKDF(salt=salt, IKM=PRK, info="Content-Encoding: nonce ", length=12)
+  const nonceInfo = new TextEncoder().encode('Content-Encoding: nonce ');
+  const nonceBits = await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt, info: nonceInfo }, prkKey, 96
+  );
+
+  // Encrypt with AES-128-GCM
+  const cekAes = await crypto.subtle.importKey('raw', cekBits, 'AES-GCM', false, ['encrypt']);
+
+  // Padding: plaintext || 0x02 (delimiter)
+  const padded = new Uint8Array([...plaintext, 0x02]);
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonceBits }, cekAes, padded
+  ));
+
+  // aes128gcm content header: salt(16) || rs(4) || idlen(1) || keyid(ephPub, 65)
+  const rs = new Uint8Array(4);
+  new DataView(rs.buffer).setUint32(0, 4096, false); // record size big-endian
+  const header = new Uint8Array([...salt, ...rs, ephPub.length, ...ephPub]);
+
+  // Final body = header || ciphertext
+  const body = new Uint8Array([...header, ...ciphertext]);
+  return body;
+}
+
+// Send a Web Push notification with encrypted payload (RFC 8291).
+// Service worker reads e.data.json() — no KV fetch needed.
+export async function sendPush(sub, payload, env) {
+  try {
+    const auth = await buildVAPIDAuthHeader(sub.endpoint, env);
+
+    let body, headers;
+    if (sub.keys?.p256dh && sub.keys?.auth) {
+      // Send encrypted payload
+      const encrypted = await encryptPushPayload(sub, payload);
+      body    = encrypted;
+      headers = {
+        'Authorization':   auth,
+        'Content-Type':    'application/octet-stream',
+        'Content-Encoding':'aes128gcm',
+        'TTL':             '60',
+      };
+    } else {
+      // No keys — send payloadless push (SW will show generic notification)
+      body    = null;
+      headers = { 'Authorization': auth, 'TTL': '60', 'Content-Length': '0' };
+    }
+
+    const res = await fetch(sub.endpoint, { method: 'POST', headers, body });
+
+    const status = res.status;
+    const resBody = await res.text().catch(() => '');
+    console.log(`sendPush: status=${status} to ${sub.endpoint.slice(0,50)}...`);
+    if (status === 200 || status === 201) console.log(`sendPush: body=${resBody.slice(0,100)}`);
+
+    if (status === 410 || status === 404) return 'expired';
+    if (!res.ok) { console.warn(`sendPush failed ${status}: ${resBody.slice(0,100)}`); return 'error'; }
+    return 'ok';
+  } catch (err) {
+    console.error('sendPush error:', err.message);
+    return 'error';
+  }
+}

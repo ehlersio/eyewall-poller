@@ -15,7 +15,7 @@
  */
 
 import { handleNHL, poll, refreshPPUnits } from './nhl.js';
-import { handlePWHL }                       from './pwhl.js';
+import { handlePWHL, pollPWHL }             from './pwhl.js';
 import { corsHeaders }                      from './shared.js';
 
 async function handleRequest(request, env, ctx) {
@@ -39,6 +39,7 @@ export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(Promise.all([
       poll(env, ctx),
+      pollPWHL(env).catch(e => console.error('PWHL poll error:', e.message)),
       refreshPPUnits(env)
         .then(map => console.log(`PP units scheduled: ${Object.keys(map).length} teams`))
         .catch(e => console.error('PP units scheduled error:', e.message)),

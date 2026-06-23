@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush } from './shared.js';
 
 // PWHL team ID → abbreviation map
 const PWHL_TEAM_CODES = { 1:'BOS', 2:'MIN', 3:'MTL', 4:'NY', 5:'OTT', 6:'TOR', 8:'SEA', 9:'VAN' };
@@ -88,6 +88,322 @@ async function fetchPWHLNews(env) {
   return deduped;
 }
 
+
+
+// ── PWHL Push Notification Poll ──────────────────────────────
+// Called from the Worker scheduled trigger alongside NHL poll().
+// Checks for live PWHL games, fetches PBP, detects events,
+// and sends push notifications to subscribers.
+//
+// PWHL season IDs: 1=2023-24, 5=2024-25, 8=2025-26 (regular), 9=playoffs
+// Flip PWHL_SEASON each October when HockeyTech assigns new IDs.
+
+const PWHL_SEASON = 8;
+
+// Periods when PWHL season is active (roughly Nov–Jun)
+function pwhlSeasonActive() {
+  const now   = new Date();
+  const month = now.getUTCMonth() + 1; // 1-12
+  return month >= 11 || month <= 6;
+}
+
+export async function pollPWHL(env) {
+  if (!pwhlSeasonActive()) { console.log('[PWHL poll] Off-season — skipping'); return; }
+  if (!env.VAPID_PRIVATE_KEY) return;
+
+  try {
+    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+
+    // Get today's date in Eastern time
+    const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const todayStr = nowET.toISOString().slice(0, 10);
+
+    // Find today's games
+    const schedRes = await fetch(
+      `${SB_URL}/rest/v1/pwhl_game_log?game_date=eq.${todayStr}&season_id=eq.${PWHL_SEASON}` +
+      `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state&limit=10`,
+      { headers: sbH }
+    );
+    if (!schedRes.ok) return;
+    const games = await schedRes.json();
+    if (!games?.length) return;
+
+    // Only process in-progress games
+    const liveGames = games.filter(g => {
+      const gs = (g.game_state || '').toLowerCase();
+      return gs.includes('progress') || gs.includes('live') || gs.includes('intermission');
+    });
+    if (!liveGames.length) return;
+
+    for (const game of liveGames) {
+      await pollPWHLGame(env, game).catch(e =>
+        console.error(`[PWHL poll] game ${game.game_id}: ${e.message}`)
+      );
+    }
+  } catch (e) {
+    console.error('[PWHL poll] error:', e.message);
+  }
+}
+
+async function pollPWHLGame(env, game) {
+  const gameId    = game.game_id;
+  const homeId    = game.home_team_id;
+  const awayId    = game.away_team_id;
+  const homeAbbr  = PWHL_TEAM_CODES[homeId] || String(homeId);
+  const awayAbbr  = PWHL_TEAM_CODES[awayId]  || String(awayId);
+
+  // Fetch live PBP from HockeyTech
+  const pbpRes = await fetch(
+    `${HT_BASE}?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=${gameId}` +
+    `&key=${HT_KEY}&client_code=pwhl&lang=en&league_id=`,
+    { headers: HT_HDR }
+  );
+  if (!pbpRes.ok) return;
+
+  let events;
+  try {
+    const text = (await pbpRes.text()).trim();
+    const json  = text.startsWith('(') ? text.slice(1, text.lastIndexOf(')')) : text;
+    events = JSON.parse(json);
+  } catch { return; }
+  if (!Array.isArray(events) || !events.length) return;
+
+  // Load previous state (scores + last processed event index)
+  const stateKey = `pwhl:push:state:${gameId}`;
+  const lastState = (await kvGet(env, stateKey)) || {
+    homeScore: 0, awayScore: 0, eventCount: 0, started: false, period: 0,
+    scorerGoalCounts: {}, // { playerId: count } for hat trick tracking
+  };
+
+  const newEvents = events.slice(lastState.eventCount);
+  const period    = events[events.length - 1]?.details?.period?.id;
+  const periodNum = typeof period === 'string' && period.startsWith('OT')
+    ? 4 : (parseInt(period, 10) || 1);
+  const periodLabel = n => n <= 3 ? `P${n}` : n === 4 ? 'OT' : `OT${n - 3}`;
+
+  const scorerGoalCounts = { ...lastState.scorerGoalCounts };
+
+  // broadcast helper — prefixes PWHL: to avoid collisions with NHL abbrevs
+  const notify = (homeOrAway, payload, eventType) => {
+    const abbr    = homeOrAway === 'home' ? homeAbbr : awayAbbr;
+    const teamKey = `PWHL:${abbr}`;
+    return broadcastPWHL(env, payload, teamKey, eventType);
+  };
+
+  // ── Game start ───────────────────────────────────────────
+  if (!lastState.started && newEvents.length > 0) {
+    const sessionKey = `pwhl:push:start:${gameId}`;
+    if (!(await kvGet(env, sessionKey))) {
+      await kvPut(env, sessionKey, true, 24 * 3600);
+      // Notify both home and away subscribers
+      for (const abbr of [homeAbbr, awayAbbr]) {
+        await broadcastPWHL(env, {
+          title: `🏒 PWHL Game Starting!`,
+          body:  `${homeAbbr} vs ${awayAbbr} — puck drop!`,
+          tag:   `pwhl-start-${gameId}`,
+          url:   '/pwhl/shots',
+        }, `PWHL:${abbr}`, 'gameStart');
+      }
+    }
+  }
+
+  // ── Period start (P2+) ───────────────────────────────────
+  if (periodNum > 1 && periodNum !== lastState.period) {
+    const sessionKey = `pwhl:push:period:${gameId}:${periodNum}`;
+    if (!(await kvGet(env, sessionKey))) {
+      await kvPut(env, sessionKey, true, 24 * 3600);
+      const curHome = game.home_score ?? lastState.homeScore;
+      const curAway = game.away_score ?? lastState.awayScore;
+      for (const [abbr, myScore, oppScore, oppAbbr] of [
+        [homeAbbr, curHome, curAway, awayAbbr],
+        [awayAbbr, curAway, curHome, homeAbbr],
+      ]) {
+        await broadcastPWHL(env, {
+          title: `🔔 ${periodLabel(periodNum)} Starting`,
+          body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
+          tag:   `pwhl-period-${gameId}-${periodNum}-${abbr}`,
+          url:   '/pwhl/shots',
+        }, `PWHL:${abbr}`, 'periodStart');
+      }
+    }
+  }
+
+  // ── Process new events ───────────────────────────────────
+  for (const ev of newEvents) {
+    const type = ev.event;
+    const d    = ev.details || {};
+    const time = d.time || null;
+
+    if (type === 'goal') {
+      const teamId   = parseInt(d.team?.id, 10) || null;
+      const isHome   = teamId === homeId;
+      const abbr     = isHome ? homeAbbr : awayAbbr;
+      const oppAbbr  = isHome ? awayAbbr : homeAbbr;
+      const scorer   = d.scoredBy ? `${d.scoredBy.firstName} ${d.scoredBy.lastName}`.trim() : abbr;
+      const scorerId = String(d.scoredBy?.id || '');
+      const assists  = (d.assists || []).map(a => `${a.firstName} ${a.lastName}`.trim());
+      const isPP     = d.properties?.isPowerPlay === '1';
+      const isSH     = d.properties?.isShortHanded === '1';
+      const isEN     = d.properties?.isEmptyNet === '1';
+
+      // Dedupe by goal ID
+      const goalKey = `pwhl:push:goal:${d.game_goal_id || `${gameId}-${teamId}-${time}`}`;
+      if (await kvGet(env, goalKey)) continue;
+      await kvPut(env, goalKey, true, 24 * 3600);
+
+      // Track for hat trick
+      if (scorerId) scorerGoalCounts[scorerId] = (scorerGoalCounts[scorerId] || 0) + 1;
+
+      const modifier = isPP ? ' (PP)' : isSH ? ' (SH)' : isEN ? ' (EN)' : '';
+      const curHome  = isHome ? (lastState.homeScore + 1) : lastState.homeScore;
+      const curAway  = isHome ? lastState.awayScore : (lastState.awayScore + 1);
+
+      // Notify scoring team subscribers
+      await broadcastPWHL(env, {
+        title: `🚨 GOAL! ${abbr} ${isHome ? curHome : curAway}–${isHome ? curAway : curHome} ${oppAbbr}`,
+        body:  `${scorer} scores!${modifier}${assists.length ? ` Assists: ${assists.slice(0,2).join(', ')}` : ''}`,
+        tag:   `pwhl-goal-${goalKey}`,
+        url:   '/pwhl/shots',
+      }, `PWHL:${abbr}`, 'goal');
+
+      // Notify opp subscribers (they gave up the goal)
+      await broadcastPWHL(env, {
+        title: `${abbr} scores. ${oppAbbr} ${isHome ? curAway : curHome}–${isHome ? curHome : curAway} ${abbr}`,
+        body:  `${scorer} scores for ${abbr}${modifier}`,
+        tag:   `pwhl-opp-goal-${goalKey}`,
+        url:   '/pwhl/shots',
+      }, `PWHL:${oppAbbr}`, 'oppGoal');
+
+      // Hat trick
+      if (scorerId && scorerGoalCounts[scorerId] === 3) {
+        await broadcastPWHL(env, {
+          title: `🎩 HAT TRICK! ${scorer}`,
+          body:  `${scorer} scores her 3rd goal of the game for ${abbr}!`,
+          tag:   `pwhl-hattrick-${gameId}-${scorerId}`,
+          url:   '/pwhl/shots',
+        }, `PWHL:${abbr}`, 'hatTrick');
+      }
+    }
+
+    if (type === 'penalty' && d.isPowerPlay) {
+      const penId   = `pwhl:push:pen:${d.game_penalty_id || `${gameId}-${time}`}`;
+      if (await kvGet(env, penId)) continue;
+      await kvPut(env, penId, true, 24 * 3600);
+
+      // againstTeam = team taking the penalty → other team gets PP
+      const penTeamId = parseInt(d.againstTeam?.id, 10) || null;
+      const ppTeamId  = penTeamId === homeId ? awayId : homeId;
+      const ppAbbr    = PWHL_TEAM_CODES[ppTeamId]  || String(ppTeamId);
+      const penAbbr   = PWHL_TEAM_CODES[penTeamId] || String(penTeamId);
+      const mins      = parseFloat(d.minutes || '2') || 2;
+      const desc      = (d.description || 'Penalty')
+        .replace(/^(?:Ob|Maj|Min|Mis|Gm)-/i, '').replace(/-/g, ' ').trim();
+
+      await broadcastPWHL(env, {
+        title: `⚡ ${ppAbbr} Power Play!`,
+        body:  `${penAbbr} — ${mins} min ${desc}`,
+        tag:   `pwhl-pp-${penId}`,
+        url:   '/pwhl/shots',
+      }, `PWHL:${ppAbbr}`, 'penalty');
+    }
+
+    if (type === 'goalie_change' && d.goalieComingIn === null) {
+      // Goalie pulled — notify the team that now has the EN opportunity
+      const pulledTeamId  = parseInt(d.team_id, 10) || null;
+      const benefitTeamId = pulledTeamId === homeId ? awayId : homeId;
+      const benefitAbbr   = PWHL_TEAM_CODES[benefitTeamId] || String(benefitTeamId);
+      const pulledAbbr    = PWHL_TEAM_CODES[pulledTeamId]  || String(pulledTeamId);
+      const pullKey = `pwhl:push:pull:${gameId}-${time}`;
+      if (!(await kvGet(env, pullKey))) {
+        await kvPut(env, pullKey, true, 24 * 3600);
+        await broadcastPWHL(env, {
+          title: `🥅 ${pulledAbbr} pulled their goalie!`,
+          body:  `6-on-5 — empty net opportunity for ${benefitAbbr}!`,
+          tag:   `pwhl-pull-${pullKey}`,
+          url:   '/pwhl/shots',
+        }, `PWHL:${benefitAbbr}`, 'goaliePulled');
+      }
+    }
+  }
+
+  // ── Game over ────────────────────────────────────────────
+  const gs = (game.game_state || '').toLowerCase();
+  if (gs === 'final' || gs === 'official') {
+    const finalKey = `pwhl:push:final:${gameId}`;
+    if (!(await kvGet(env, finalKey))) {
+      await kvPut(env, finalKey, true, 48 * 3600);
+      const hs = game.home_score ?? 0;
+      const as = game.away_score ?? 0;
+
+      // Home team
+      await broadcastPWHL(env, hs > as ? {
+        title: `🏆 ${homeAbbr} Win! ${homeAbbr} ${hs}–${as} ${awayAbbr}`,
+        body:  'Final score — great win!',
+        tag:   `pwhl-win-${gameId}-home`,
+        url:   '/pwhl/shots',
+      } : {
+        title: `Final: ${homeAbbr} ${hs}–${as} ${awayAbbr}`,
+        body:  'Final score.',
+        tag:   `pwhl-final-${gameId}-home`,
+        url:   '/pwhl/shots',
+      }, `PWHL:${homeAbbr}`, hs > as ? 'win' : 'loss');
+
+      // Away team
+      await broadcastPWHL(env, as > hs ? {
+        title: `🏆 ${awayAbbr} Win! ${awayAbbr} ${as}–${hs} ${homeAbbr}`,
+        body:  'Final score — great win!',
+        tag:   `pwhl-win-${gameId}-away`,
+        url:   '/pwhl/shots',
+      } : {
+        title: `Final: ${awayAbbr} ${as}–${hs} ${homeAbbr}`,
+        body:  'Final score.',
+        tag:   `pwhl-final-${gameId}-away`,
+        url:   '/pwhl/shots',
+      }, `PWHL:${awayAbbr}`, as > hs ? 'win' : 'loss');
+    }
+  }
+
+  // Save state
+  await kvPut(env, stateKey, {
+    homeScore:        game.home_score ?? lastState.homeScore,
+    awayScore:        game.away_score ?? lastState.awayScore,
+    eventCount:       events.length,
+    started:          true,
+    period:           periodNum,
+    scorerGoalCounts,
+  }, 24 * 3600);
+}
+
+// PWHL-specific broadcast — wraps shared broadcast with PWHL: prefixed teamAbbr
+async function broadcastPWHL(env, payload, teamKey, eventType) {
+  // Import broadcast from nhl.js isn't possible (circular) — inline the lookup here
+  const subs = (await kvGet(env, 'push:subs')) || [];
+  if (!subs.length) return;
+
+  const targets = subs.filter(s => {
+    const subTeam = s.teamAbbr || 'NHL:CAR';
+    if (subTeam !== teamKey) return false;
+    if (!s.prefs) return true;
+    return s.prefs[eventType] !== false;
+  });
+
+  if (!targets.length) return;
+
+  console.log(`[PWHL push] ${targets.length} targets for ${teamKey}:${eventType}`);
+
+  const results = await Promise.all(targets.map(s => sendPush(s, payload, env)));
+
+  // Prune expired subs
+  const expiredEndpoints = new Set(
+    targets.filter((_, i) => results[i] === 'expired').map(s => s.endpoint)
+  );
+  if (expiredEndpoints.size > 0) {
+    const allSubs = (await kvGet(env, 'push:subs')) || [];
+    const active = allSubs.filter(s => !expiredEndpoints.has(s.endpoint));
+    await kvPut(env, 'push:subs', active, 365 * 24 * 3600);
+  }
+  console.log(`[PWHL push] results: ${results.join(', ')}`);
+}
 
 export async function handlePWHL(request, env, ctx, url) {
   // ── PWHL endpoints ─────────────────────────────────────────────────────────
