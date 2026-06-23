@@ -1221,5 +1221,184 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
     return json(payload);
   }
 
+  // GET /pwhl/summary?gameId=210
+  // Returns normalized HockeyTech gameSummary: periods with goal details,
+  // MVPs (three stars), and team stats. Used by usePWHLPeriodSummary hook.
+  // TTL: 1hr (immutable once game is final).
+  if (url.pathname === '/pwhl/summary') {
+    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey  = `pwhl:gamesummary:${gameId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const htRes = await fetch(
+      `${HT_BASE}?feed=statviewfeed&view=gameSummary&game_id=${gameId}&key=${HT_KEY}&client_code=pwhl&lang=en&league_id=`,
+      { headers: HT_HDR }
+    );
+    if (!htRes.ok) return new Response(JSON.stringify({ error: `HockeyTech ${htRes.status}` }), { status: 502, headers: corsHeaders() });
+
+    let raw;
+    try {
+      raw = unwrapJsonp(await htRes.text());
+    } catch (e) {
+      return new Response(JSON.stringify({ error: 'gameSummary parse failed', detail: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    const normAbbr = (abbr) => (abbr || '').replace(/^[a-z]+ - /i, '').trim();
+
+    const periods = (raw.periods || []).map(p => ({
+      info: {
+        id:        parseInt(p.info?.id, 10) || 1,
+        shortName: p.info?.shortName || '',
+        longName:  p.info?.longName  || '',
+      },
+      stats: {
+        homeGoals:     parseInt(p.stats?.homeGoals     || 0),
+        homeShots:     parseInt(p.stats?.homeShots     || 0),
+        visitingGoals: parseInt(p.stats?.visitingGoals || 0),
+        visitingShots: parseInt(p.stats?.visitingShots || 0),
+      },
+      goals: (p.goals || []).map(g => ({
+        game_goal_id: g.game_goal_id || null,
+        time:         g.time || '0:00',
+        team: {
+          id:           parseInt(g.team?.id, 10) || null,
+          abbreviation: normAbbr(g.team?.abbreviation),
+        },
+        scoredBy: g.scoredBy ? {
+          id:             parseInt(g.scoredBy.id, 10) || null,
+          firstName:      g.scoredBy.firstName || '',
+          lastName:       g.scoredBy.lastName  || '',
+          playerImageURL: g.scoredBy.playerImageURL || null,
+        } : null,
+        assists: (g.assists || []).map(a => ({
+          id:        parseInt(a.id, 10) || null,
+          firstName: a.firstName || '',
+          lastName:  a.lastName  || '',
+        })),
+        properties: {
+          isPowerPlay:       g.properties?.isPowerPlay       || '0',
+          isShortHanded:     g.properties?.isShortHanded     || '0',
+          isEmptyNet:        g.properties?.isEmptyNet        || '0',
+          isPenaltyShot:     g.properties?.isPenaltyShot     || '0',
+          isGameWinningGoal: g.properties?.isGameWinningGoal || '0',
+        },
+      })),
+    }));
+
+    // MVPs (three stars)
+    const mvps = (raw.mostValuablePlayers || []).map(mvp => ({
+      team: {
+        id:           parseInt(mvp.team?.id, 10) || null,
+        abbreviation: normAbbr(mvp.team?.abbreviation),
+        name:         mvp.team?.name || '',
+      },
+      player: {
+        info: {
+          id:             parseInt(mvp.player?.info?.id, 10) || null,
+          firstName:      mvp.player?.info?.firstName  || '',
+          lastName:       mvp.player?.info?.lastName   || '',
+          jerseyNumber:   mvp.player?.info?.jerseyNumber || null,
+          position:       mvp.player?.info?.position   || '',
+          playerImageURL: mvp.player?.info?.playerImageURL || null,
+        },
+        stats: mvp.player?.stats || {},
+      },
+      isGoalie:    !!mvp.isGoalie,
+      playerImage: mvp.playerImage || mvp.player?.info?.playerImageURL?.replace('/120x160/', '/240x240/') || null,
+      homeTeam:    mvp.homeTeam === 1 || mvp.homeTeam === true,
+    }));
+
+    const payload = {
+      periods,
+      mvps,
+      homeTeamStats:     raw.homeTeam?.stats     || {},
+      visitingTeamStats: raw.visitingTeam?.stats || {},
+    };
+    await kvPut(env, kvKey, payload, 3600);
+    return json(payload);
+  }
+
+  // POST /pwhl/summary/narrative?gameId=210&period=1
+  // Generates AI period/game narrative for PWHL summaries.
+  // Caches in KV so subsequent users get the pre-generated text.
+  if (url.pathname === '/pwhl/summary/narrative' && request.method === 'POST') {
+    const gameId    = url.searchParams.get('gameId') || '';
+    const periodKey = url.searchParams.get('period') || '1';
+
+    const cacheKey = `pwhl:narrative:${periodKey}:${gameId}`;
+    const cached   = await kvGet(env, cacheKey);
+    if (cached) return json(cached);
+
+    let body;
+    try { body = await request.json(); } catch {
+      return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: corsHeaders() });
+    }
+
+    const {
+      carAbbr, oppAbbr, periodLabel,
+      corsiForPct, carSOG, oppSOG, carGoals, oppGoals,
+      carHits, carFOPct, carHDCF, oppHDCF,
+      penaltyCount, carPenaltyCount,
+      bestPeriod, worstPeriod,
+      primaryGoalieName,
+      goals = [],
+    } = body;
+
+    const isGame = periodKey === 'game';
+
+    const goalLines = goals.map(g => {
+      const who = g.scorerName || (g.isCar ? carAbbr : oppAbbr);
+      const str = g.strength && g.strength !== 'ev' ? ` (${g.strength.toUpperCase()})` : '';
+      const per = isGame && g.period ? ` P${g.period}` : '';
+      return `${g.isCar ? carAbbr : oppAbbr}: ${who} at ${g.time}${per}${str}`;
+    }).join('\n');
+
+    const prompt = isGame
+      ? `You are Sticks, EyeWall Analytics' PWHL game analyst. Write a punchy 2-3 sentence final game summary.
+Game: ${carAbbr} vs ${oppAbbr}
+Score: ${carAbbr} ${carGoals}–${oppGoals} ${oppAbbr}
+Corsi For%: ${corsiForPct}% · SOG: ${carSOG}–${oppSOG} · HD Chances: ${carHDCF}–${oppHDCF}
+Faceoff Win%: ${carFOPct != null ? carFOPct + '%' : '—'} · Hits: ${carHits} · Penalties: ${carAbbr} ${carPenaltyCount}–${penaltyCount - carPenaltyCount} ${oppAbbr}
+Goals:\n${goalLines || 'None'}
+${primaryGoalieName ? `Goalie: ${primaryGoalieName}` : ''}
+Best period: ${bestPeriod?.period ? 'P' + bestPeriod.period + ' (' + bestPeriod.corsiForPct + '% CF)' : '—'}
+Worst period: ${worstPeriod?.period ? 'P' + worstPeriod.period + ' (' + worstPeriod.corsiForPct + '% CF)' : '—'}
+
+Write in plain text, no markdown, no bullet points. Be specific about what happened.`
+      : `You are Sticks, EyeWall Analytics' PWHL analyst. Write a punchy 1-2 sentence period summary.
+Period: ${periodLabel} — ${carAbbr} vs ${oppAbbr}
+Corsi For%: ${corsiForPct}% · SOG: ${carSOG}–${oppSOG} · HD Chances: ${carHDCF}–${oppHDCF}
+Goals: ${carGoals}–${oppGoals} · Hits: ${carHits} · Faceoffs: ${carFOPct != null ? carFOPct + '%' : '—'}
+Penalties this period: ${penaltyCount} (${carAbbr} took ${carPenaltyCount})
+${goalLines ? 'Goals:\n' + goalLines : 'No goals this period.'}
+
+Write in plain text, no markdown. 1-2 sentences max.`;
+
+    try {
+      const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+        messages:   [{ role: 'user', content: prompt }],
+        max_tokens: isGame ? 120 : 80,
+      });
+      const narrative = (aiResponse.response || '').trim();
+      if (!narrative) return json({ error: 'Empty AI response' });
+
+      let cardNarrative = null;
+      if (isGame && narrative.length > 120) {
+        const firstSentence = narrative.match(/^[^.!?]+[.!?]/);
+        cardNarrative = firstSentence ? firstSentence[0].trim() : narrative.slice(0, 120) + '…';
+      }
+
+      const result = { narrative, cardNarrative };
+      await kvPut(env, cacheKey, result, 24 * 3600);
+      return json(result);
+    } catch (e) {
+      console.error('[PWHL] narrative AI error:', e);
+      return new Response(JSON.stringify({ error: 'AI generation failed' }), { status: 502, headers: corsHeaders() });
+    }
+  }
+
   return new Response('EyeWall Poller', { status: 200 });
 }
