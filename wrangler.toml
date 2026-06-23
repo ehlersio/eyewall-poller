@@ -10,6 +10,10 @@ account_id = "178d2c4244e085446f83db4137cf8ff7"
 [triggers]
 crons = ["* * * * *"]
 
+# Observability — enables real-time logs and traces in Cloudflare dashboard
+[observability]
+enabled = true
+
 # KV namespace binding
 [[kv_namespaces]]
 binding = "CACHE"
