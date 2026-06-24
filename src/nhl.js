@@ -1967,7 +1967,9 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     const gameId = url.searchParams.get('gameId');
     const period = url.searchParams.get('period'); // 'game' or period number
     if (!gameId || !period) return json({ error: 'gameId and period required' });
-    const kvKey  = `narrative:${period}:${gameId}`;
+    // Key includes carAbbr so each team gets its own cached perspective
+    const carAbbrKey = (url.searchParams.get('carAbbr') || 'UNK').toUpperCase();
+    const kvKey  = `narrative:${period}:${gameId}:${carAbbrKey}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 

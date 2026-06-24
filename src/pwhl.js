@@ -1327,8 +1327,10 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
   if (url.pathname === '/pwhl/summary/narrative' && request.method === 'POST') {
     const gameId    = url.searchParams.get('gameId') || '';
     const periodKey = url.searchParams.get('period') || '1';
+    // Include carAbbr in cache key so each team gets its own perspective
+    const carAbbrKey = (url.searchParams.get('carAbbr') || 'UNK').toUpperCase();
 
-    const cacheKey = `pwhl:narrative:${periodKey}:${gameId}`;
+    const cacheKey = `pwhl:narrative:${periodKey}:${gameId}:${carAbbrKey}`;
     const cached   = await kvGet(env, cacheKey);
     if (cached) return json(cached);
 

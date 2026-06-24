@@ -14,6 +14,8 @@ src/
 
 Wrangler bundles all modules on deploy. The scheduled trigger (`* * * * *`) runs `poll()` every 60 seconds during the season to keep NHL data fresh in KV.
 
+Bindings: `CACHE` (KV), `AI` (Workers AI — required for all narrative/scouting endpoints).
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 20+
@@ -58,6 +60,13 @@ Set via `wrangler secret put <NAME>`. Never commit values.
 | `X_ACCESS_SECRET` | X (Twitter) OAuth access secret |
 | `X_CONSUMER_SECRET` | X (Twitter) OAuth consumer secret |
 
+**Bindings (wrangler.toml):**
+
+| Binding | Type | Description |
+|---------|------|-------------|
+| `CACHE` | KV Namespace | All KV read/write operations |
+| `AI` | Workers AI | Required for `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/prediction/analyze`, `/draft/analyze` |
+
 View current secrets:
 ```powershell
 wrangler secret list
@@ -95,6 +104,9 @@ Key patterns:
 | `pwhl:news` | 30min | PWHL news feed |
 | `pwhl:today:{season}` | 60s | Today's PWHL games + status |
 | `pwhl:live:{gameId}` | 30s live / 1hr final | PWHL live PBP |
+| `pwhl:summary:{gameId}` | 1hr | PWHL game summary (goals, MVPs, team stats) |
+| `pwhl:narrative:{period}:{gameId}:{carAbbr}` | 24hr | AI period/game narrative per team perspective |
+| `pwhl:pshots:{playerId}:{season}` | 6hr | PWHL player shot heat map data |
 
 ## NHL Endpoints
 
@@ -114,7 +126,7 @@ Key patterns:
 | `GET` | `/moneypuck/refresh/all` | Refresh MoneyPuck for all teams |
 | `GET` | `/pp-units/refresh` | Refresh PP/PK unit data |
 | `POST` | `/summary/generate` | Generate AI game summary |
-| `GET` | `/summary/narrative` | Generate period narrative |
+| `POST` | `/summary/narrative?gameId=&period=&carAbbr=` | AI period/game narrative (cached per team perspective) |
 | `POST` | `/prediction/analyze` | Generate pre-game prediction |
 | `GET` | `/draft/rankings` | Draft rankings from Supabase |
 | `GET` | `/draft/picks` | Draft picks from Supabase |
@@ -142,6 +154,8 @@ Key patterns:
 | `POST` | `/pwhl/news/bust` | Invalidate news KV cache |
 | `POST` | `/pwhl/scout` | AI scouting report for a player |
 | `POST` | `/pwhl/cache/bust` | Invalidate team KV caches |
+| `GET` | `/pwhl/summary?gameId=` | Game summary (goals, MVPs, team stats) from HockeyTech |
+| `POST` | `/pwhl/summary/narrative?gameId=&period=&carAbbr=` | AI period/game narrative (cached per team perspective) |
 
 ## October Season Prep
 
@@ -150,6 +164,7 @@ Each October flip these before the new season starts:
 - `NHL_SEASON` secret → new season string e.g. `20262027`
 - `PWHL_CURRENT_SEASON` in `pwhl.js` → new HockeyTech season ID (verify with HockeyTech)
 - Add PWHL expansion team IDs once HockeyTech assigns them (Detroit, Hamilton, Las Vegas, San Jose)
+- Narrative KV keys include `carAbbr` — stale keys from prior season expire naturally (24hr TTL)
 
 ## Related Repos
 
