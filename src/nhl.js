@@ -2121,9 +2121,12 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
     const rows = await r.json();
 
-    // Short TTL during draft (60s), long after (24hr)
-    // Detect draft-in-progress: picks exist but count < 224
-    const ttl = rows.length > 0 && rows.length < 224 ? 60 : 24 * 3600;
+    // Short TTL while draft is in progress or unresolved (including zero
+    // results, e.g. a round that hasn't happened yet — this must NOT get
+    // the 24hr branch or a snapshot taken before picks exist gets pinned
+    // in KV for a full day). Long TTL only once we've actually seen all
+    // 224 picks.
+    const ttl = rows.length >= 224 ? 24 * 3600 : 60;
     await kvPut(env, kvKey, rows, ttl);
     return json(rows);
   }
