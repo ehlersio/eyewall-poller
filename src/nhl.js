@@ -2153,6 +2153,34 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     return json(rows);
   }
 
+  // ── Milestones — hat tricks, shutouts, SH goals, season/career thresholds ─────
+  // GET /milestones               — recent milestones, all teams (feed default)
+  // GET /milestones?team=CAR      — filtered to one team
+  // GET /milestones?limit=20      — override default limit (default 50, max 100)
+  // Populated nightly by milestones.py. Not live/in-progress like draft
+  // picks, so a flat 1hr TTL is fine — no draft-style "empty result
+  // gets long TTL" edge case to worry about here.
+  if (url.pathname === '/milestones') {
+    const team  = url.searchParams.get('team')?.toUpperCase();
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10) || 50, 100);
+
+    const kvKey  = `milestones:${team || 'all'}:${limit}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let filter = `?order=game_date.desc,id.desc&limit=${limit}`;
+    if (team) filter += `&team=eq.${team}`;
+
+    const r = await fetch(`${SB_URL}/rest/v1/milestones${filter}`, {
+      headers: { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` },
+    });
+    if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
+    const rows = await r.json();
+
+    await kvPut(env, kvKey, rows, 3600);
+    return json(rows);
+  }
+
   // ── Draft pick AI analysis ────────────────────────────────────────────────────
   // POST /draft/analyze  (secret-protected, called by draft_ingest.py on draft day)
   // Body: { prompt: string }
