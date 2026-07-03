@@ -2154,21 +2154,25 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   }
 
   // ── Milestones — hat tricks, shutouts, SH goals, season/career thresholds ─────
-  // GET /milestones               — recent milestones, all teams (feed default)
+  // GET /milestones               — recent milestones, NHL only (feed default)
   // GET /milestones?team=CAR      — filtered to one team
+  // GET /milestones?sport=pwhl    — PWHL milestones instead of NHL
   // GET /milestones?limit=20      — override default limit (default 50, max 100)
-  // Populated nightly by milestones.py. Not live/in-progress like draft
-  // picks, so a flat 1hr TTL is fine — no draft-style "empty result
-  // gets long TTL" edge case to worry about here.
+  // Populated nightly by milestones.py (NHL) / pwhl_milestones.py (PWHL), both
+  // writing into the same shared `milestones` table distinguished by is_pwhl.
+  // Defaults to NHL (is_pwhl=false) for backwards compat with the existing
+  // frontend — sport=pwhl must be passed explicitly.
   if (url.pathname === '/milestones') {
     const team  = url.searchParams.get('team')?.toUpperCase();
+    const sport = url.searchParams.get('sport')?.toLowerCase();
+    const isPwhl = sport === 'pwhl';
     const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10) || 50, 100);
 
-    const kvKey  = `milestones:${team || 'all'}:${limit}`;
+    const kvKey  = `milestones:${sport || 'nhl'}:${team || 'all'}:${limit}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
-    let filter = `?order=game_date.desc,id.desc&limit=${limit}`;
+    let filter = `?order=game_date.desc,id.desc&limit=${limit}&is_pwhl=eq.${isPwhl}`;
     if (team) filter += `&team=eq.${team}`;
 
     const r = await fetch(`${SB_URL}/rest/v1/milestones${filter}`, {
@@ -2179,6 +2183,53 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
 
     await kvPut(env, kvKey, rows, 3600);
     return json(rows);
+  }
+
+  // ── PWHL Player landing — proxy for PWHLPlayerPopup lookups (e.g. from
+  // milestone taps). Unlike NHL's /player/landing, this queries Supabase
+  // directly instead of an external API — pwhl_players is already the
+  // source of truth, no HockeyTech per-player endpoint needed.
+  //
+  // PWHLPlayerPopup (unlike NHL's PlayerPopup) doesn't fetch its own season
+  // stats — it reads goals/points/wins/etc. directly off the player object
+  // passed in. So this merges the player's most recent regular-season stat
+  // line (pwhl_player_seasons for skaters, pwhl_goalie_seasons for goalies)
+  // onto the identity row before returning, rather than returning identity
+  // only. "Most recent" is picked via season_id desc rather than a
+  // hardcoded season, so this doesn't need updating at the October flip.
+  // GET /pwhl/player/landing?id=198
+  if (url.pathname === '/pwhl/player/landing') {
+    const playerId = url.searchParams.get('id');
+    if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey  = `pwhl:player:landing:${playerId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const sbHeaders = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+
+    const playerRes = await fetch(
+      `${SB_URL}/rest/v1/pwhl_players?player_id=eq.${playerId}&select=*`,
+      { headers: sbHeaders }
+    );
+    if (!playerRes.ok) return new Response(JSON.stringify({ error: `Supabase ${playerRes.status}` }), { status: 502, headers: corsHeaders() });
+    const playerRows = await playerRes.json();
+    if (!playerRows.length) return new Response(JSON.stringify({ error: 'Player not found' }), { status: 404, headers: corsHeaders() });
+
+    const player = playerRows[0];
+    const statsTable = player.position === 'G' ? 'pwhl_goalie_seasons' : 'pwhl_player_seasons';
+
+    const statsRes = await fetch(
+      `${SB_URL}/rest/v1/${statsTable}?player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc&limit=1&select=*`,
+      { headers: sbHeaders }
+    );
+    const statsRows = statsRes.ok ? await statsRes.json() : [];
+    const stats = statsRows[0] || {};
+
+    const data = { ...player, ...stats };
+
+    await kvPut(env, kvKey, data, 3600);
+    return json(data);
   }
 
   // ── Player landing — proxy for PlayerPopup lookups (e.g. from milestone taps) ──
