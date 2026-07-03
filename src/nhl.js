@@ -2185,52 +2185,12 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     return json(rows);
   }
 
-  // ── PWHL Player landing — proxy for PWHLPlayerPopup lookups (e.g. from
-  // milestone taps). Unlike NHL's /player/landing, this queries Supabase
-  // directly instead of an external API — pwhl_players is already the
-  // source of truth, no HockeyTech per-player endpoint needed.
-  //
-  // PWHLPlayerPopup (unlike NHL's PlayerPopup) doesn't fetch its own season
-  // stats — it reads goals/points/wins/etc. directly off the player object
-  // passed in. So this merges the player's most recent regular-season stat
-  // line (pwhl_player_seasons for skaters, pwhl_goalie_seasons for goalies)
-  // onto the identity row before returning, rather than returning identity
-  // only. "Most recent" is picked via season_id desc rather than a
-  // hardcoded season, so this doesn't need updating at the October flip.
-  // GET /pwhl/player/landing?id=198
-  if (url.pathname === '/pwhl/player/landing') {
-    const playerId = url.searchParams.get('id');
-    if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
-
-    const kvKey  = `pwhl:player:landing:${playerId}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
-
-    const sbHeaders = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
-
-    const playerRes = await fetch(
-      `${SB_URL}/rest/v1/pwhl_players?player_id=eq.${playerId}&select=*`,
-      { headers: sbHeaders }
-    );
-    if (!playerRes.ok) return new Response(JSON.stringify({ error: `Supabase ${playerRes.status}` }), { status: 502, headers: corsHeaders() });
-    const playerRows = await playerRes.json();
-    if (!playerRows.length) return new Response(JSON.stringify({ error: 'Player not found' }), { status: 404, headers: corsHeaders() });
-
-    const player = playerRows[0];
-    const statsTable = player.position === 'G' ? 'pwhl_goalie_seasons' : 'pwhl_player_seasons';
-
-    const statsRes = await fetch(
-      `${SB_URL}/rest/v1/${statsTable}?player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc&limit=1&select=*`,
-      { headers: sbHeaders }
-    );
-    const statsRows = statsRes.ok ? await statsRes.json() : [];
-    const stats = statsRows[0] || {};
-
-    const data = { ...player, ...stats };
-
-    await kvPut(env, kvKey, data, 3600);
-    return json(data);
-  }
+  // NOTE: /pwhl/player/landing lives in pwhl.js, not here — worker.js
+  // routes every /pwhl/* path to handlePWHL. An earlier version of this
+  // endpoint was mistakenly added to this file and was dead code (never
+  // reachable), which is why the frontend got CORS errors: the request
+  // fell through pwhl.js's own routing to its no-CORS-headers 200
+  // fallback response, never touching this file at all.
 
   // ── Player landing — proxy for PlayerPopup lookups (e.g. from milestone taps) ──
   // GET /player/landing?id=8483548

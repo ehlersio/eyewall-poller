@@ -599,6 +599,53 @@ export async function handlePWHL(request, env, ctx, url) {
     return json(rows);
   }
 
+  // GET /pwhl/player/landing?id=198
+  // Player detail lookup for PWHLPlayerPopup (e.g. from milestone taps).
+  // Unlike NHL's /player/landing, this queries Supabase directly instead
+  // of an external API — pwhl_players is already the source of truth,
+  // no HockeyTech per-player endpoint needed.
+  //
+  // PWHLPlayerPopup (unlike NHL's PlayerPopup) doesn't fetch its own
+  // season stats — it reads goals/points/wins/etc. directly off the
+  // player object passed in. So this merges the player's most recent
+  // regular-season stat line (pwhl_player_seasons for skaters,
+  // pwhl_goalie_seasons for goalies) onto the identity row before
+  // returning. "Most recent" is picked via season_id desc rather than a
+  // hardcoded season, so this doesn't need updating at the October flip.
+  if (url.pathname === '/pwhl/player/landing') {
+    const playerId = url.searchParams.get('id');
+    if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey  = `pwhl:player:landing:${playerId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+
+    const playerRes = await fetch(
+      `${SB_URL}/rest/v1/pwhl_players?player_id=eq.${playerId}&select=*`,
+      { headers: sbH }
+    );
+    if (!playerRes.ok) return new Response(JSON.stringify({ error: `Supabase ${playerRes.status}` }), { status: 502, headers: corsHeaders() });
+    const playerRows = await playerRes.json();
+    if (!playerRows.length) return new Response(JSON.stringify({ error: 'Player not found' }), { status: 404, headers: corsHeaders() });
+
+    const player = playerRows[0];
+    const statsTable = player.position === 'G' ? 'pwhl_goalie_seasons' : 'pwhl_player_seasons';
+
+    const statsRes = await fetch(
+      `${SB_URL}/rest/v1/${statsTable}?player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc&limit=1&select=*`,
+      { headers: sbH }
+    );
+    const statsRows = statsRes.ok ? await statsRes.json() : [];
+    const stats = statsRows[0] || {};
+
+    const data = { ...player, ...stats };
+
+    await kvPut(env, kvKey, data, 3600);
+    return json(data);
+  }
+
   // GET /pwhl/lastgame?teamId=1&season=8
   // Returns the most recent completed game with opponent abbr resolved.
   if (url.pathname === '/pwhl/lastgame') {
