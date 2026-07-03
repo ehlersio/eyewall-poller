@@ -2181,6 +2181,30 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     return json(rows);
   }
 
+  // ── Player landing — proxy for PlayerPopup lookups (e.g. from milestone taps) ──
+  // GET /player/landing?id=8483548
+  // Browser can't hit api-web.nhle.com directly (no CORS headers on their
+  // side), so this proxies through the Worker like every other NHL API
+  // call in this app.
+  if (url.pathname === '/player/landing') {
+    const playerId = url.searchParams.get('id');
+    if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey  = `player:landing:${playerId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let data;
+    try {
+      data = await nhlGet(`${NHL_BASE}/player/${playerId}/landing`);
+    } catch (e) {
+      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    await kvPut(env, kvKey, data, 3600);
+    return json(data);
+  }
+
   // ── Draft pick AI analysis ────────────────────────────────────────────────────
   // POST /draft/analyze  (secret-protected, called by draft_ingest.py on draft day)
   // Body: { prompt: string }
