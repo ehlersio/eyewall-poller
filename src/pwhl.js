@@ -20,7 +20,15 @@ async function seasonParam(url, env) {
 }
 
 // PWHL team ID → abbreviation map
-const PWHL_TEAM_CODES = { 1:'BOS', 2:'MIN', 3:'MTL', 4:'NY', 5:'OTT', 6:'TOR', 8:'SEA', 9:'VAN' };
+const PWHL_TEAM_CODES = {
+  1:'BOS', 2:'MIN', 3:'MTL', 4:'NY', 5:'OTT', 6:'TOR', 8:'SEA', 9:'VAN',
+  // 2026-27 expansion teams — IDs confirmed via HockeyTech's real signing
+  // data + team-filter dropdown (docs/hockeytech-api-notes.md, 2026-07-04).
+  // Not yet in bootstrap's teams[] (no roster/division assigned pre-season),
+  // so these won't show up in live polling until that changes — but wiring
+  // the IDs in now means nothing needs manual updating once they do.
+  10:'DET', 11:'HAM', 12:'LV', 13:'SJS',
+};
 
 const PWHL_NEWS_SOURCES = [
   {
