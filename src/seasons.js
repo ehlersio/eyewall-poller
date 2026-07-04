@@ -98,7 +98,7 @@ export async function resolveNHLSeason(env) {
 // needing a new hand-added entry every time HockeyTech assigns a new
 // season_id, at least for whichever season is currently "live".
 
-function deriveSeasonType(name) {
+export function deriveSeasonType(name) {
   const n = (name || '').toLowerCase();
   if (n.includes('playoff')) return 'playoffs';
   if (n.includes('preseason')) return 'preseason';
@@ -106,7 +106,7 @@ function deriveSeasonType(name) {
   return 'regular';
 }
 
-function deriveStartYear(startDate, name) {
+export function deriveStartYear(startDate, name) {
   if (startDate) {
     const y = new Date(startDate).getFullYear();
     if (!isNaN(y)) return y;
@@ -125,9 +125,19 @@ export async function resolvePWHLSeason(env) {
   if (cached) return cached;
 
   try {
+    // feed=modulekit (used here previously) returns a 200 OK with a bogus
+    // {"SiteKit":{...,"Undefined":"Undefined Tab bootstrap"}} shape and no
+    // seasons/teams data at all — silently falling through to
+    // FALLBACK_PWHL below every single time, which went undetected because
+    // the fallback happened to look plausible. feed=statviewfeed, plus the
+    // extra params below, is the real shape confirmed via a captured
+    // browser DevTools request against thepwhl.com on 2026-07-05.
+    // callback=angular.callbacks._0 deliberately omitted — that's Angular's
+    // JSONP callback naming; unwrapJsonp() expects a plain (...)-wrapped
+    // body, same as every other statviewfeed call elsewhere in this repo.
     const url =
-      `${HT_BASE}?feed=modulekit&view=bootstrap&key=${HT_KEY}` +
-      `&client_code=pwhl&lang=en&league_id=`;
+      `${HT_BASE}?feed=statviewfeed&view=bootstrap&season=&game_id=&pageName=leadersExtended` +
+      `&key=${HT_KEY}&client_code=pwhl&site_id=0&league_id=&league_code=&conference=-1&division=-1&lang=en`;
     const res = await fetch(url, { headers: HT_HDR });
     if (!res.ok) throw new Error(`bootstrap ${res.status}`);
     const data = unwrapJsonp(await res.text());
