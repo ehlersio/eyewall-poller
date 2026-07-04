@@ -196,7 +196,9 @@ async function detectAndNotify(env, liveId, pbp, games) {
       carGoalScorers[scorerId] = (carGoalScorers[scorerId] || 0) + newGoals;
     }
 
-    const eventType = isSH ? 'goal' : 'goal'; // SHG is still a goal notif
+    // SH goals still notify under the 'goal' preference — there's no
+    // separate shorthanded-goal toggle in NotificationBell's PREF_GROUPS
+    // for users to filter by, so no separate eventType is needed here.
     await notify({
       title: `🚨 GOAL! ${TEAM_ABBR} ${carScore}–${oppScore} ${oppAbbr}`,
       body:  newGoals > 1
