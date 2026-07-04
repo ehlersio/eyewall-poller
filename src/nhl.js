@@ -5,7 +5,8 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, parseRSS, parseESPN, parseAtom, parseReddit, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, base64urlToUint8Array, uint8ArrayToBase64url } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, parseRSS, parseESPN, parseAtom, parseReddit, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush } from './shared.js';
+import { resolveNHLSeason } from './seasons.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
 const STATS_BASE = 'https://api.nhle.com/stats/rest/en';
@@ -14,59 +15,71 @@ const STATS_BASE = 'https://api.nhle.com/stats/rest/en';
 // All 32 teams. The poll() scheduled job uses DEFAULT_TEAM_ABBR.
 // Every HTTP endpoint resolves a per-request team from ?team= query param,
 // falling back to DEFAULT_TEAM_ABBR when omitted.
+//
+// NOTE: these objects used to each carry their own hardcoded `season`
+// field (32 identical copies of '20252026'). That's gone now — season is
+// resolved live via resolveNHLSeason() wherever it's needed (see
+// getTeamConfig() below and poll()), instead of being baked into static
+// team data that has nothing to do with the season.
 
 const DEFAULT_TEAM_ABBR = 'CAR';
 
 const TEAM_CONFIGS = {
   // keywords: short names/nicknames used by beat writers and BR/Athletic article titles.
   // Used by teamFilterKeywords() to filter league-wide RSS feeds.
-  ANA: { abbr:'ANA', teamId:24, franchiseId:32, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Anaheim Ducks',         keywords:['ducks','anaheim','drysdale','fowler','terry','zegras'],                       winCopy:"Let's go Ducks! 🦆",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`ANA vs ${o} — puck drop!`, hashtags:['#AnaheimDucks','#LetsGoDucks','#NHL'] },
-  BOS: { abbr:'BOS', teamId:6,  franchiseId:6,  season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Boston Bruins',          keywords:['bruins','boston','pastrnak','mcavoy','swayman'],                               winCopy:"Let's go Bruins! 🐻",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`BOS vs ${o} — puck drop!`, hashtags:['#NHLBruins','#BostonBruins','#NHL'] },
-  BUF: { abbr:'BUF', teamId:7,  franchiseId:7,  season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Buffalo Sabres',         keywords:['sabres','buffalo','tuch','power','ukko-pekka'],                                winCopy:"Let's go Sabres! ⚔️",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`BUF vs ${o} — puck drop!`, hashtags:['#Sabres','#LetsGoBuffalo','#NHL'] },
-  CGY: { abbr:'CGY', teamId:20, franchiseId:27, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Calgary Flames',         keywords:['flames','calgary','huberdeau','weegar','markstrom'],                          winCopy:"Let's go Flames! 🔥",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`CGY vs ${o} — puck drop!`, hashtags:['#Flames','#CofRed','#NHL'] },
-  CAR: { abbr:'CAR', teamId:12, franchiseId:26, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Carolina Hurricanes',    keywords:['canes','hurricanes','carolina','aho','svechnikov','kotkaniemi','kochetkov'],   winCopy:"Let's go Canes! 🌀",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`CAR vs ${o} — puck drop!`, hashtags:['#LetsGoCanes','#Canes','#NHL','#CarolinaHurricanes','#SoundTheSiren'] },
-  CHI: { abbr:'CHI', teamId:16, franchiseId:11, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Chicago Blackhawks',     keywords:['blackhawks','chicago','hawks','bedard','dickinson'],                          winCopy:"Let's go Blackhawks! 🪶",  lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`CHI vs ${o} — puck drop!`, hashtags:['#Blackhawks','#OneGoal','#NHL'] },
-  COL: { abbr:'COL', teamId:21, franchiseId:27, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Colorado Avalanche',     keywords:['avalanche','colorado','avs','mackinnon','makar','landeskog'],                  winCopy:"Let's go Avs! ❄️",         lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`COL vs ${o} — puck drop!`, hashtags:['#GoAvsGo','#Avalanche','#NHL'] },
-  CBJ: { abbr:'CBJ', teamId:29, franchiseId:36, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Columbus Blue Jackets',  keywords:['blue jackets','columbus','jackets','fantilli','voronkov'],                    winCopy:"Let's go Jackets! 💥",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`CBJ vs ${o} — puck drop!`, hashtags:['#CBJ','#NHLJackets','#NHL'] },
-  DAL: { abbr:'DAL', teamId:25, franchiseId:15, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Dallas Stars',           keywords:['stars','dallas','robertson','seguin','oettinger'],                            winCopy:"Let's go Stars! ⭐",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`DAL vs ${o} — puck drop!`, hashtags:['#GoStars','#TexasHockey','#NHL'] },
-  DET: { abbr:'DET', teamId:17, franchiseId:12, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Detroit Red Wings',      keywords:['red wings','detroit','wings','larkin','raymond','seider'],                    winCopy:"Let's go Wings! 🐙",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`DET vs ${o} — puck drop!`, hashtags:['#LGRW','#DetroitRedWings','#NHL'] },
-  EDM: { abbr:'EDM', teamId:22, franchiseId:25, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Edmonton Oilers',        keywords:['oilers','edmonton','mcdavid','draisaitl','skinner'],                          winCopy:"Let's go Oilers! 🛢️",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`EDM vs ${o} — puck drop!`, hashtags:['#LetsGoOilers','#Oilers','#NHL'] },
-  FLA: { abbr:'FLA', teamId:13, franchiseId:33, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Florida Panthers',       keywords:['panthers','florida','barkov','reinhart','bobrovsky'],                         winCopy:"Let's go Panthers! 🐾",    lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`FLA vs ${o} — puck drop!`, hashtags:['#TimeToHunt','#FlaPanthers','#NHL'] },
-  LAK: { abbr:'LAK', teamId:26, franchiseId:14, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Los Angeles Kings',      keywords:['kings','los angeles','kopitar','doughty','fiala'],                            winCopy:"Let's go Kings! 👑",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`LAK vs ${o} — puck drop!`, hashtags:['#GoKingsGo','#LAKings','#NHL'] },
-  MIN: { abbr:'MIN', teamId:30, franchiseId:37, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Minnesota Wild',         keywords:['wild','minnesota','kirill kaprizov','gustavsson','hartman'],                   winCopy:"Let's go Wild! 🌲",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`MIN vs ${o} — puck drop!`, hashtags:['#mnwild','#MNWild','#NHL'] },
-  MTL: { abbr:'MTL', teamId:8,  franchiseId:1,  season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Montreal Canadiens',     keywords:['canadiens','montreal','habs','caufield','slafkovsky','montembeault'],         winCopy:"Let's go Habs! 🔵",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`MTL vs ${o} — puck drop!`, hashtags:['#GoHabsGo','#Canadiens','#NHL'] },
-  NSH: { abbr:'NSH', teamId:18, franchiseId:34, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Nashville Predators',    keywords:['predators','nashville','preds','forsberg','juuse saros'],                     winCopy:"Let's go Preds! 🐯",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`NSH vs ${o} — puck drop!`, hashtags:['#Preds','#NashvillePredators','#NHL'] },
-  NJD: { abbr:'NJD', teamId:1,  franchiseId:23, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'New Jersey Devils',      keywords:['devils','new jersey','hischier','hughes','vanecek'],                          winCopy:"Let's go Devils! 😈",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`NJD vs ${o} — puck drop!`, hashtags:['#NJDevils','#NJD','#NHL'] },
-  NYI: { abbr:'NYI', teamId:2,  franchiseId:22, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'New York Islanders',     keywords:['islanders','new york','isles','barzal','sorokin'],                            winCopy:"Let's go Islanders! 🏝️",  lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`NYI vs ${o} — puck drop!`, hashtags:['#Isles','#NYIsles','#NHL'] },
-  NYR: { abbr:'NYR', teamId:3,  franchiseId:10, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'New York Rangers',       keywords:['rangers','new york','panarin','zibanejad','shesterkin'],                      winCopy:"Let's go Rangers! 🗽",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`NYR vs ${o} — puck drop!`, hashtags:['#NYR','#NYRangers','#NHL'] },
-  OTT: { abbr:'OTT', teamId:9,  franchiseId:30, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Ottawa Senators',        keywords:['senators','ottawa','sens','tkachuk','stutzle','forsberg'],                    winCopy:"Let's go Sens! 🏛️",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`OTT vs ${o} — puck drop!`, hashtags:['#GoSensGo','#Sens','#NHL'] },
-  PHI: { abbr:'PHI', teamId:4,  franchiseId:16, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Philadelphia Flyers',    keywords:['flyers','philadelphia','matvei michkov','cates','fedotov'],                   winCopy:"Let's go Flyers! 🟠",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`PHI vs ${o} — puck drop!`, hashtags:['#Flyers','#PhiladelphiaFlyers','#NHL'] },
-  PIT: { abbr:'PIT', teamId:5,  franchiseId:17, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Pittsburgh Penguins',    keywords:['penguins','pittsburgh','pens','crosby','malkin','jarry'],                     winCopy:"Let's go Pens! 🐧",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`PIT vs ${o} — puck drop!`, hashtags:['#LetsGoPens','#Penguins','#NHL'] },
-  SEA: { abbr:'SEA', teamId:55, franchiseId:39, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Seattle Kraken',         keywords:['kraken','seattle','beniers','tanev','grubauer'],                              winCopy:"Let's go Kraken! 🦑",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`SEA vs ${o} — puck drop!`, hashtags:['#SeattleKraken','#Kraken','#NHL'] },
-  SJS: { abbr:'SJS', teamId:28, franchiseId:29, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'San Jose Sharks',        keywords:['sharks','san jose','celebrini','couture','mackeown'],                         winCopy:"Let's go Sharks! 🦈",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`SJS vs ${o} — puck drop!`, hashtags:['#SJSharks','#Sharks','#NHL'] },
-  STL: { abbr:'STL', teamId:19, franchiseId:18, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'St. Louis Blues',        keywords:['blues','st. louis','thomas','kyrou','binnington'],                            winCopy:"Let's go Blues! 🎵",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`STL vs ${o} — puck drop!`, hashtags:['#STLBlues','#Blues','#NHL'] },
-  TBL: { abbr:'TBL', teamId:14, franchiseId:31, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Tampa Bay Lightning',    keywords:['lightning','tampa bay','bolts','stamkos','kucherov','vasilevskiy'],           winCopy:"Let's go Lightning! ⚡",   lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`TBL vs ${o} — puck drop!`, hashtags:['#GoBolts','#TBLightning','#NHL'] },
-  TOR: { abbr:'TOR', teamId:10, franchiseId:5,  season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Toronto Maple Leafs',   keywords:['maple leafs','toronto','leafs','matthews','marner','nylander'],                winCopy:"Let's go Leafs! 🍁",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`TOR vs ${o} — puck drop!`, hashtags:['#LeafsForever','#TMLtalk','#NHL'] },
-  UTA: { abbr:'UTA', teamId:59, franchiseId:40, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Utah Mammoth',           keywords:['mammoth','utah','keller','peterka','villalta'],                               winCopy:"Let's go Mammoth! 🦣",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`UTA vs ${o} — puck drop!`, hashtags:['#TusksUp','#UtahMammoth','#Mammoth','#NHL'] },
-  VAN: { abbr:'VAN', teamId:23, franchiseId:20, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Vancouver Canucks',      keywords:['canucks','vancouver','demko','pettersson','hughes'],                          winCopy:"Let's go Canucks! 🏒",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`VAN vs ${o} — puck drop!`, hashtags:['#Canucks','#VanCIty','#NHL'] },
-  VGK: { abbr:'VGK', teamId:54, franchiseId:38, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Vegas Golden Knights',   keywords:['golden knights','vegas','knights','marchessault','stone','hill'],              winCopy:"Let's go Knights! ⚔️",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`VGK vs ${o} — puck drop!`, hashtags:['#VegasBorn','#GoKnightsGo','#NHL'] },
-  WSH: { abbr:'WSH', teamId:15, franchiseId:24, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Washington Capitals',    keywords:['capitals','washington','caps','ovechkin','carlson','kuemper'],                winCopy:"Let's go Caps! 🦅",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`WSH vs ${o} — puck drop!`, hashtags:['#ALLCAPS','#Capitals','#NHL'] },
-  WPG: { abbr:'WPG', teamId:52, franchiseId:35, season:'20252026', seasonEnd:new Date('2026-07-01'), displayName:'Winnipeg Jets',          keywords:['jets','winnipeg','scheifele','wheeler','hellebuyck'],                          winCopy:"Let's go Jets! ✈️",         lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`WPG vs ${o} — puck drop!`, hashtags:['#GoJetsGo','#NHLJets','#NHL'] },
+  ANA: { abbr:'ANA', teamId:24, franchiseId:32, seasonEnd:new Date('2026-07-01'), displayName:'Anaheim Ducks',         keywords:['ducks','anaheim','drysdale','fowler','terry','zegras'],                       winCopy:"Let's go Ducks! 🦆",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`ANA vs ${o} — puck drop!`, hashtags:['#AnaheimDucks','#LetsGoDucks','#NHL'] },
+  BOS: { abbr:'BOS', teamId:6,  franchiseId:6,  seasonEnd:new Date('2026-07-01'), displayName:'Boston Bruins',          keywords:['bruins','boston','pastrnak','mcavoy','swayman'],                               winCopy:"Let's go Bruins! 🐻",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`BOS vs ${o} — puck drop!`, hashtags:['#NHLBruins','#BostonBruins','#NHL'] },
+  BUF: { abbr:'BUF', teamId:7,  franchiseId:7,  seasonEnd:new Date('2026-07-01'), displayName:'Buffalo Sabres',         keywords:['sabres','buffalo','tuch','power','ukko-pekka'],                                winCopy:"Let's go Sabres! ⚔️",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`BUF vs ${o} — puck drop!`, hashtags:['#Sabres','#LetsGoBuffalo','#NHL'] },
+  CGY: { abbr:'CGY', teamId:20, franchiseId:27, seasonEnd:new Date('2026-07-01'), displayName:'Calgary Flames',         keywords:['flames','calgary','huberdeau','weegar','markstrom'],                          winCopy:"Let's go Flames! 🔥",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`CGY vs ${o} — puck drop!`, hashtags:['#Flames','#CofRed','#NHL'] },
+  CAR: { abbr:'CAR', teamId:12, franchiseId:26, seasonEnd:new Date('2026-07-01'), displayName:'Carolina Hurricanes',    keywords:['canes','hurricanes','carolina','aho','svechnikov','kotkaniemi','kochetkov'],   winCopy:"Let's go Canes! 🌀",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`CAR vs ${o} — puck drop!`, hashtags:['#LetsGoCanes','#Canes','#NHL','#CarolinaHurricanes','#SoundTheSiren'] },
+  CHI: { abbr:'CHI', teamId:16, franchiseId:11, seasonEnd:new Date('2026-07-01'), displayName:'Chicago Blackhawks',     keywords:['blackhawks','chicago','hawks','bedard','dickinson'],                          winCopy:"Let's go Blackhawks! 🪶",  lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`CHI vs ${o} — puck drop!`, hashtags:['#Blackhawks','#OneGoal','#NHL'] },
+  COL: { abbr:'COL', teamId:21, franchiseId:27, seasonEnd:new Date('2026-07-01'), displayName:'Colorado Avalanche',     keywords:['avalanche','colorado','avs','mackinnon','makar','landeskog'],                  winCopy:"Let's go Avs! ❄️",         lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`COL vs ${o} — puck drop!`, hashtags:['#GoAvsGo','#Avalanche','#NHL'] },
+  CBJ: { abbr:'CBJ', teamId:29, franchiseId:36, seasonEnd:new Date('2026-07-01'), displayName:'Columbus Blue Jackets',  keywords:['blue jackets','columbus','jackets','fantilli','voronkov'],                    winCopy:"Let's go Jackets! 💥",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`CBJ vs ${o} — puck drop!`, hashtags:['#CBJ','#NHLJackets','#NHL'] },
+  DAL: { abbr:'DAL', teamId:25, franchiseId:15, seasonEnd:new Date('2026-07-01'), displayName:'Dallas Stars',           keywords:['stars','dallas','robertson','seguin','oettinger'],                            winCopy:"Let's go Stars! ⭐",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`DAL vs ${o} — puck drop!`, hashtags:['#GoStars','#TexasHockey','#NHL'] },
+  DET: { abbr:'DET', teamId:17, franchiseId:12, seasonEnd:new Date('2026-07-01'), displayName:'Detroit Red Wings',      keywords:['red wings','detroit','wings','larkin','raymond','seider'],                    winCopy:"Let's go Wings! 🐙",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`DET vs ${o} — puck drop!`, hashtags:['#LGRW','#DetroitRedWings','#NHL'] },
+  EDM: { abbr:'EDM', teamId:22, franchiseId:25, seasonEnd:new Date('2026-07-01'), displayName:'Edmonton Oilers',        keywords:['oilers','edmonton','mcdavid','draisaitl','skinner'],                          winCopy:"Let's go Oilers! 🛢️",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`EDM vs ${o} — puck drop!`, hashtags:['#LetsGoOilers','#Oilers','#NHL'] },
+  FLA: { abbr:'FLA', teamId:13, franchiseId:33, seasonEnd:new Date('2026-07-01'), displayName:'Florida Panthers',       keywords:['panthers','florida','barkov','reinhart','bobrovsky'],                         winCopy:"Let's go Panthers! 🐾",    lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`FLA vs ${o} — puck drop!`, hashtags:['#TimeToHunt','#FlaPanthers','#NHL'] },
+  LAK: { abbr:'LAK', teamId:26, franchiseId:14, seasonEnd:new Date('2026-07-01'), displayName:'Los Angeles Kings',      keywords:['kings','los angeles','kopitar','doughty','fiala'],                            winCopy:"Let's go Kings! 👑",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`LAK vs ${o} — puck drop!`, hashtags:['#GoKingsGo','#LAKings','#NHL'] },
+  MIN: { abbr:'MIN', teamId:30, franchiseId:37, seasonEnd:new Date('2026-07-01'), displayName:'Minnesota Wild',         keywords:['wild','minnesota','kirill kaprizov','gustavsson','hartman'],                   winCopy:"Let's go Wild! 🌲",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`MIN vs ${o} — puck drop!`, hashtags:['#mnwild','#MNWild','#NHL'] },
+  MTL: { abbr:'MTL', teamId:8,  franchiseId:1,  seasonEnd:new Date('2026-07-01'), displayName:'Montreal Canadiens',     keywords:['canadiens','montreal','habs','caufield','slafkovsky','montembeault'],         winCopy:"Let's go Habs! 🔵",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`MTL vs ${o} — puck drop!`, hashtags:['#GoHabsGo','#Canadiens','#NHL'] },
+  NSH: { abbr:'NSH', teamId:18, franchiseId:34, seasonEnd:new Date('2026-07-01'), displayName:'Nashville Predators',    keywords:['predators','nashville','preds','forsberg','juuse saros'],                     winCopy:"Let's go Preds! 🐯",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`NSH vs ${o} — puck drop!`, hashtags:['#Preds','#NashvillePredators','#NHL'] },
+  NJD: { abbr:'NJD', teamId:1,  franchiseId:23, seasonEnd:new Date('2026-07-01'), displayName:'New Jersey Devils',      keywords:['devils','new jersey','hischier','hughes','vanecek'],                          winCopy:"Let's go Devils! 😈",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`NJD vs ${o} — puck drop!`, hashtags:['#NJDevils','#NJD','#NHL'] },
+  NYI: { abbr:'NYI', teamId:2,  franchiseId:22, seasonEnd:new Date('2026-07-01'), displayName:'New York Islanders',     keywords:['islanders','new york','isles','barzal','sorokin'],                            winCopy:"Let's go Islanders! 🏝️",  lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`NYI vs ${o} — puck drop!`, hashtags:['#Isles','#NYIsles','#NHL'] },
+  NYR: { abbr:'NYR', teamId:3,  franchiseId:10, seasonEnd:new Date('2026-07-01'), displayName:'New York Rangers',       keywords:['rangers','new york','panarin','zibanejad','shesterkin'],                      winCopy:"Let's go Rangers! 🗽",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`NYR vs ${o} — puck drop!`, hashtags:['#NYR','#NYRangers','#NHL'] },
+  OTT: { abbr:'OTT', teamId:9,  franchiseId:30, seasonEnd:new Date('2026-07-01'), displayName:'Ottawa Senators',        keywords:['senators','ottawa','sens','tkachuk','stutzle','forsberg'],                    winCopy:"Let's go Sens! 🏛️",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`OTT vs ${o} — puck drop!`, hashtags:['#GoSensGo','#Sens','#NHL'] },
+  PHI: { abbr:'PHI', teamId:4,  franchiseId:16, seasonEnd:new Date('2026-07-01'), displayName:'Philadelphia Flyers',    keywords:['flyers','philadelphia','matvei michkov','cates','fedotov'],                   winCopy:"Let's go Flyers! 🟠",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`PHI vs ${o} — puck drop!`, hashtags:['#Flyers','#PhiladelphiaFlyers','#NHL'] },
+  PIT: { abbr:'PIT', teamId:5,  franchiseId:17, seasonEnd:new Date('2026-07-01'), displayName:'Pittsburgh Penguins',    keywords:['penguins','pittsburgh','pens','crosby','malkin','jarry'],                     winCopy:"Let's go Pens! 🐧",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`PIT vs ${o} — puck drop!`, hashtags:['#LetsGoPens','#Penguins','#NHL'] },
+  SEA: { abbr:'SEA', teamId:55, franchiseId:39, seasonEnd:new Date('2026-07-01'), displayName:'Seattle Kraken',         keywords:['kraken','seattle','beniers','tanev','grubauer'],                              winCopy:"Let's go Kraken! 🦑",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`SEA vs ${o} — puck drop!`, hashtags:['#SeattleKraken','#Kraken','#NHL'] },
+  SJS: { abbr:'SJS', teamId:28, franchiseId:29, seasonEnd:new Date('2026-07-01'), displayName:'San Jose Sharks',        keywords:['sharks','san jose','celebrini','couture','mackeown'],                         winCopy:"Let's go Sharks! 🦈",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`SJS vs ${o} — puck drop!`, hashtags:['#SJSharks','#Sharks','#NHL'] },
+  STL: { abbr:'STL', teamId:19, franchiseId:18, seasonEnd:new Date('2026-07-01'), displayName:'St. Louis Blues',        keywords:['blues','st. louis','thomas','kyrou','binnington'],                            winCopy:"Let's go Blues! 🎵",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`STL vs ${o} — puck drop!`, hashtags:['#STLBlues','#Blues','#NHL'] },
+  TBL: { abbr:'TBL', teamId:14, franchiseId:31, seasonEnd:new Date('2026-07-01'), displayName:'Tampa Bay Lightning',    keywords:['lightning','tampa bay','bolts','stamkos','kucherov','vasilevskiy'],           winCopy:"Let's go Lightning! ⚡",   lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`TBL vs ${o} — puck drop!`, hashtags:['#GoBolts','#TBLightning','#NHL'] },
+  TOR: { abbr:'TOR', teamId:10, franchiseId:5,  seasonEnd:new Date('2026-07-01'), displayName:'Toronto Maple Leafs',   keywords:['maple leafs','toronto','leafs','matthews','marner','nylander'],                winCopy:"Let's go Leafs! 🍁",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`TOR vs ${o} — puck drop!`, hashtags:['#LeafsForever','#TMLtalk','#NHL'] },
+  UTA: { abbr:'UTA', teamId:59, franchiseId:40, seasonEnd:new Date('2026-07-01'), displayName:'Utah Mammoth',           keywords:['mammoth','utah','keller','peterka','villalta'],                               winCopy:"Let's go Mammoth! 🦣",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`UTA vs ${o} — puck drop!`, hashtags:['#TusksUp','#UtahMammoth','#Mammoth','#NHL'] },
+  VAN: { abbr:'VAN', teamId:23, franchiseId:20, seasonEnd:new Date('2026-07-01'), displayName:'Vancouver Canucks',      keywords:['canucks','vancouver','demko','pettersson','hughes'],                          winCopy:"Let's go Canucks! 🏒",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`VAN vs ${o} — puck drop!`, hashtags:['#Canucks','#VanCIty','#NHL'] },
+  VGK: { abbr:'VGK', teamId:54, franchiseId:38, seasonEnd:new Date('2026-07-01'), displayName:'Vegas Golden Knights',   keywords:['golden knights','vegas','knights','marchessault','stone','hill'],              winCopy:"Let's go Knights! ⚔️",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`VGK vs ${o} — puck drop!`, hashtags:['#VegasBorn','#GoKnightsGo','#NHL'] },
+  WSH: { abbr:'WSH', teamId:15, franchiseId:24, seasonEnd:new Date('2026-07-01'), displayName:'Washington Capitals',    keywords:['capitals','washington','caps','ovechkin','carlson','kuemper'],                winCopy:"Let's go Caps! 🦅",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`WSH vs ${o} — puck drop!`, hashtags:['#ALLCAPS','#Capitals','#NHL'] },
+  WPG: { abbr:'WPG', teamId:52, franchiseId:35, seasonEnd:new Date('2026-07-01'), displayName:'Winnipeg Jets',          keywords:['jets','winnipeg','scheifele','wheeler','hellebuyck'],                          winCopy:"Let's go Jets! ✈️",         lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`WPG vs ${o} — puck drop!`, hashtags:['#GoJetsGo','#NHLJets','#NHL'] },
 };
 
 // Resolve team config from a request's ?team= param; falls back to DEFAULT_TEAM_ABBR.
 // Use this in every HTTP endpoint that serves team-specific data.
-function getTeamConfig(request) {
+// Async because `season` is now live-resolved (see seasons.js) rather
+// than a static field on the team object — every call site needs `await`.
+async function getTeamConfig(request, env) {
   const abbr = new URL(request.url).searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-  return TEAM_CONFIGS[abbr] || TEAM_CONFIGS[DEFAULT_TEAM_ABBR];
+  const base = TEAM_CONFIGS[abbr] || TEAM_CONFIGS[DEFAULT_TEAM_ABBR];
+  return { ...base, season: await resolveNHLSeason(env) };
 }
 
-// The scheduled poll job uses the default team config.
-// KV keys, API calls, and notifications in poll() derive from this.
+// The scheduled poll job uses the default team's static config.
+// KV keys and notifications in poll() derive from this. `season` is NOT
+// included here — poll() resolves it live for itself (see poll() below)
+// since this constant is evaluated once at module load, before any
+// request (and its env) exists.
 const TEAM_CONFIG = TEAM_CONFIGS[DEFAULT_TEAM_ABBR];
 
-// Convenience aliases for the poll path (unchanged from before)
-const { abbr: TEAM_ABBR, teamId: TEAM_ID, season: SEASON, seasonEnd: SEASON_END } = TEAM_CONFIG;
+// Convenience aliases for the poll path (unchanged from before, minus season)
+const { abbr: TEAM_ABBR, teamId: TEAM_ID, seasonEnd: SEASON_END } = TEAM_CONFIG;
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -667,9 +680,11 @@ async function postGameToSocial(env, game, summary) {
 
 // ── MoneyPuck Player Analytics ───────────────────────────────
 
-const MP_SEASON = 20252026;
-const MP_YEAR   = String(MP_SEASON).slice(0, 4); // "2025" — MoneyPuck uses start year; bump MP_SEASON next October
-const MP_URL    = `https://moneypuck.com/moneypuck/playerData/seasonSummary/${MP_YEAR}/regular/skaters.csv`;
+// MP_URL used to be built from a hardcoded MP_SEASON constant here —
+// a second, Worker-side copy of the exact bug found in the Python
+// pipeline's moneypuck.py (a separately-hardcoded MoneyPuck year,
+// decoupled from the actual season). Now built live inside
+// fetchAndComputeMoneyPuck(), which already has `env` in scope.
 const MIN_GP = 10; // minimum games to include in percentile pool
 
 function parseCSV(text) {
@@ -720,8 +735,11 @@ async function fetchAndComputeMoneyPuck(env, teamAbbr = TEAM_ABBR) {
   // Phase 1: fetch CSV and store raw rows in KV (fast — mostly I/O)
   let rows = await kvGet(env, 'moneypuck:raw');
   if (!rows) {
-    console.log('Fetching MoneyPuck skaters CSV...');
-    const res = await fetch(MP_URL, {
+    const season = await resolveNHLSeason(env);
+    const mpYear = String(season).slice(0, 4); // MoneyPuck's URL scheme wants the start year
+    const mpUrl  = `https://moneypuck.com/moneypuck/playerData/seasonSummary/${mpYear}/regular/skaters.csv`;
+    console.log(`Fetching MoneyPuck skaters CSV (${mpYear})...`);
+    const res = await fetch(mpUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -1292,8 +1310,10 @@ async function fetchOdds(env) {
 export async function poll(env, _ctx) {
   if (new Date().getTime() > SEASON_END.getTime()) { console.log('Season over'); return; }
 
+  const season = await resolveNHLSeason(env);
+
   // 1. Schedule
-  const scheduleData = await nhlGet(`${NHL_BASE}/club-schedule-season/${TEAM_ABBR}/${SEASON}`);
+  const scheduleData = await nhlGet(`${NHL_BASE}/club-schedule-season/${TEAM_ABBR}/${season}`);
   const games = scheduleData?.games || [];
   await kvPut(env, `schedule:${TEAM_ABBR}`, games, 600);
 
@@ -1352,7 +1372,7 @@ export async function poll(env, _ctx) {
   await kvPut(env, 'standings', standings?.standings || [], 300);
 
   // 5. Team stats
-  const exp = `gameTypeId=2 and seasonId=${SEASON} and teamId=${TEAM_ID}`;
+  const exp = `gameTypeId=2 and seasonId=${season} and teamId=${TEAM_ID}`;
   const teamSummary = await nhlGet(
     `${STATS_BASE}/team/summary?isAggregate=false&isGame=false&sort=wins&limit=1&cayenneExp=${encodeURIComponent(exp)}`
   ).catch(() => null);
@@ -1388,7 +1408,7 @@ export async function poll(env, _ctx) {
 // ── PP/PK unit refresh ──────────────────────────────────────
 
 export async function refreshPPUnits(env) {
-  const season = env.NHL_SEASON || '20252026';
+  const season = await resolveNHLSeason(env);
   const r = await fetch(
     `${SB_URL}/rest/v1/special_teams_units` +
     `?season=eq.${season}&select=team,unit_type,unit_number,player_ids&limit=256`,
@@ -1420,7 +1440,7 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/news/refresh') {
     const secret = url.searchParams.get('secret');
     if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
-    const tc    = getTeamConfig(request);
+    const tc    = await getTeamConfig(request, env);
     const items = await fetchNews(env, tc.abbr);
     return json({ ok: true, count: items.length, team: tc.abbr });
   }
@@ -1431,7 +1451,7 @@ export async function handleNHL(request, env, ctx, url) {
   // subsequent requests. Without this, only the cron-polled default team (CAR)
   // would ever have a warm news cache.
   if (url.pathname === '/news' && request.method === 'GET') {
-    const tc      = getTeamConfig(request);
+    const tc      = await getTeamConfig(request, env);
     const cached  = await kvGet(env, `news:${tc.abbr}`);
     if (cached) return json(cached);
     // Cache is cold — fetch in the background and return empty for now so the
@@ -1445,7 +1465,7 @@ export async function handleNHL(request, env, ctx, url) {
   // Next request (~2s later) will get real data. Cron keeps CAR warm;
   // all other teams populate on first user request.
   if (url.pathname === '/schedule' && request.method === 'GET') {
-    const tc     = getTeamConfig(request);
+    const tc     = await getTeamConfig(request, env);
     const cached = await kvGet(env, `schedule:${tc.abbr}`);
     if (cached) return json(cached);
     ctx.waitUntil((async () => {
@@ -1481,7 +1501,8 @@ export async function handleNHL(request, env, ctx, url) {
         if (tc) {
           ctx.waitUntil((async () => {
             try {
-              const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${tc.season}`);
+              const season = await resolveNHLSeason(env);
+              const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${season}`);
               const games = data?.games || [];
               await kvPut(env, `schedule:${tc.abbr}`, games, 600);
               console.log(`Schedule bg fetch (cache miss): ${tc.abbr} (${games.length} games)`);
@@ -1708,7 +1729,7 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/moneypuck/refresh') {
     const secret = url.searchParams.get('secret');
     if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
-    const tc = getTeamConfig(request);
+    const tc = await getTeamConfig(request, env);
     await env.CACHE.delete(`moneypuck:skaters:${tc.abbr}`);
     await env.CACHE.delete('moneypuck:raw');
     ctx.waitUntil(
@@ -1735,7 +1756,7 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/shots/backfill') {
     const secret = url.searchParams.get('secret');
     if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
-    const tc        = getTeamConfig(request);
+    const tc        = await getTeamConfig(request, env);
     const batchSize = parseInt(url.searchParams.get('batch') || '5', 10);
     const schedule  = await kvGet(env, `schedule:${tc.abbr}`);
     const completed = (schedule || []).filter(g => isCompleted(g));
@@ -1771,7 +1792,7 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/summary/generate') {
     const secret = url.searchParams.get('secret');
     if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
-    const tc       = getTeamConfig(request);
+    const tc       = await getTeamConfig(request, env);
     const schedule = await kvGet(env, `schedule:${tc.abbr}`);
     const recent   = (schedule || [])
       .filter(g => isCompleted(g))
@@ -1801,7 +1822,7 @@ export async function handleNHL(request, env, ctx, url) {
     const gameId    = url.searchParams.get('gameId');
     const forceRegen = url.searchParams.get('force') === '1';
     if (!gameId) return json({ error: 'gameId required' });
-    const tc = getTeamConfig(request);
+    const tc = await getTeamConfig(request, env);
 
     const kvKey = `prediction:${gameId}`;
 

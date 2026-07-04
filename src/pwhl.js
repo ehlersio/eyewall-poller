@@ -6,6 +6,18 @@
  */
 
 import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush } from './shared.js';
+import { resolvePWHLSeason } from './seasons.js';
+
+// Resolve the ?season= query param, live-resolving the current season
+// (see seasons.js) when the param is omitted instead of a hardcoded '8'.
+// The frontend normally passes ?season= explicitly (from pwhlConfig.js),
+// so this fallback mainly matters for direct/manual endpoint calls and
+// during the frontend's own live-lookup rollout.
+async function seasonParam(url, env) {
+  const raw = url.searchParams.get('season');
+  if (raw) return parseInt(raw, 10);
+  return (await resolvePWHLSeason(env)).seasonId;
+}
 
 // PWHL team ID → abbreviation map
 const PWHL_TEAM_CODES = { 1:'BOS', 2:'MIN', 3:'MTL', 4:'NY', 5:'OTT', 6:'TOR', 8:'SEA', 9:'VAN' };
@@ -94,11 +106,6 @@ async function fetchPWHLNews(env) {
 // Called from the Worker scheduled trigger alongside NHL poll().
 // Checks for live PWHL games, fetches PBP, detects events,
 // and sends push notifications to subscribers.
-//
-// PWHL season IDs: 1=2023-24, 5=2024-25, 8=2025-26 (regular), 9=playoffs
-// Flip PWHL_SEASON each October when HockeyTech assigns new IDs.
-
-const PWHL_SEASON = 8;
 
 // Periods when PWHL season is active (roughly Nov–Jun)
 function pwhlSeasonActive() {
@@ -113,6 +120,7 @@ export async function pollPWHL(env) {
 
   try {
     const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+    const { seasonId: pwhlSeason } = await resolvePWHLSeason(env);
 
     // Get today's date in Eastern time
     const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -120,7 +128,7 @@ export async function pollPWHL(env) {
 
     // Find today's games
     const schedRes = await fetch(
-      `${SB_URL}/rest/v1/pwhl_game_log?game_date=eq.${todayStr}&season_id=eq.${PWHL_SEASON}` +
+      `${SB_URL}/rest/v1/pwhl_game_log?game_date=eq.${todayStr}&season_id=eq.${pwhlSeason}` +
       `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state&limit=10`,
       { headers: sbH }
     );
@@ -182,13 +190,6 @@ async function pollPWHLGame(env, game) {
   const periodLabel = n => n <= 3 ? `P${n}` : n === 4 ? 'OT' : `OT${n - 3}`;
 
   const scorerGoalCounts = { ...lastState.scorerGoalCounts };
-
-  // broadcast helper — prefixes PWHL: to avoid collisions with NHL abbrevs
-  const notify = (homeOrAway, payload, eventType) => {
-    const abbr    = homeOrAway === 'home' ? homeAbbr : awayAbbr;
-    const teamKey = `PWHL:${abbr}`;
-    return broadcastPWHL(env, payload, teamKey, eventType);
-  };
 
   // ── Game start ───────────────────────────────────────────
   if (!lastState.started && newEvents.length > 0) {
@@ -409,7 +410,7 @@ export async function handlePWHL(request, env, ctx, url) {
   // ── PWHL endpoints ─────────────────────────────────────────────────────────
 
   if (url.pathname === '/pwhl/standings') {
-    const season = parseInt(url.searchParams.get('season') || '8', 10);
+    const season = await seasonParam(url, env);
     const kvKey  = `pwhl:standings:${season}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
@@ -460,7 +461,7 @@ export async function handlePWHL(request, env, ctx, url) {
 
   // GET /pwhl/players?teamId=1&season=8
   if (url.pathname === '/pwhl/players') {
-    const season = parseInt(url.searchParams.get('season') || '8', 10);
+    const season = await seasonParam(url, env);
     const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
     if (!teamId) return new Response(JSON.stringify({ error: 'teamId param required' }), { status: 400, headers: corsHeaders() });
     const kvKey  = `pwhl:players:${teamId}:${season}`;
@@ -529,7 +530,7 @@ export async function handlePWHL(request, env, ctx, url) {
   // GET /pwhl/shots?teamId=1&season=8
   // Paginates through all rows in batches of 1000 to bypass Supabase row cap.
   if (url.pathname === '/pwhl/shots') {
-    const season = parseInt(url.searchParams.get('season') || '8', 10);
+    const season = await seasonParam(url, env);
     const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
     if (!teamId) return new Response(JSON.stringify({ error: 'teamId param required' }), { status: 400, headers: corsHeaders() });
     const kvKey  = `pwhl:shots:${teamId}:${season}`;
@@ -565,7 +566,7 @@ export async function handlePWHL(request, env, ctx, url) {
   // GET /pwhl/schedule?teamId=1&season=8
   // game_log has home_team_id / away_team_id — filter both sides with OR
   if (url.pathname === '/pwhl/schedule') {
-    const season = parseInt(url.searchParams.get('season') || '8', 10);
+    const season = await seasonParam(url, env);
     const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
     if (!teamId) return new Response(JSON.stringify({ error: 'teamId param required' }), { status: 400, headers: corsHeaders() });
     const kvKey  = `pwhl:schedule:${teamId}:${season}`;
@@ -649,7 +650,7 @@ export async function handlePWHL(request, env, ctx, url) {
   // GET /pwhl/lastgame?teamId=1&season=8
   // Returns the most recent completed game with opponent abbr resolved.
   if (url.pathname === '/pwhl/lastgame') {
-    const season = parseInt(url.searchParams.get('season') || '8', 10);
+    const season = await seasonParam(url, env);
     const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
     if (!teamId) return new Response(JSON.stringify({ error: 'teamId param required' }), { status: 400, headers: corsHeaders() });
     const kvKey  = `pwhl:lastgame:${teamId}:${season}`;
@@ -834,7 +835,7 @@ export async function handlePWHL(request, env, ctx, url) {
     const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
     if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
     const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
-    const season = parseInt(url.searchParams.get('season') || '8', 10);
+    const season = await seasonParam(url, env);
     if (!teamId) return new Response(JSON.stringify({ error: 'teamId required' }), { status: 400, headers: corsHeaders() });
     const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
     const keys = [
@@ -897,7 +898,7 @@ export async function handlePWHL(request, env, ctx, url) {
 
   // GET /pwhl/league-players?season=8 — all teams' skaters + goalies for Leaders tab
   if (url.pathname === '/pwhl/league-players') {
-    const season = parseInt(url.searchParams.get('season') || '8', 10);
+    const season = await seasonParam(url, env);
     const kvKey  = `pwhl:leagueplayers:${season}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
@@ -962,7 +963,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
   // GET /pwhl/player-shots?playerId=36&season=8
   if (url.pathname === '/pwhl/player-shots') {
     const playerId = parseInt(url.searchParams.get('playerId') || '0', 10);
-    const season   = parseInt(url.searchParams.get('season')   || '8', 10);
+    const season   = await seasonParam(url, env);
     if (!playerId) return new Response(JSON.stringify({ error: 'playerId required' }), { status: 400, headers: corsHeaders() });
     const kvKey  = `pwhl:pshots:${playerId}:${season}`;
     const cached = await kvGet(env, kvKey);
@@ -1002,7 +1003,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
   // GET /pwhl/today?season=8
   // Returns all games scheduled for today (Eastern time) with status pre/live/final.
   if (url.pathname === '/pwhl/today') {
-    const season = parseInt(url.searchParams.get('season') || '8', 10);
+    const season = await seasonParam(url, env);
     const kvKey  = `pwhl:today:${season}`;
 
     // 60s TTL — status needs to flip quickly when a game goes live
