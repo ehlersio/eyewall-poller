@@ -22,7 +22,13 @@ Lives in `eyewall/` alongside `eyewall-pipeline` (Python data pipeline) and `eye
 - Manual override escape hatch: `config:season:nhl:override` / `config:season:pwhl:override` KV keys, for if live resolution ever misjudges the real Sept/Oct season boundary — **that transition has never actually been observed by this logic yet.** Everything validated so far is the offseason case only.
 - `scheduled()` calls both resolvers every ~60s alongside `poll()`/`pollPWHL()` — cheap no-op except right after the 6hr TTL lapses, since both check cache first.
 
-**Known gap:** `pwhl_pbp_events.py` (lives in `eyewall-pipeline`) was not part of the Session 36 wiring — likely still reads `PWHL_SEASON` directly rather than through `season_lookup.py`. Check this before assuming it picks up the live-resolved season.
+### `getAllPWHLSeasonTypes()` and `GET /config/seasons/pwhl-types` (Session 37)
+
+`resolvePWHLSeason()` only ever answers "what's the current season" — it fetches HockeyTech's full bootstrap `seasons[]` list but collapses it to one chosen season before returning, discarding the rest. `eyewall-pipeline` needed a way to ask "what type is season N" for an *arbitrary* (possibly historical or not-yet-current) season_id, since several pipeline modules were silently defaulting an unrecognized id to `season_type="regular"`.
+
+Rather than duplicate the bootstrap-fetch logic, `fetchPWHLBootstrap(env)` was extracted as a shared, independently-cached step (`config:season:pwhl:bootstrap` KV key, same 6hr TTL) that both `resolvePWHLSeason()` and the new `getAllPWHLSeasonTypes(env)` call — one HockeyTech fetch answers both questions. `getAllPWHLSeasonTypes()` returns the full `{season_id: season_type}` map (or `null` on failure — never a guess), exposed via `GET /config/seasons/pwhl-types`. Python-pipeline-only; the frontend has no use for this and doesn't consume it, so it's a separate route rather than a new field bolted onto `/config/seasons` (which the frontend does depend on the exact shape of, via `seasonClient.js`).
+
+Consumed by `eyewall-pipeline`'s `season_lookup.get_season_type()`.
 
 ## PWHL team IDs
 HockeyTech IDs, including 2026-27 expansion teams: DET=10, HAM=11, LV=12, SJS=13. Enumerated in `PWHL_TEAM_CODES` here — **this same map is independently duplicated in `pwhl_stats.py` and `pwhl_salaries.py` (eyewall-pipeline) and `pwhlConfig.js` (eyewall-analytics).** A future expansion wave needs all four touched — confirm via grep, don't assume.
@@ -34,7 +40,7 @@ HockeyTech IDs, including 2026-27 expansion teams: DET=10, HAM=11, LV=12, SJS=13
 - If touching roster/season logic: `fetch_roster()`-style calls need the **literal current/preseason season ID**, not the "most recent regular season" that `resolvePWHLSeason()` deliberately prefers. These two concepts intentionally disagree — don't conflate them.
 
 ## Testing
-Run the full Vitest suite before pushing. `src/__tests__/seasons.test.js` has regression coverage for both real bugs above — if touching `seasons.js`, make sure these still pass and add a new regression test for any new edge case found.
+Run the full Vitest suite before pushing. `src/__tests__/seasons.test.js` has regression coverage for both real bugs above, plus `getAllPWHLSeasonTypes()` (id->type map shape, its own KV cache key, and that it shares one bootstrap fetch with `resolvePWHLSeason()` rather than doubling the HockeyTech call) — if touching `seasons.js`, make sure these still pass and add a new regression test for any new edge case found.
 
 ## Deploy
 GitHub Actions auto-deploy on push via Wrangler. Dependabot is active — watch for major-version bumps (ESLint 9→10, others) that need manual verification before merging; comment `@dependabot ignore this major version` on ones deferred to October.

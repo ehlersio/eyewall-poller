@@ -24,6 +24,7 @@ import { kvGet, kvPut } from '../shared.js'
 import {
   resolveNHLSeason,
   resolvePWHLSeason,
+  getAllPWHLSeasonTypes,
   deriveSeasonType,
   deriveStartYear,
 } from '../seasons.js'
@@ -295,5 +296,94 @@ describe('resolvePWHLSeason', () => {
     globalThis.fetch.mockRejectedValue(new Error('network down'))
     const result = await resolvePWHLSeason(env)
     expect(result.seasonId).toBe(8)
+  })
+})
+
+// ── getAllPWHLSeasonTypes ───────────────────────────────────────
+// Backs the Python pipeline's get_season_type(season_id) — the fix for
+// pipeline modules silently defaulting an unrecognized season_id to
+// "regular" instead of looking up its real type (Session 37 follow-up).
+describe('getAllPWHLSeasonTypes', () => {
+  it('returns an id -> season_type map built from the bootstrap seasons list', async () => {
+    kvGet.mockResolvedValue(null)
+    const bootstrapPayload = {
+      current_season_id: '8',
+      seasons: [
+        { id: '7', name: '2025-26 Preseason', start_date: '2025-06-01', hide_in_standings: true },
+        { id: '8', name: '2025-26 Regular Season', start_date: '2025-11-21', hide_in_standings: false },
+        { id: '9', name: '2026 Playoffs', start_date: '2026-04-28', hide_in_standings: false },
+      ],
+    }
+    globalThis.fetch.mockResolvedValue({ ok: true, text: async () => `(${JSON.stringify(bootstrapPayload)})` })
+
+    const result = await getAllPWHLSeasonTypes(env)
+
+    expect(result).toEqual({ '7': 'preseason', '8': 'regular', '9': 'playoffs' })
+  })
+
+  it('caches the parsed bootstrap under its own KV key so a later call does not re-fetch', async () => {
+    kvGet.mockResolvedValue(null)
+    const bootstrapPayload = {
+      current_season_id: '8',
+      seasons: [
+        { id: '8', name: '2025-26 Regular Season', start_date: '2025-11-21', hide_in_standings: false },
+      ],
+    }
+    globalThis.fetch.mockResolvedValue({ ok: true, text: async () => `(${JSON.stringify(bootstrapPayload)})` })
+
+    await getAllPWHLSeasonTypes(env)
+    expect(kvPut).toHaveBeenCalledWith(
+      env, 'config:season:pwhl:bootstrap', expect.any(Object), expect.any(Number)
+    )
+
+    // Simulate the KV cache now holding what was just written, then confirm
+    // a second call reads from it instead of hitting HockeyTech again.
+    const cachedBootstrap = kvPut.mock.calls.find(c => c[1] === 'config:season:pwhl:bootstrap')[2]
+    kvGet.mockImplementation((_env, key) =>
+      Promise.resolve(key === 'config:season:pwhl:bootstrap' ? cachedBootstrap : null)
+    )
+    globalThis.fetch.mockClear()
+
+    const result = await getAllPWHLSeasonTypes(env)
+    expect(result).toEqual({ '8': 'regular' })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('shares the cached bootstrap fetch with resolvePWHLSeason — one network call answers both questions', async () => {
+    kvGet.mockResolvedValue(null)
+    const bootstrapPayload = {
+      current_season_id: '8',
+      seasons: [
+        { id: '8', name: '2025-26 Regular Season', start_date: '2025-11-21', hide_in_standings: false },
+        { id: '9', name: '2026 Playoffs', start_date: '2026-04-28', hide_in_standings: false },
+      ],
+    }
+    globalThis.fetch.mockResolvedValue({ ok: true, text: async () => `(${JSON.stringify(bootstrapPayload)})` })
+
+    await resolvePWHLSeason(env)
+
+    const cachedBootstrap = kvPut.mock.calls.find(c => c[1] === 'config:season:pwhl:bootstrap')[2]
+    kvGet.mockImplementation((_env, key) =>
+      Promise.resolve(key === 'config:season:pwhl:bootstrap' ? cachedBootstrap : null)
+    )
+    globalThis.fetch.mockClear()
+
+    const types = await getAllPWHLSeasonTypes(env)
+    expect(types).toEqual({ '8': 'regular', '9': 'playoffs' })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('returns null (not a thrown error) when the bootstrap fetch fails entirely', async () => {
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockRejectedValue(new Error('network down'))
+    const result = await getAllPWHLSeasonTypes(env)
+    expect(result).toBeNull()
+  })
+
+  it('returns null on a non-OK HTTP response, without throwing', async () => {
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockResolvedValue({ ok: false, status: 502 })
+    const result = await getAllPWHLSeasonTypes(env)
+    expect(result).toBeNull()
   })
 })

@@ -20,7 +20,7 @@
 import { handleNHL, poll, refreshPPUnits } from './nhl.js';
 import { handlePWHL, pollPWHL }             from './pwhl.js';
 import { corsHeaders, json }                 from './shared.js';
-import { getSeasonsConfig, refreshSeasonsCache } from './seasons.js';
+import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes } from './seasons.js';
 
 async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
@@ -36,6 +36,23 @@ async function handleRequest(request, env, ctx) {
   if (url.pathname === '/config/seasons') {
     const config = await getSeasonsConfig(env);
     return json(config);
+  }
+
+  // id -> season_type map for every PWHL season HockeyTech's bootstrap
+  // knows about (current AND historical) — Python-pipeline-only, so
+  // pwhl_pbp_events.py/pwhl_stats.py/pwhl_shot_events.py/pwhl_milestones.py
+  // can look up an arbitrary season_id's real type instead of guessing
+  // "regular" for one they don't recognize. See seasons.js's
+  // getAllPWHLSeasonTypes() for the shared-fetch mechanism.
+  if (url.pathname === '/config/seasons/pwhl-types') {
+    const types = await getAllPWHLSeasonTypes(env);
+    if (!types) {
+      return new Response(
+        JSON.stringify({ error: 'PWHL season types unavailable' }),
+        { status: 502, headers: corsHeaders() }
+      );
+    }
+    return json(types);
   }
 
   // Route PWHL endpoints

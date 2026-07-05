@@ -6,9 +6,12 @@
  * with a hardcoded fallback seed and a manual KV override escape hatch.
  *
  * Consumed by:
- *   - GET /config/seasons          (frontend + Python pipeline read this)
- *   - nhl.js's per-team `season`   (currently hardcoded per-team, see note below)
- *   - pwhl.js's PWHL_SEASON        (currently a module const, see note below)
+ *   - GET /config/seasons            (frontend + Python pipeline read this)
+ *   - GET /config/seasons/pwhl-types (Python pipeline only — id -> season_type
+ *     map for arbitrary/historical season_ids, added Session 37 so pipeline
+ *     modules stop silently guessing "regular" for an id they don't recognize)
+ *   - nhl.js's per-team `season`     (currently hardcoded per-team, see note below)
+ *   - pwhl.js's PWHL_SEASON          (currently a module const, see note below)
  *
  * NOTE ON SCOPE (2026-07): this module and the /config/seasons endpoint
  * are complete and self-contained. Wiring nhl.js's 32 hardcoded
@@ -117,6 +120,52 @@ export function deriveStartYear(startDate, name) {
   return m ? parseInt(m[1], 10) : FALLBACK_PWHL.startYear;
 }
 
+// Shared bootstrap fetch, cached under its own KV key (`config:season:pwhl:bootstrap`,
+// same 6hr TTL as everything else here). Both resolvePWHLSeason() (picks the
+// single "current" season) and getAllPWHLSeasonTypes() (answers "what type is
+// season N" for ANY id, current or historical) need HockeyTech's full
+// seasons[] list — this fetches it once instead of twice for two questions
+// that come from the same underlying response. Does NOT catch its own
+// errors — callers decide what "bootstrap unavailable" means for them
+// (resolvePWHLSeason falls back to FALLBACK_PWHL; getAllPWHLSeasonTypes
+// returns null).
+async function fetchPWHLBootstrap(env) {
+  const cached = await kvGet(env, 'config:season:pwhl:bootstrap');
+  if (cached) return cached;
+
+  // feed=modulekit (used here previously) returns a 200 OK with a bogus
+  // {"SiteKit":{...,"Undefined":"Undefined Tab bootstrap"}} shape and no
+  // seasons/teams data at all — silently falling through to
+  // FALLBACK_PWHL below every single time, which went undetected because
+  // the fallback happened to look plausible. feed=statviewfeed, plus the
+  // extra params below, is the real shape confirmed via a captured
+  // browser DevTools request against thepwhl.com on 2026-07-05.
+  // callback=angular.callbacks._0 deliberately omitted — that's Angular's
+  // JSONP callback naming; unwrapJsonp() expects a plain (...)-wrapped
+  // body, same as every other statviewfeed call elsewhere in this repo.
+  const url =
+    `${HT_BASE}?feed=statviewfeed&view=bootstrap&season=&game_id=&pageName=leadersExtended` +
+    `&key=${HT_KEY}&client_code=pwhl&site_id=0&league_id=&league_code=&conference=-1&division=-1&lang=en`;
+  const res = await fetch(url, { headers: HT_HDR });
+  if (!res.ok) throw new Error(`bootstrap ${res.status}`);
+  const data = unwrapJsonp(await res.text());
+
+  const seasons = (data?.seasons || []).map(s => ({
+    id: String(s.id),
+    seasonType: deriveSeasonType(s.name),
+    startYear: deriveStartYear(s.start_date, s.name),
+    hide_in_standings: !!s.hide_in_standings,
+    start_date: s.start_date,
+  }));
+  const parsed = {
+    currentSeasonId: data?.current_season_id != null ? String(data.current_season_id) : null,
+    seasons,
+  };
+
+  await kvPut(env, 'config:season:pwhl:bootstrap', parsed, TTL_SECONDS);
+  return parsed;
+}
+
 export async function resolvePWHLSeason(env) {
   const override = await kvGet(env, 'config:season:pwhl:override');
   if (override) return override;
@@ -125,26 +174,8 @@ export async function resolvePWHLSeason(env) {
   if (cached) return cached;
 
   try {
-    // feed=modulekit (used here previously) returns a 200 OK with a bogus
-    // {"SiteKit":{...,"Undefined":"Undefined Tab bootstrap"}} shape and no
-    // seasons/teams data at all — silently falling through to
-    // FALLBACK_PWHL below every single time, which went undetected because
-    // the fallback happened to look plausible. feed=statviewfeed, plus the
-    // extra params below, is the real shape confirmed via a captured
-    // browser DevTools request against thepwhl.com on 2026-07-05.
-    // callback=angular.callbacks._0 deliberately omitted — that's Angular's
-    // JSONP callback naming; unwrapJsonp() expects a plain (...)-wrapped
-    // body, same as every other statviewfeed call elsewhere in this repo.
-    const url =
-      `${HT_BASE}?feed=statviewfeed&view=bootstrap&season=&game_id=&pageName=leadersExtended` +
-      `&key=${HT_KEY}&client_code=pwhl&site_id=0&league_id=&league_code=&conference=-1&division=-1&lang=en`;
-    const res = await fetch(url, { headers: HT_HDR });
-    if (!res.ok) throw new Error(`bootstrap ${res.status}`);
-    const data = unwrapJsonp(await res.text());
-
-    const seasons = data?.seasons || [];
-    const currentId = data?.current_season_id;
-    const currentSeason = seasons.find(s => String(s.id) === String(currentId));
+    const { currentSeasonId, seasons } = await fetchPWHLBootstrap(env);
+    const currentSeason = seasons.find(s => s.id === currentSeasonId);
 
     // Reject bootstrap's "current" season if it's hidden from standings —
     // the observed 2026-07 case: current_season_id pointed at a
@@ -166,7 +197,7 @@ export async function resolvePWHLSeason(env) {
     let chosen = currentSeason;
     if (!chosen || chosen.hide_in_standings) {
       const nonHidden = seasons.filter(s => !s.hide_in_standings);
-      const regularSeasons = nonHidden.filter(s => deriveSeasonType(s.name) === 'regular');
+      const regularSeasons = nonHidden.filter(s => s.seasonType === 'regular');
       const pool = regularSeasons.length > 0 ? regularSeasons : nonHidden;
       chosen = pool.sort((a, b) => new Date(b.start_date) - new Date(a.start_date))[0];
     }
@@ -178,8 +209,8 @@ export async function resolvePWHLSeason(env) {
 
     const resolved = {
       seasonId: Number(chosen.id),
-      seasonType: deriveSeasonType(chosen.name),
-      startYear: deriveStartYear(chosen.start_date, chosen.name),
+      seasonType: chosen.seasonType,
+      startYear: chosen.startYear,
       resolvedAt: new Date().toISOString(),
       source: 'live',
     };
@@ -189,6 +220,26 @@ export async function resolvePWHLSeason(env) {
   } catch (e) {
     console.warn(`PWHL season resolve failed: ${e.message} — using fallback`);
     return FALLBACK_PWHL;
+  }
+}
+
+// Answers "what type is season N" for ANY season_id HockeyTech's bootstrap
+// knows about — current, historical, or a not-yet-hidden-toggled future
+// one — unlike resolvePWHLSeason() which only ever returns a single
+// "current" answer. Backs the Python pipeline's get_season_type(), which
+// needs this to stop guessing "regular" for season_ids it doesn't
+// recognize (Session 37 follow-up). Returns null (not a thrown error) on
+// any failure — callers should treat null as "couldn't get real data
+// right now," not as license to guess.
+export async function getAllPWHLSeasonTypes(env) {
+  try {
+    const { seasons } = await fetchPWHLBootstrap(env);
+    const map = {};
+    for (const s of seasons) map[s.id] = s.seasonType;
+    return map;
+  } catch (e) {
+    console.warn(`PWHL season-type map resolve failed: ${e.message}`);
+    return null;
   }
 }
 
