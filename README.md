@@ -9,12 +9,35 @@ src/
 ├── worker.js    # Thin router + scheduled entry point
 ├── nhl.js       # NHL poll loop, push notifications, all /nhl/* endpoints
 ├── pwhl.js      # All /pwhl/* endpoints
+├── seasons.js   # Live NHL/PWHL season resolution (added 2026-07), cached in KV
 └── shared.js    # KV helpers, response utilities, shared constants
 ```
 
-Wrangler bundles all modules on deploy. The scheduled trigger (`* * * * *`) runs `poll()` every 60 seconds during the season to keep NHL data fresh in KV.
+Wrangler bundles all modules on deploy. The scheduled trigger (`* * * * *`) runs `poll()`, `pollPWHL()`, `refreshPPUnits()`, and `refreshSeasonsCache()` every 60 seconds during the season to keep NHL/PWHL data and the resolved season fresh in KV.
 
 Bindings: `CACHE` (KV), `AI` (Workers AI — required for all narrative/scouting endpoints).
+
+## Live Season Resolution
+
+Added 2026-07, replacing what used to be a yearly manual flip of `NHL_SEASON`/`PWHL_CURRENT_SEASON` across this repo, the frontend, and the pipeline. `seasons.js` is the single source of truth for "what season is it right now" — everything else (this repo's own `nhl.js`/`pwhl.js`, the frontend's `teamConfig.js`/`pwhlConfig.js`, the pipeline's `season_lookup.py`) reads from it rather than resolving independently.
+
+**`resolveNHLSeason(env)`** — calls `api-web.nhle.com/v1/standings/now`, rejects the candidate if `gamesPlayed` is 0 (the real Sept/Oct pre-season-gap case), falls back to a hardcoded seed otherwise.
+
+**`resolvePWHLSeason(env)`** — calls HockeyTech's `bootstrap` view (`feed=statviewfeed&view=bootstrap`, **not** `feed=modulekit` — the latter returns a 200 OK with no real payload and silently masqueraded as working for a while before being caught), rejects `current_season_id` if it's `hide_in_standings: true`, and — important — prefers the most recent **regular** season over the most recent season of any type. This isn't optional: almost every `/pwhl/*` endpoint filters `season_type=eq.regular` downstream in Supabase, so resolving to a playoffs-type season_id broke every PWHL view in production for a stretch (caught via Cypress, not by this logic itself) before this preference was added.
+
+Both are cached in KV (`config:season:nhl`, `config:season:pwhl`, 6hr TTL) and exposed at `GET /config/seasons`. The `scheduled()` handler calls both on every tick, but since they check the cache first, this is a cheap no-op except right after the TTL lapses — it does **not** hit the NHL/HockeyTech APIs every 60 seconds.
+
+**Manual override**, for if live resolution ever misjudges the real season boundary (this has happened once already, and the true Sept/Oct transition boundary has never been directly observed):
+```powershell
+wrangler kv key put --binding=CACHE "config:season:nhl:override" '"20262027"' --remote
+wrangler kv key put --binding=CACHE "config:season:pwhl:override" '{"seasonId":9,"seasonType":"regular","startYear":2026}' --remote
+```
+**Note the `--remote` flag** — `wrangler kv key delete`/`put`/`get` without it operates on the local/preview namespace, not the one this Worker actually reads in production. This cost real debugging time once already; don't repeat it.
+Delete the override key(s) once live resolution is confirmed correct again — they take priority over everything else, including the cache.
+
+**Known gap:** `nhl.js`'s 32 `TEAM_CONFIGS` entries and `pwhl.js`'s per-endpoint season handling were updated to read from `seasons.js` — but this was a deliberate, careful pass through every call site (not a blind find-and-replace), since `getTeamConfig()` had to become async and every caller needed updating. If a new endpoint or team-config consumer gets added later, make sure it reads the live value rather than reintroducing a hardcoded season.
+
+**Also found and fixed in `nhl.js` while doing this pass:** a *second*, separate hardcoded `MP_SEASON` constant driving the MoneyPuck CSV fetch URL — the same decoupled-season bug shape as the one already known about in the pipeline's `moneypuck.py`, just duplicated a second time on the Worker side. Both are now derived from the live-resolved season instead of two independent hardcoded copies.
 
 ## Prerequisites
 
@@ -37,6 +60,19 @@ npm run dev
 
 Runs the Worker locally via `wrangler dev`. Binds to your real KV namespace by default — use a preview namespace for isolation if needed.
 
+## Testing
+
+Added 2026-07 — this repo had no test infrastructure before then. Currently covers `seasons.js` only (the one piece of genuinely new logic added this session, not a straight port of something already working).
+
+```powershell
+npm install -D vitest
+npm run test    # or: npx vitest run
+```
+
+`vitest.config.js` runs under plain Node (`environment: 'node'`), not `@cloudflare/vitest-pool-workers` — deliberately. `seasons.js`'s own logic only touches `fetch` and the imported `kvGet`/`kvPut` helpers, both of which mock cleanly without a real Workers runtime. If a future test needs to cover actual HTTP routing through `worker.js`/`nhl.js`/`pwhl.js` (not just `seasons.js`'s resolution logic), that's a heavier lift worth reconsidering `@cloudflare/vitest-pool-workers` for at that point.
+
+Test file: `src/__tests__/seasons.test.js`. Covers: the manual override, KV cache hits, the "reject a zero-games-played candidate" fallback, the "reject a hidden `current_season_id`" fallback, and — the two tests that actually matter most — a regression test asserting `feed=statviewfeed` (not `feed=modulekit`) gets called, and a fixture built from the real 2026-07-05 production bootstrap payload confirming resolution picks season 8 (regular) over season 9 (playoffs) even though 9 is more recent by date. Both of those fixtures exist because they're exactly the two real bugs that shipped to production before being caught.
+
 ## Deploy
 
 ```powershell
@@ -55,7 +91,7 @@ Set via `wrangler secret put <NAME>`. Never commit values.
 | `VAPID_PRIVATE_KEY` | Web Push VAPID private key |
 | `VAPID_PUBLIC_KEY` | Web Push VAPID public key |
 | `VAPID_SUBJECT` | Web Push contact (`mailto:...`) |
-| `NHL_SEASON` | Current NHL season e.g. `20252026` — flip each October |
+| `NHL_SEASON` | **No longer read anywhere in this repo as of 2026-07.** Season resolution is entirely handled by `seasons.js`, whose own fallback is a hardcoded constant, not this secret. Kept here only because `eyewall-pipeline`'s `db.py` still reads a secret of the same name as *its* fallback — that's a separate repo/secret, not this one. Safe to leave this one stale or eventually remove it. |
 | `ODDS_API_KEY` | The Odds API key for game odds |
 | `X_ACCESS_SECRET` | X (Twitter) OAuth access secret |
 | `X_CONSUMER_SECRET` | X (Twitter) OAuth consumer secret |
@@ -107,6 +143,16 @@ Key patterns:
 | `pwhl:summary:{gameId}` | 1hr | PWHL game summary (goals, MVPs, team stats) |
 | `pwhl:narrative:{period}:{gameId}:{carAbbr}` | 24hr | AI period/game narrative per team perspective |
 | `pwhl:pshots:{playerId}:{season}` | 6hr | PWHL player shot heat map data |
+| `config:season:nhl` | 6hr | Live-resolved current NHL season (see [Live Season Resolution](#live-season-resolution)) |
+| `config:season:pwhl` | 6hr | Live-resolved current PWHL season `{seasonId, seasonType, startYear}` |
+| `config:season:nhl:override` | none (manual) | Forces a specific NHL season, bypassing live resolution entirely |
+| `config:season:pwhl:override` | none (manual) | Forces a specific PWHL season, bypassing live resolution entirely |
+
+## Config Endpoints
+
+| Method | Path | Description |
+|--------|------|--------------|
+| `GET` | `/config/seasons` | Live-resolved current NHL + PWHL season (see [Live Season Resolution](#live-season-resolution)). Consumed by the frontend at app boot and by the pipeline's `season_lookup.py`. |
 
 ## NHL Endpoints
 
@@ -153,18 +199,20 @@ Key patterns:
 | `POST` | `/pwhl/news/ingest` | Ingest articles from GH Actions |
 | `POST` | `/pwhl/news/bust` | Invalidate news KV cache |
 | `POST` | `/pwhl/scout` | AI scouting report for a player |
-| `POST` | `/pwhl/cache/bust` | Invalidate team KV caches |
+| `POST` | `/pwhl/cache/bust?secret=&teamId=&season=` | Invalidate one team's KV caches (players/shots/schedule/lastgame) for a given season |
 | `GET` | `/pwhl/summary?gameId=` | Game summary (goals, MVPs, team stats) from HockeyTech |
 | `POST` | `/pwhl/summary/narrative?gameId=&period=&carAbbr=` | AI period/game narrative (cached per team perspective) |
 
 ## October Season Prep
 
-Each October flip these before the new season starts:
+**Most of this is now automatic (2026-07)** — see [Live Season Resolution](#live-season-resolution). What's left:
 
-- `NHL_SEASON` secret → new season string e.g. `20262027`
-- `PWHL_CURRENT_SEASON` in `pwhl.js` → new HockeyTech season ID (verify with HockeyTech)
-- Add PWHL expansion team IDs once HockeyTech assigns them (Detroit, Hamilton, Las Vegas, San Jose)
-- Narrative KV keys include `carAbbr` — stale keys from prior season expire naturally (24hr TTL)
+- ~~`NHL_SEASON` secret → new season string~~ — no longer read anywhere in this repo
+- ~~`PWHL_CURRENT_SEASON` in `pwhl.js`~~ — removed entirely; resolved live via `seasons.js`
+- ~~Add PWHL expansion team IDs~~ — done 2026-07 (`PWHL_TEAM_CODES` in `pwhl.js` includes DET=10, HAM=11, LV=12, SJS=13)
+- Narrative KV keys include `carAbbr` — stale keys from prior season expire naturally (24hr TTL) — still true, no change needed
+- **If a future expansion wave adds a new team_id again:** add it to `pwhl.js`'s `PWHL_TEAM_CODES` map. Also worth checking the pipeline's `pwhl_stats.py`/`pwhl_salaries.py` for their own separate team-ID maps — those don't share this file's map and need the same addition independently (found the hard way in 2026-07: three separate places across two repos enumerate PWHL team IDs).
+- **If live season resolution ever misjudges the real season boundary:** use the KV override documented above rather than an emergency redeploy. The real Sept/Oct transition has never been directly observed by this logic yet — worth paying attention the first time it happens live.
 
 ## Related Repos
 
