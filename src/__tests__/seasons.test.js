@@ -181,11 +181,16 @@ describe('resolvePWHLSeason', () => {
     expect(result.startYear).toBe(2025)
   })
 
-  it('rejects a hidden current_season_id and falls back to the most recent non-hidden season — the real 2026-07 case', async () => {
-    // Mirrors the actual bootstrap response observed 2026-07-04:
-    // current_season_id pointed at a not-yet-started preseason
-    // (hide_in_standings: true), and the correct answer was the most
-    // recent real season instead (2026 Playoffs).
+  it('rejects a hidden current_season_id and falls back to the most recent REGULAR season — not just the most recent season of any type', async () => {
+    // This is the corrected version of a real production bug: the first
+    // version of this logic picked the most recent non-hidden season of
+    // ANY type, which landed on "9" (2026 Playoffs) here — plausible-
+    // looking, but wrong. Almost every pwhl.js endpoint hardcodes
+    // season_type=eq.regular on top of whatever season_id it's given, so
+    // resolving to a playoffs-type ID made those queries return nothing
+    // at all, for every team. Caught via real Cypress failures across
+    // standings/players/team/shot-map views, 2026-07-06 — not by this
+    // test suite, which is why this fixture exists now.
     kvGet.mockResolvedValue(null)
     const bootstrapPayload = {
       current_season_id: '10',
@@ -197,9 +202,9 @@ describe('resolvePWHLSeason', () => {
     }
     globalThis.fetch.mockResolvedValue({ ok: true, text: async () => `(${JSON.stringify(bootstrapPayload)})` })
     const result = await resolvePWHLSeason(env)
-    expect(result.seasonId).toBe(9)
-    expect(result.seasonType).toBe('playoffs')
-    expect(result.startYear).toBe(2026)
+    expect(result.seasonId).toBe(8)
+    expect(result.seasonType).toBe('regular')
+    expect(result.startYear).toBe(2025)
   })
 
   it('calls the bootstrap endpoint with feed=statviewfeed, not feed=modulekit', async () => {
@@ -220,14 +225,16 @@ describe('resolvePWHLSeason', () => {
     expect(calledUrl).not.toContain('feed=modulekit')
   })
 
-  it('resolves the real 2026-07-05 production bootstrap payload to season 9, not the fallback', async () => {
+  it('resolves the real 2026-07-05 production bootstrap payload to season 8 (regular), not 9 (playoffs) even though 9 is more recent', async () => {
     // Fixture built from an actual captured response (docs/hockeytech-api-notes.md).
-    // current_season_id "10" (2026-27 Pre-Season) is hidden; the most recent
-    // non-hidden season is "9" (2026 Playoffs, start_date 2026-04-28) — NOT
-    // "8" (2025-26 Regular Season, start_date 2025-11-21), even though "8"
-    // is what FALLBACK_PWHL happens to also equal. This test only passes
-    // if resolution actually ran against real data rather than silently
-    // hitting the fallback — which is exactly the bug this fixture caught.
+    // current_season_id "10" (2026-27 Pre-Season) is hidden. "9" (2026
+    // Playoffs, start_date 2026-04-28) is more recent by date than "8"
+    // (2025-26 Regular Season, start_date 2025-11-21) — but "8" is the
+    // correct answer for this app, because "9" being a playoffs-type
+    // season_id breaks every endpoint that filters season_type=eq.regular.
+    // This exact fixture is what actually shipped to production and broke
+    // Cypress on 2026-07-06 before this fix — it only passes now because
+    // resolution prefers season TYPE correctly, not just recency.
     kvGet.mockResolvedValue(null)
     const realBootstrapPayload = {
       current_season_id: '10',
@@ -241,9 +248,29 @@ describe('resolvePWHLSeason', () => {
     }
     globalThis.fetch.mockResolvedValue({ ok: true, text: async () => `(${JSON.stringify(realBootstrapPayload)})` })
     const result = await resolvePWHLSeason(env)
+    expect(result.seasonId).toBe(8)
+    expect(result.seasonType).toBe('regular')
+    expect(result.startYear).toBe(2025)
+  })
+
+  it('falls back to the most recent season of any type only when no regular season exists at all', async () => {
+    // Edge case for the new preference logic: if somehow every non-hidden
+    // season were a playoffs/preseason/showcase type, don't return
+    // nothing — fall back to most-recent-of-any-type rather than the
+    // hardcoded FALLBACK_PWHL, since a real (if imperfect) live answer is
+    // still better than a static guess.
+    kvGet.mockResolvedValue(null)
+    const bootstrapPayload = {
+      current_season_id: '99',
+      seasons: [
+        { id: '6', name: '2025 Playoffs', start_date: '2025-05-06', hide_in_standings: false },
+        { id: '9', name: '2026 Playoffs', start_date: '2026-04-28', hide_in_standings: false },
+      ],
+    }
+    globalThis.fetch.mockResolvedValue({ ok: true, text: async () => `(${JSON.stringify(bootstrapPayload)})` })
+    const result = await resolvePWHLSeason(env)
     expect(result.seasonId).toBe(9)
     expect(result.seasonType).toBe('playoffs')
-    expect(result.startYear).toBe(2026)
   })
 
   it('falls back gracefully when bootstrap has no usable season at all', async () => {

@@ -148,15 +148,27 @@ export async function resolvePWHLSeason(env) {
 
     // Reject bootstrap's "current" season if it's hidden from standings —
     // the observed 2026-07 case: current_season_id pointed at a
-    // not-yet-started preseason with zero games. Fall back to the most
-    // recent non-hidden season by start_date instead, same "most recent
-    // season with real data" rule the site's own widgets already follow.
+    // not-yet-started preseason with zero games.
+    //
+    // Falling back to "most recent non-hidden season of ANY type" seemed
+    // right at first (matches what the site's own standings widget does),
+    // but it's wrong for this app specifically: almost every endpoint in
+    // pwhl.js hardcodes `season_type=eq.regular` on top of whatever
+    // season_id it's given. Resolving to a playoffs-type season_id (e.g.
+    // "9") makes those queries return nothing at all — not sparse data,
+    // literally empty — for every team, including the two that actually
+    // played in that postseason. Caught via real Cypress failures across
+    // standings/players/team/shot-map views, 2026-07-06.
+    //
+    // So: prefer the most recent non-hidden REGULAR season specifically.
+    // Only fall back to "most recent of any type" if no regular season
+    // exists at all in the response (shouldn't happen in practice).
     let chosen = currentSeason;
     if (!chosen || chosen.hide_in_standings) {
-      const candidates = seasons
-        .filter(s => !s.hide_in_standings)
-        .sort((a, b) => new Date(b.start_date) - new Date(a.start_date));
-      chosen = candidates[0];
+      const nonHidden = seasons.filter(s => !s.hide_in_standings);
+      const regularSeasons = nonHidden.filter(s => deriveSeasonType(s.name) === 'regular');
+      const pool = regularSeasons.length > 0 ? regularSeasons : nonHidden;
+      chosen = pool.sort((a, b) => new Date(b.start_date) - new Date(a.start_date))[0];
     }
 
     if (!chosen) {
