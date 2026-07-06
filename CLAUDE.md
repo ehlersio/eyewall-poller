@@ -12,6 +12,29 @@ Cloudflare Workers backend for EyeWall Analytics — a hockey analytics platform
 ## Sibling repos
 Lives in `eyewall/` alongside `eyewall-pipeline` (Python data pipeline) and `eyewall-analytics` (React frontend). This repo is the API layer between them — the pipeline writes to Supabase, this Worker reads from Supabase + live APIs and serves the frontend.
 
+## Git branch hygiene (standing rule — read before any session)
+
+Before making any file changes in a new session, always run:
+
+```
+git status
+git branch
+```
+
+If the current branch is not `main`, or if `main` locally is behind `origin/main`, stop and do this first:
+
+```
+git checkout main
+git pull origin main
+git checkout -b <new-branch-name-for-this-session>
+```
+
+Only start editing files after confirming you're on a fresh branch cut from an up-to-date `main`. Do not assume the working directory is already in the right state, even if the previous session ended with a merge — branch switches are a manual step and are easy to forget.
+
+Name the new branch for what the session is actually doing (e.g. `session43-line-combinations`), not a generic name, so it's identifiable later if it needs recovering.
+
+At the end of a session, after a PR is merged, explicitly prompt a reminder to run `git checkout main && git pull origin main` before ending — don't assume this happens automatically between sessions.
+
 ## Live season resolution (core architecture, built Session 35–36)
 
 `seasons.js` is the single source of truth for "what season is it right now" — replaced ~8 independently hardcoded season constants across all three repos.
