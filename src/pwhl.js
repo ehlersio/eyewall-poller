@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit } from './shared.js';
 import { resolvePWHLSeason } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -938,7 +938,10 @@ export async function handlePWHL(request, env, ctx, url) {
   }
 
   // POST /pwhl/scout — generate AI scouting report for a PWHL player
+  // Public, billed-AI route; rate-limited below (no secret check — called directly from the frontend)
   if (url.pathname === '/pwhl/scout' && request.method === 'POST') {
+    const limited = await checkAiRateLimit(env, request, 'pwhl-scout');
+    if (limited) return limited;
     let body;
     try { body = await request.json(); } catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: corsHeaders() }); }
     const { name, position, stats, isGoalie, seasonLabel } = body;
@@ -1380,7 +1383,10 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
   // POST /pwhl/summary/narrative?gameId=210&period=1
   // Generates AI period/game narrative for PWHL summaries.
   // Caches in KV so subsequent users get the pre-generated text.
+  // Public, billed-AI route; rate-limited below (no secret check — called directly from the frontend)
   if (url.pathname === '/pwhl/summary/narrative' && request.method === 'POST') {
+    const limited = await checkAiRateLimit(env, request, 'pwhl-summary-narrative');
+    if (limited) return limited;
     const gameId    = url.searchParams.get('gameId') || '';
     const periodKey = url.searchParams.get('period') || '1';
     // Include carAbbr in cache key so each team gets its own perspective

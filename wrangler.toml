@@ -23,6 +23,21 @@ id      = "08c4ef455c584c83a811a96aa3c620ed"
 [ai]
 binding = "AI"
 
+# Rate limiting binding — guards the billed AI-calling routes
+# (/prediction/analyze, /summary/narrative, /pwhl/summary/narrative,
+# /pwhl/scout) from unbounded public-cost abuse. These routes are called
+# directly from the public frontend, so a shared-secret check (as used by
+# the ingest/mutating routes below) wouldn't work — the secret would ship
+# in browser JS. This is a Workers-native platform feature (not a
+# dashboard/WAF rule), works on any Workers plan, and is provisioned
+# automatically at deploy time from this config — no separate dashboard
+# setup needed. namespace_id is an arbitrary small integer scoping this
+# binding's buckets; it doesn't need to be pre-created anywhere.
+[[ratelimits]]
+name         = "AI_ROUTE_LIMITER"
+namespace_id = "1001"
+simple       = { limit = 10, period = 60 }
+
 # Secrets (set via `wrangler secret put <NAME>` — never commit values here):
 #   POLL_SECRET
 #   VAPID_PUBLIC_KEY

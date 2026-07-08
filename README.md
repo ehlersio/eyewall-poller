@@ -15,7 +15,7 @@ src/
 
 Wrangler bundles all modules on deploy. The scheduled trigger (`* * * * *`) runs `poll()`, `pollPWHL()`, `refreshPPUnits()`, and `refreshSeasonsCache()` every 60 seconds during the season to keep NHL/PWHL data and the resolved season fresh in KV.
 
-Bindings: `CACHE` (KV), `AI` (Workers AI — required for all narrative/scouting endpoints).
+Bindings: `CACHE` (KV), `AI` (Workers AI — required for all narrative/scouting endpoints), `AI_ROUTE_LIMITER` (Rate Limit — guards the 4 unauthenticated AI-calling routes from public-cost abuse).
 
 ## Live Season Resolution
 
@@ -102,6 +102,7 @@ Set via `wrangler secret put <NAME>`. Never commit values.
 |---------|------|-------------|
 | `CACHE` | KV Namespace | All KV read/write operations |
 | `AI` | Workers AI | Required for `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/prediction/analyze`, `/draft/analyze` |
+| `AI_ROUTE_LIMITER` | Rate Limit | Per-IP, per-route limit (10 req/60s) on the 4 AI-calling routes with no secret check — `/prediction/analyze`, `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`. Provisioned automatically from `wrangler.toml` at deploy time, no dashboard setup needed. |
 
 View current secrets:
 ```powershell
