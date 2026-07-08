@@ -7,7 +7,7 @@ export default defineConfig({
     include: ['src/**/*.test.js'],
     coverage: {
       reporter: ['text', 'html'],
-      include: ['src/seasons.js'],
+      include: ['src/seasons.js', 'src/worker.js', 'src/nhl.js', 'src/pwhl.js'],
     },
   },
 })
