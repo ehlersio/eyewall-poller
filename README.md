@@ -62,16 +62,22 @@ Runs the Worker locally via `wrangler dev`. Binds to your real KV namespace by d
 
 ## Testing
 
-Added 2026-07 — this repo had no test infrastructure before then. Currently covers `seasons.js` only (the one piece of genuinely new logic added this session, not a straight port of something already working).
+Added 2026-07 — this repo had no test infrastructure before then. Session 47 added an HTTP-route-level test harness and covered a first slice of routes; Session 48 filled in the rest of the previously-untested HTTP surface (110 tests total as of Session 48).
 
 ```powershell
 npm install -D vitest
 npm run test    # or: npx vitest run
 ```
 
-`vitest.config.js` runs under plain Node (`environment: 'node'`), not `@cloudflare/vitest-pool-workers` — deliberately. `seasons.js`'s own logic only touches `fetch` and the imported `kvGet`/`kvPut` helpers, both of which mock cleanly without a real Workers runtime. If a future test needs to cover actual HTTP routing through `worker.js`/`nhl.js`/`pwhl.js` (not just `seasons.js`'s resolution logic), that's a heavier lift worth reconsidering `@cloudflare/vitest-pool-workers` for at that point.
+`vitest.config.js` runs under plain Node (`environment: 'node'`), not `@cloudflare/vitest-pool-workers` — deliberately. Route handlers only touch Workers-specific APIs via `env.CACHE`/`env.AI`/`env.AI_ROUTE_LIMITER`, all of which mock cleanly without a real Workers runtime (see `src/__tests__/route-harness.js`).
 
-Test file: `src/__tests__/seasons.test.js`. Covers: the manual override, KV cache hits, the "reject a zero-games-played candidate" fallback, the "reject a hidden `current_season_id`" fallback, and — the two tests that actually matter most — a regression test asserting `feed=statviewfeed` (not `feed=modulekit`) gets called, and a fixture built from the real 2026-07-05 production bootstrap payload confirming resolution picks season 8 (regular) over season 9 (playoffs) even though 9 is more recent by date. Both of those fixtures exist because they're exactly the two real bugs that shipped to production before being caught.
+Test files:
+- `src/__tests__/seasons.test.js` — `seasons.js`'s own resolution logic. Covers: the manual override, KV cache hits, the "reject a zero-games-played candidate" fallback, the "reject a hidden `current_season_id`" fallback, and — the two tests that actually matter most — a regression test asserting `feed=statviewfeed` (not `feed=modulekit`) gets called, and a fixture built from the real 2026-07-05 production bootstrap payload confirming resolution picks season 8 (regular) over season 9 (playoffs) even though 9 is more recent by date. Both of those fixtures exist because they're exactly the two real bugs that shipped to production before being caught.
+- `src/__tests__/worker-routes.test.js` — the dispatcher (`/config/seasons`, `/config/seasons/pwhl-types`, `/pwhl/*` vs. everything-else routing).
+- `src/__tests__/nhl-routes.test.js` — `handleNHL`'s routes: a representative slice of read-proxy routes, all `POLL_SECRET`-gated mutating/ingest routes (asserting actual KV mutations/merge logic, not just status codes), and the AI-calling routes (`/prediction/analyze`, `/summary/narrative`). Writing these tests found and fixed a real bug in `/reddit/ingest` (`getNewsSources()` was called with the team config object instead of the abbr string, throwing on every real ingest call).
+- `src/__tests__/pwhl-routes.test.js` — `handlePWHL`'s equivalent: `/pwhl/standings`'s enrichment logic, the `POLL_SECRET`-gated cache-bust/ingest routes, and the AI-calling routes (`/pwhl/scout`, `/pwhl/summary/narrative`).
+
+The remaining ~35 plain read-proxy routes (parse params → cache check → `sbRows()`/fetch → cache write → JSON) all follow the same shape already covered here and are mechanical to extend if ever needed.
 
 ## Deploy
 
