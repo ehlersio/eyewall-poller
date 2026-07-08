@@ -27,6 +27,11 @@ export function makeFakeCache(initial = {}) {
     async delete(key) {
       store.delete(key)
     },
+    // Real KV's getWithMetadata — poll() uses this (not plain get) to check
+    // the news cache age without deserializing the value.
+    async getWithMetadata(key) {
+      return { value: store.has(key) ? store.get(key) : null, metadata: null }
+    },
     _store: store, // test-only escape hatch for asserting on raw cache state
   }
 }
@@ -37,10 +42,19 @@ export function makeFakeAI(runImpl) {
   return { run: runImpl || vi.fn().mockResolvedValue({ response: 'mock AI response' }) }
 }
 
+// Fake env.AI_ROUTE_LIMITER — the Workers-native rate-limit binding guarding
+// the AI-calling routes (Session 48, Item 3). Defaults to always-allow so
+// existing/new tests don't need to know about it; override per-test to
+// exercise the 429 path once a route actually checks it.
+export function makeFakeRateLimiter(limitImpl) {
+  return { limit: limitImpl || vi.fn().mockResolvedValue({ success: true }) }
+}
+
 export function makeEnv(overrides = {}) {
   return {
     CACHE: makeFakeCache(),
     AI: makeFakeAI(),
+    AI_ROUTE_LIMITER: makeFakeRateLimiter(),
     POLL_SECRET: 'test-poll-secret',
     VAPID_PUBLIC_KEY: undefined,
     VAPID_PRIVATE_KEY: undefined,

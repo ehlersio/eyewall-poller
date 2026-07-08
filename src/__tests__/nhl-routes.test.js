@@ -1,7 +1,7 @@
 // src/__tests__/nhl-routes.test.js
-// Route-level tests for a first batch of handleNHL's ~42 routes (Session
-// 47, Item 2 — audit #9). None of these had any HTTP-level coverage
-// before this session. Covers a representative slice, not all 42:
+// Route-level tests for handleNHL's routes (Session 47 + Session 48, Item
+// 2 — audit #9). None of these had any HTTP-level coverage before Session
+// 47. Session 47 covered a representative slice of the read-proxy tier:
 // - /health and /cache/:key (simplest reads, no upstream fetch)
 // - /player-analytics (Session 44's Direct-Supabase-read proxy shape --
 //   cache hit, happy path, upstream 502)
@@ -9,13 +9,15 @@
 // - /push/subscribe and /push/unsubscribe (mutating, higher audit
 //   priority than reads -- assert the actual KV write, not just a 200)
 //
-// The remaining read-proxy routes (~35) follow the exact same shape as
-// /player-analytics/-shots (parse params -> cache check -> sbRows() ->
-// cache write -> JSON) and are mechanical to extend from this pattern in
-// a follow-up session.
+// Session 48 adds the remaining two tiers per the corrected Session 48
+// scope (see SESSION_48_DECISIONS.md): Tier 2 (POLL_SECRET-gated
+// mutating/ingest routes -- assert actual KV mutations/merge logic, not
+// just status codes) and Tier 3 (AI-calling routes). The other ~35
+// read-proxy routes still follow the exact same shape as
+// /player-analytics/-shots and remain mechanical to extend if ever needed.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { makeEnv, makeCtx, makeRequest, flushWaitUntil } from './route-harness.js'
+import { makeEnv, makeCtx, makeRequest, flushWaitUntil, makeFakeCache } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({
   resolveNHLSeason: vi.fn().mockResolvedValue(20252026),
@@ -201,5 +203,567 @@ describe('GET /news (cold cache background-fetch pattern)', () => {
     expect(await res.json()).toEqual([])
     expect(ctx._promises.length).toBe(1)
     await flushWaitUntil(ctx) // let the background fetch settle before the test ends
+  })
+})
+
+// ── Tier 2 — POLL_SECRET-gated mutating/ingest routes (Session 48, Item 2) ──
+// Each of these asserts the actual KV mutation/merge logic per the Session
+// 48 decision, not just the response status code.
+
+describe('POST /reddit/ingest', () => {
+  const REDDIT_BUNDLE = {
+    CAR: {
+      data: {
+        children: [{
+          data: {
+            id: 'abc123', title: 'Canes sign new deal', permalink: '/r/canes/comments/abc123/x/',
+            selftext: '', score: 42, num_comments: 7, created_utc: 1751932800,
+            stickied: false, removed: false, url: 'https://www.reddit.com/r/canes/comments/abc123/x/', is_self: true,
+          },
+        }],
+      },
+    },
+  }
+
+  it('401s without a matching secret', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/reddit/ingest', { method: 'POST', body: REDDIT_BUNDLE }),
+      env, makeCtx(), new URL('https://example.com/reddit/ingest')
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('merges reddit posts into news:ABBR, preserving existing non-reddit items', async () => {
+    const existing = [{ id: 'canescountry-xyz', source: 'canescountry', title: 'Old article', publishedAt: '2020-01-01T00:00:00Z' }]
+    const env = makeEnv({ CACHE: makeFakeCache({ 'news:CAR': existing }) })
+
+    const res = await handleNHL(
+      makeRequest('/reddit/ingest?secret=test-poll-secret', { method: 'POST', body: REDDIT_BUNDLE }),
+      env, makeCtx(), new URL('https://example.com/reddit/ingest?secret=test-poll-secret')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.processed).toBe(1)
+    expect(body.results.CAR).toBe(1)
+
+    const merged = JSON.parse(await env.CACHE.get('news:CAR'))
+    expect(merged).toHaveLength(2)
+    expect(merged.some(i => i.id === 'reddit-abc123')).toBe(true)
+    expect(merged.some(i => i.id === 'canescountry-xyz')).toBe(true)
+  })
+
+  it('accepts the ingest secret via x-ingest-secret header too', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/reddit/ingest', { method: 'POST', body: REDDIT_BUNDLE, headers: { 'x-ingest-secret': 'test-poll-secret' } }),
+      env, makeCtx(), new URL('https://example.com/reddit/ingest')
+    )
+    expect(res.status).toBe(200)
+  })
+})
+
+describe('POST /atom/ingest', () => {
+  const ATOM_XML = '<?xml version="1.0"?><feed><entry><title>Canes win big</title><link href="https://example.com/article1"/><summary>Great game recap</summary><published>2026-07-08T00:00:00Z</published></entry></feed>'
+
+  it('401s without a matching secret', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/atom/ingest', { method: 'POST', body: { canescountry: ATOM_XML } }),
+      env, makeCtx(), new URL('https://example.com/atom/ingest')
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('merges parsed atom articles into news:ABBR, preserving items from other sources', async () => {
+    const existing = [{ id: 'reddit-old1', source: 'reddit-car', title: 'Old reddit post', publishedAt: '2020-01-01T00:00:00Z' }]
+    const env = makeEnv({ CACHE: makeFakeCache({ 'news:CAR': existing }) })
+
+    const res = await handleNHL(
+      makeRequest('/atom/ingest?secret=test-poll-secret', { method: 'POST', body: { canescountry: ATOM_XML } }),
+      env, makeCtx(), new URL('https://example.com/atom/ingest?secret=test-poll-secret')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.results.canescountry).toBe(1)
+
+    const merged = JSON.parse(await env.CACHE.get('news:CAR'))
+    expect(merged).toHaveLength(2)
+    expect(merged.some(i => i.source === 'reddit-car')).toBe(true)
+  })
+
+  it('ignores an unrecognized source id', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/atom/ingest?secret=test-poll-secret', { method: 'POST', body: { 'not-a-real-source': ATOM_XML } }),
+      env, makeCtx(), new URL('https://example.com/atom/ingest?secret=test-poll-secret')
+    )
+    expect(res.status).toBe(200)
+    expect((await res.json()).results).toEqual({})
+  })
+})
+
+describe('POST /moneypuck/ingest', () => {
+  const CSV = 'playerId,name,team,situation,icetime\n' +
+    '1,Player One,CAR,all,72000\n' +
+    '2,Player Two,CAR,5on5,60000\n' +
+    '3,Player Three,BOS,all,50000\n'
+
+  it('401s without a matching secret', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/moneypuck/ingest', { method: 'POST', body: CSV }),
+      env, makeCtx(), new URL('https://example.com/moneypuck/ingest')
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('400s on a too-short body', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/moneypuck/ingest?secret=test-poll-secret', { method: 'POST', body: 'too short' }),
+      env, makeCtx(), new URL('https://example.com/moneypuck/ingest?secret=test-poll-secret')
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('stores raw rows, clears every team\'s cache, and kicks off background computation for all 32 teams', async () => {
+    const env = makeEnv()
+    const ctx = makeCtx()
+
+    const res = await handleNHL(
+      makeRequest('/moneypuck/ingest?secret=test-poll-secret', { method: 'POST', body: CSV }),
+      env, ctx, new URL('https://example.com/moneypuck/ingest?secret=test-poll-secret')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.rows).toBe(3)
+    expect(body.teams).toBe(32)
+
+    const raw = JSON.parse(await env.CACHE.get('moneypuck:raw'))
+    expect(raw).toHaveLength(3)
+    expect(ctx._promises.length).toBe(32)
+    await flushWaitUntil(ctx)
+  })
+})
+
+describe('GET /moneypuck/refresh/all', () => {
+  it('401s without a matching secret', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/moneypuck/refresh/all'), env, makeCtx(), new URL('https://example.com/moneypuck/refresh/all')
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('clears the shared + per-team caches and refreshes all 32 teams in the background', async () => {
+    const env = makeEnv({
+      CACHE: {
+        _deleted: [],
+        async get() { return null },
+        async put() {},
+        async delete(key) { this._deleted.push(key) },
+      },
+    })
+    const ctx = makeCtx()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => 'playerId,name\n1,X\n' })
+
+    const res = await handleNHL(
+      makeRequest('/moneypuck/refresh/all?secret=test-poll-secret'), env, ctx,
+      new URL('https://example.com/moneypuck/refresh/all?secret=test-poll-secret')
+    )
+
+    expect(res.status).toBe(200)
+    expect(env.CACHE._deleted).toContain('moneypuck:raw')
+    expect(env.CACHE._deleted.filter(k => k.startsWith('moneypuck:skaters:'))).toHaveLength(32)
+    expect(ctx._promises.length).toBe(32)
+    await flushWaitUntil(ctx)
+  })
+})
+
+describe('GET /moneypuck/refresh', () => {
+  it('401s without a matching secret', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/moneypuck/refresh'), env, makeCtx(), new URL('https://example.com/moneypuck/refresh')
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('clears the team + raw cache and refreshes in the background', async () => {
+    const env = makeEnv({
+      CACHE: {
+        _deleted: [],
+        async get() { return null },
+        async put() {},
+        async delete(key) { this._deleted.push(key) },
+      },
+    })
+    const ctx = makeCtx()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => 'playerId,name\n1,X\n' })
+
+    const res = await handleNHL(
+      makeRequest('/moneypuck/refresh?secret=test-poll-secret&team=CAR'), env, ctx,
+      new URL('https://example.com/moneypuck/refresh?secret=test-poll-secret&team=CAR')
+    )
+
+    expect(res.status).toBe(200)
+    expect((await res.json()).team).toBe('CAR')
+    expect(env.CACHE._deleted).toEqual(expect.arrayContaining(['moneypuck:skaters:CAR', 'moneypuck:raw']))
+    expect(ctx._promises.length).toBe(1)
+    await flushWaitUntil(ctx)
+  })
+})
+
+describe('GET /pp-units/refresh', () => {
+  it('401s without a matching secret', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/pp-units/refresh'), env, makeCtx(), new URL('https://example.com/pp-units/refresh')
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('kicks off refreshPPUnits in the background', async () => {
+    const env = makeEnv()
+    const ctx = makeCtx()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    const res = await handleNHL(
+      makeRequest('/pp-units/refresh?secret=test-poll-secret'), env, ctx,
+      new URL('https://example.com/pp-units/refresh?secret=test-poll-secret')
+    )
+
+    expect(res.status).toBe(200)
+    expect(ctx._promises.length).toBe(1)
+    await flushWaitUntil(ctx)
+  })
+})
+
+describe('GET /shots/backfill', () => {
+  it('401s without a matching secret', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/shots/backfill'), env, makeCtx(), new URL('https://example.com/shots/backfill')
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('counts an already-processed game as done and only processes the remaining unprocessed games', async () => {
+    const schedule = [
+      { id: 111, gameState: 'FINAL', homeTeam: { abbrev: 'CAR' }, awayTeam: { abbrev: 'BOS' } },
+      { id: 222, gameState: 'FINAL', homeTeam: { abbrev: 'CAR' }, awayTeam: { abbrev: 'TOR' } },
+    ]
+    const env = makeEnv({
+      CACHE: {
+        async get(key) {
+          if (key === 'schedule:CAR') return JSON.stringify(schedule)
+          if (key === 'shots:done:111') return JSON.stringify(true) // already processed
+          return null
+        },
+        async put() {},
+      },
+    })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 }) // pbp fetch fails — aggregatePlayerShots no-ops
+
+    const res = await handleNHL(
+      makeRequest('/shots/backfill?secret=test-poll-secret&team=CAR'), env, makeCtx(),
+      new URL('https://example.com/shots/backfill?secret=test-poll-secret&team=CAR')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.total).toBe(2)
+    expect(body.processed).toBe(1) // only game 222 was in the unprocessed batch
+    expect(body.done).toBe(2) // 1 already done + 1 processed just now
+    expect(body.remaining).toBe(0)
+  })
+
+  it('returns all-zero counts when there are no completed games', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/shots/backfill?secret=test-poll-secret'), env, makeCtx(),
+      new URL('https://example.com/shots/backfill?secret=test-poll-secret')
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ok: true, processed: 0, remaining: 0, total: 0, done: 0 })
+  })
+})
+
+describe('GET /summary/generate', () => {
+  it('401s without a matching secret', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/summary/generate'), env, makeCtx(), new URL('https://example.com/summary/generate')
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('returns an error when there are no completed games in the schedule', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/summary/generate?secret=test-poll-secret'), env, makeCtx(),
+      new URL('https://example.com/summary/generate?secret=test-poll-secret')
+    )
+    expect(res.status).toBe(200)
+    expect((await res.json()).error).toMatch(/no completed games/i)
+  })
+})
+
+describe('GET /news/refresh', () => {
+  it('401s without a matching secret', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/news/refresh'), env, makeCtx(), new URL('https://example.com/news/refresh')
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('fetches fresh news for the requested team and reports the count', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 }) // every source fails — count 0, no crash
+    const res = await handleNHL(
+      makeRequest('/news/refresh?secret=test-poll-secret&team=CAR'), env, makeCtx(),
+      new URL('https://example.com/news/refresh?secret=test-poll-secret&team=CAR')
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ok: true, count: 0, team: 'CAR' })
+  })
+})
+
+describe('GET /poll (manual trigger)', () => {
+  it('401s without a matching secret', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/poll'), env, makeCtx(), new URL('https://example.com/poll')
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('runs the poll loop and reports a timestamp', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ games: [], standings: [] }),
+    })
+
+    const res = await handleNHL(
+      makeRequest('/poll?secret=test-poll-secret'), env, makeCtx(),
+      new URL('https://example.com/poll?secret=test-poll-secret')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.ok).toBe(true)
+    expect(body.polled).toBeTruthy()
+  })
+})
+
+describe('GET /social/test', () => {
+  it('401s without a matching secret', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/social/test'), env, makeCtx(), new URL('https://example.com/social/test')
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('returns a preview of the post text without actually posting (no ?post=1)', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/social/test?secret=test-poll-secret'), env, makeCtx(),
+      new URL('https://example.com/social/test?secret=test-poll-secret')
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.ok).toBe(true)
+    expect(typeof body.preview).toBe('string')
+    expect(body.length).toBe(body.preview.length)
+  })
+})
+
+describe('POST /push/test', () => {
+  it('401s without a matching secret', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/push/test', { method: 'POST' }), env, makeCtx(), new URL('https://example.com/push/test')
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('no-ops cleanly when there are no subscribers', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/push/test?secret=test-poll-secret', { method: 'POST' }), env, makeCtx(),
+      new URL('https://example.com/push/test?secret=test-poll-secret')
+    )
+    expect(res.status).toBe(200)
+    expect((await res.json()).ok).toBe(true)
+  })
+})
+
+describe('POST /draft/analyze', () => {
+  it('401s without a matching X-Poll-Secret header (not the ?secret= query param convention every other route uses)', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/draft/analyze?secret=test-poll-secret', { method: 'POST', body: { prompt: 'x' } }),
+      env, makeCtx(), new URL('https://example.com/draft/analyze?secret=test-poll-secret')
+    )
+    expect(res.status).toBe(401) // query param doesn't count for this route
+  })
+
+  it('400s when prompt is missing', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/draft/analyze', { method: 'POST', body: {}, headers: { 'X-Poll-Secret': 'test-poll-secret' } }),
+      env, makeCtx(), new URL('https://example.com/draft/analyze')
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('returns the AI analysis on a valid request', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Great value pick at this slot.' }) } })
+    const res = await handleNHL(
+      makeRequest('/draft/analyze', { method: 'POST', body: { prompt: 'Analyze this pick' }, headers: { 'X-Poll-Secret': 'test-poll-secret' } }),
+      env, makeCtx(), new URL('https://example.com/draft/analyze')
+    )
+    expect(res.status).toBe(200)
+    expect((await res.json()).analysis).toBe('Great value pick at this slot.')
+  })
+
+  it('502s when the AI response is empty', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: '' }) } })
+    const res = await handleNHL(
+      makeRequest('/draft/analyze', { method: 'POST', body: { prompt: 'Analyze this pick' }, headers: { 'X-Poll-Secret': 'test-poll-secret' } }),
+      env, makeCtx(), new URL('https://example.com/draft/analyze')
+    )
+    expect(res.status).toBe(502)
+  })
+})
+
+// ── Tier 3 — AI-calling routes (Session 48, Item 2) ──────────────────────
+// No secret check on these (see Session 48 findings/decisions — reused
+// POLL_SECRET was rejected since these are called from the public
+// frontend). Guarded instead by the AI_ROUTE_LIMITER binding (Item 3,
+// mocked to always-allow by makeEnv's default here).
+
+describe('GET /prediction/analyze', () => {
+  it('returns an error when gameId is missing', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze'), env, makeCtx(), new URL('https://example.com/prediction/analyze')
+    )
+    expect((await res.json()).error).toMatch(/gameId required/i)
+  })
+
+  it('serves from cache without calling the AI model', async () => {
+    const cached = { gameId: '123', narrative: 'cached narrative' }
+    const env = makeEnv({ CACHE: { async get(key) { return key === 'prediction:123' ? JSON.stringify(cached) : null }, async put() {} } })
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+    expect(await res.json()).toEqual(cached)
+    expect(env.AI.run).not.toHaveBeenCalled()
+  })
+
+  it('returns an error when the game is not found in the schedule', async () => {
+    const env = makeEnv({ CACHE: { async get(key) { return key === 'schedule:CAR' ? JSON.stringify([]) : null }, async put() {} } })
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=999'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=999')
+    )
+    expect((await res.json()).error).toMatch(/not found in schedule/i)
+  })
+
+  it('generates and caches a prediction for a game with standings on both sides', async () => {
+    const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, gamesPlayed: 10, wins: 7, losses: 3, otLosses: 0, points: 14, goalFor: 35, goalAgainst: 25, powerPlayPct: 24, penaltyKillPct: 80, shotsForPerGame: 32, shotsAgainstPerGame: 28, streakCode: 'W', streakCount: 3 },
+      { teamAbbrev: { default: 'BOS' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 28, goalAgainst: 30, powerPlayPct: 18, penaltyKillPct: 76, shotsForPerGame: 29, shotsAgainstPerGame: 31, streakCode: 'L', streakCount: 1 },
+    ]
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR': schedule, standings }),
+      AI: { run: vi.fn().mockResolvedValue({ response: 'CAR should win this one comfortably.' }) },
+    })
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.gameId).toBe('123')
+    expect(body.oppAbbr).toBe('BOS')
+    expect(body.narrative).toBe('CAR should win this one comfortably.')
+    expect(env.AI.run).toHaveBeenCalledTimes(1)
+
+    const cached = JSON.parse(await env.CACHE.get('prediction:123'))
+    expect(cached.narrative).toBe('CAR should win this one comfortably.')
+  })
+})
+
+describe('POST /summary/narrative', () => {
+  it('returns an error when gameId or period is missing', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/summary/narrative?gameId=1', { method: 'POST', body: {} }), env, makeCtx(),
+      new URL('https://example.com/summary/narrative?gameId=1')
+    )
+    expect((await res.json()).error).toMatch(/gameId and period required/i)
+  })
+
+  it('serves from cache without calling the AI model', async () => {
+    const cached = { narrative: 'cached', cardNarrative: null }
+    const env = makeEnv({ CACHE: { async get(key) { return key === 'narrative:1:1:CAR' ? JSON.stringify(cached) : null }, async put() {} } })
+    const res = await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=1&carAbbr=CAR', { method: 'POST', body: {} }), env, makeCtx(),
+      new URL('https://example.com/summary/narrative?gameId=1&period=1&carAbbr=CAR')
+    )
+    expect(await res.json()).toEqual(cached)
+    expect(env.AI.run).not.toHaveBeenCalled()
+  })
+
+  it('returns an error on invalid JSON body', async () => {
+    const env = makeEnv()
+    const req = new Request('https://example.com/summary/narrative?gameId=1&period=1', { method: 'POST', body: 'not json', headers: { 'Content-Type': 'application/json' } })
+    const res = await handleNHL(req, env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=1'))
+    expect((await res.json()).error).toMatch(/invalid body/i)
+  })
+
+  it('makes one AI call for a period summary and caches for 30 days', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Period summary text.' }) } })
+    const res = await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=1&carAbbr=CAR', {
+        method: 'POST',
+        body: { carGoals: 1, oppGoals: 0, corsiForPct: 55, carSOG: 10, oppSOG: 8, carHits: 5, carFOPct: 50, penaltyCount: 2, carPenaltyCount: 1, goals: [] },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=1&carAbbr=CAR')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.narrative).toBe('Period summary text.')
+    expect(body.cardNarrative).toBeNull()
+    expect(env.AI.run).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(await env.CACHE.get('narrative:1:1:CAR')).narrative).toBe('Period summary text.')
+  })
+
+  it('makes two AI calls (narrative + card caption) for a full game summary', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Game summary text.' }) } })
+    const res = await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=game&carAbbr=CAR', {
+        method: 'POST',
+        body: { carGoals: 3, oppGoals: 1, corsiForPct: 55, carSOG: 30, oppSOG: 22, carHDCF: 10, oppHDCF: 6, carHits: 20, carFOPct: 52, goals: [] },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=game&carAbbr=CAR')
+    )
+
+    expect(res.status).toBe(200)
+    expect(env.AI.run).toHaveBeenCalledTimes(2)
   })
 })

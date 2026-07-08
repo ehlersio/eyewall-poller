@@ -2025,7 +2025,11 @@ export async function handleNHL(request, env, ctx, url) {
       const cfg = TEAM_CONFIGS[abbr.toUpperCase()];
       if (!cfg) continue;
       // Find the reddit source config for this team to get id/name/color
-      const sources = getNewsSources(cfg);
+      // getNewsSources() takes the abbr string, not the config object — passing
+      // cfg here threw (TEAM_CONFIGS[cfg] is undefined, then cfg.toLowerCase()
+      // inside teamFilterKeywords isn't a function), crashing this route on
+      // every real ingest call (found via Session 48's route-test coverage).
+      const sources = getNewsSources(abbr.toUpperCase());
       const redditSrc = sources.find(s => s.type === 'reddit');
       if (!redditSrc) continue;
       const posts = parseReddit(redditData, redditSrc);
