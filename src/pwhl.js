@@ -1083,7 +1083,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
 
     if (!pbpRes.ok) return new Response(JSON.stringify({ error: `HockeyTech PBP ${pbpRes.status}` }), { status: 502, headers: corsHeaders() });
 
-    let rawEvents = [];
+    let rawEvents;
     try {
       rawEvents = unwrapJsonp(await pbpRes.text());
     } catch (e) {

@@ -1344,14 +1344,13 @@ export async function poll(env, _ctx) {
   await kvPut(env, 'live:gameId', liveId, 60);
 
   // 3. Live PBP + boxscore + push notifications
-  let pbpData = null;
   if (liveId) {
     const [pbpRes, bsRes] = await Promise.allSettled([
       nhlGet(`${NHL_BASE}/gamecenter/${liveId}/play-by-play`),
       nhlGet(`${NHL_BASE}/gamecenter/${liveId}/boxscore`),
     ]);
     if (pbpRes.status === 'fulfilled') {
-      pbpData = pbpRes.value;
+      const pbpData = pbpRes.value;
       await kvPut(env, `pbp:${liveId}`, pbpData, 60);
       // Detect goals + events and send push notifications
       if (env.VAPID_PRIVATE_KEY) {
