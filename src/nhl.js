@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, parseRSS, parseESPN, parseAtom, parseReddit, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, parseRSS, parseESPN, parseAtom, parseReddit, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit } from './shared.js';
 import { resolveNHLSeason } from './seasons.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
@@ -2220,8 +2220,10 @@ export async function handleNHL(request, env, ctx, url) {
   }
 
   // ── Pre-game prediction analysis ─────────────────────────────
-  // GET /prediction/analyze?gameId=XXX&secret=YYY (optional secret for force-regen)
+  // GET /prediction/analyze?gameId=XXX — public, billed-AI route; rate-limited below (no secret check — this is called directly from the frontend)
   if (url.pathname === '/prediction/analyze') {
+    const limited = await checkAiRateLimit(env, request, 'prediction-analyze');
+    if (limited) return limited;
     const gameId    = url.searchParams.get('gameId');
     const forceRegen = url.searchParams.get('force') === '1';
     if (!gameId) return json({ error: 'gameId required' });
@@ -2389,7 +2391,10 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   }
 
   // ── Period narrative (cached per game+period, shared across all users) ──
+  // Public, billed-AI route; rate-limited below (no secret check — called directly from the frontend)
   if (url.pathname === '/summary/narrative') {
+    const limited = await checkAiRateLimit(env, request, 'summary-narrative');
+    if (limited) return limited;
     const gameId = url.searchParams.get('gameId');
     const period = url.searchParams.get('period'); // 'game' or period number
     if (!gameId || !period) return json({ error: 'gameId and period required' });

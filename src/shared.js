@@ -44,6 +44,22 @@ export function badRequest(msg) {
   return new Response(JSON.stringify({ error: msg }), { status: 400, headers: corsHeaders() });
 }
 
+export function tooManyRequests() {
+  return new Response(JSON.stringify({ error: 'Too many requests' }), { status: 429, headers: corsHeaders() });
+}
+
+// Guards the billed AI-calling routes (/prediction/analyze, /summary/narrative,
+// /pwhl/summary/narrative, /pwhl/scout) from unbounded public-cost abuse.
+// Uses the Workers-native rate limiting binding rather than a shared secret:
+// these routes are called directly from the public frontend, so a secret
+// would ship in browser JS and protect nothing (see Session 48 findings).
+// One binding, keyed by route+IP, gives each route its own budget.
+export async function checkAiRateLimit(env, request, routeName) {
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const { success } = await env.AI_ROUTE_LIMITER.limit({ key: `${routeName}:${ip}` });
+  return success ? null : tooManyRequests();
+}
+
 export function sbError(status) {
   return new Response(JSON.stringify({ error: `Supabase ${status}` }), { status: 502, headers: corsHeaders() });
 }
