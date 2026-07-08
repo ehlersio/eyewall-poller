@@ -26,6 +26,13 @@ If the current branch is not `main`, or if `main` locally is behind `origin/main
 ```
 git checkout main
 git pull origin main
+```
+
+Then sweep local branches from prior sessions: for each `sessionNN-*` branch still present locally, confirm on GitHub that its PR merged, then delete the local branch (`git branch -d <branch>`; use `-D` only if it's confirmed merged but not fast-forward-mergeable locally). Remote branches auto-delete on merge in this repo (and the other two EyeWall repos), so this sweep is local-only. Do not delete a branch whose PR hasn't merged, even if it looks stale.
+
+Once `main` is current and stale local branches are cleared, cut a fresh branch for the new session:
+
+```
 git checkout -b <new-branch-name-for-this-session>
 ```
 
@@ -33,7 +40,9 @@ Only start editing files after confirming you're on a fresh branch cut from an u
 
 Name the new branch for what the session is actually doing (e.g. `session43-line-combinations`), not a generic name, so it's identifiable later if it needs recovering.
 
-At the end of a session, after a PR is merged, explicitly prompt a reminder to run `git checkout main && git pull origin main` before ending — don't assume this happens automatically between sessions.
+## README hygiene (standing rule — read before opening any PR)
+
+Before opening a PR, check whether the change affects anything `README.md` documents — setup/install steps, environment variables, available scripts/commands, API routes or endpoints, known limitations, test counts, or architecture description. If yes, update the README in the same PR. Purely internal changes (refactors, bug fixes with no behavior/interface change) don't need a README touch — don't pad PRs with unnecessary doc churn.
 
 ## Live season resolution (core architecture, built Session 35–36)
 
