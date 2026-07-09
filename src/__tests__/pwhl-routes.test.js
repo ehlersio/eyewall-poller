@@ -89,6 +89,92 @@ describe('GET /pwhl/standings', () => {
   })
 })
 
+describe('GET /pwhl/game-box', () => {
+  it('serves from KV cache without hitting Supabase', async () => {
+    const cached = { skaters: [{ game_id: 210, player_id: 1, team_id: 1 }], goalies: [] }
+    const env = makeEnv({ CACHE: { async get() { return JSON.stringify(cached) }, async put() {} } })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/game-box?gameId=210'), env, makeCtx(),
+      new URL('https://example.com/pwhl/game-box?gameId=210')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cached)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('fetches skaters + goalies in parallel on a cache miss and returns them together', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn((url) => {
+      if (String(url).includes('pwhl_skater_game_box')) {
+        return Promise.resolve({ ok: true, json: async () => [{ game_id: 210, player_id: 1, team_id: 1, goals: 2 }] })
+      }
+      if (String(url).includes('pwhl_goalie_game_box')) {
+        return Promise.resolve({ ok: true, json: async () => [{ game_id: 210, player_id: 99, team_id: 2, saves: 30 }] })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/game-box?gameId=210'), env, makeCtx(),
+      new URL('https://example.com/pwhl/game-box?gameId=210')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      skaters: [{ game_id: 210, player_id: 1, team_id: 1, goals: 2 }],
+      goalies: [{ game_id: 210, player_id: 99, team_id: 2, saves: 30 }],
+    })
+  })
+
+  it('returns 400 when gameId is missing', async () => {
+    const env = makeEnv()
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/game-box'), env, makeCtx(),
+      new URL('https://example.com/pwhl/game-box')
+    )
+
+    expect(res.status).toBe(400)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('returns 502 when the skater fetch fails', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn((url) => {
+      if (String(url).includes('pwhl_skater_game_box')) {
+        return Promise.resolve({ ok: false, status: 503 })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/game-box?gameId=210'), env, makeCtx(),
+      new URL('https://example.com/pwhl/game-box?gameId=210')
+    )
+
+    expect(res.status).toBe(502)
+  })
+
+  it('returns 502 when the goalie fetch fails', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn((url) => {
+      if (String(url).includes('pwhl_goalie_game_box')) {
+        return Promise.resolve({ ok: false, status: 500 })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/game-box?gameId=210'), env, makeCtx(),
+      new URL('https://example.com/pwhl/game-box?gameId=210')
+    )
+
+    expect(res.status).toBe(502)
+  })
+})
+
 // ── Tier 2 — POLL_SECRET-gated mutating routes (Session 48, Item 2) ─────────
 
 describe('POST /pwhl/news/bust', () => {
