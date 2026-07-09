@@ -608,6 +608,34 @@ export async function handlePWHL(request, env, ctx, url) {
     return json(rows);
   }
 
+  // GET /pwhl/game-box?gameId=210
+  // Per-player box score (skaters + goalies) for the PWHL game-stats popup
+  // (Session 50). Flat arrays with team_id on each row, matching the
+  // pwhl_skater_game_box/pwhl_goalie_game_box table shape directly -- the
+  // frontend already has home_team_id/away_team_id from the schedule fetch
+  // and groups client-side, same flat-list convention as /pwhl/shots rather
+  // than NHL boxscore's nested homeTeam/awayTeam shape.
+  if (url.pathname === '/pwhl/game-box') {
+    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    if (!gameId) return new Response(JSON.stringify({ error: 'gameId param required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey  = `pwhl:game-box:${gameId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+    const [skRes, gRes] = await Promise.all([
+      fetch(`${SB_URL}/rest/v1/pwhl_skater_game_box?game_id=eq.${gameId}&order=team_id.asc`, { headers: sbH }),
+      fetch(`${SB_URL}/rest/v1/pwhl_goalie_game_box?game_id=eq.${gameId}&order=team_id.asc`, { headers: sbH }),
+    ]);
+    if (!skRes.ok) return new Response(JSON.stringify({ error: `Supabase ${skRes.status}` }), { status: 502, headers: corsHeaders() });
+    if (!gRes.ok)  return new Response(JSON.stringify({ error: `Supabase ${gRes.status}` }),  { status: 502, headers: corsHeaders() });
+
+    const payload = { skaters: await skRes.json(), goalies: await gRes.json() };
+    await kvPut(env, kvKey, payload, 24 * 3600); // 24hr -- Final-game box scores don't change once ingested
+    return json(payload);
+  }
+
   // GET /pwhl/player/landing?id=198
   // Player detail lookup for PWHLPlayerPopup (e.g. from milestone taps).
   // Unlike NHL's /player/landing, this queries Supabase directly instead
