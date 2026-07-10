@@ -10,11 +10,14 @@
 // Session 48 scope — see SESSION_48_DECISIONS.md.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { makeEnv, makeCtx, makeRequest, makeFakeCache } from './route-harness.js'
+import { makeEnv, makeCtx, makeRequest, makeFakeCache, makeFakeRateLimiter } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({
   resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
+  getAllPWHLSeasonTypes: vi.fn().mockResolvedValue({ 8: 'regular', 9: 'playoffs' }),
 }))
+
+import { getAllPWHLSeasonTypes } from '../seasons.js'
 
 import { handlePWHL } from '../pwhl.js'
 
@@ -394,6 +397,211 @@ describe('POST /pwhl/summary/narrative', () => {
         body: { carAbbr: 'BOS', oppAbbr: 'MTL', goals: [] },
       }),
       env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=1&carAbbr=BOS')
+    )
+    expect(res.status).toBe(502)
+  })
+})
+
+// ── /pwhl/preview + /pwhl/prediction (Session 51) ────────────────────────────
+
+describe('GET /pwhl/preview', () => {
+  it('400s when gameId is missing', async () => {
+    const env = makeEnv()
+    const res = await handlePWHL(
+      makeRequest('/pwhl/preview'), env, makeCtx(), new URL('https://example.com/pwhl/preview')
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('serves from KV cache without hitting HockeyTech', async () => {
+    const cached = { gameId: 210, homeTeam: null }
+    const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:preview:210': cached }) })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/preview?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/preview?gameId=210')
+    )
+    expect(await res.json()).toEqual(cached)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('normalizes a live gameCenterPreview payload on a cache miss', async () => {
+    const env = makeEnv()
+    const htPayload = {
+      homeTeam: {
+        teamInfo: { id: '3', abbreviation: 'MTL', name: 'Montreal Victoire' },
+        goalsFor: 45, goalsAgainst: 30,
+        teamRecord: { streak: '3-0-0', overall: { formattedRecord: '10-2-0' }, past_10_games: { formattedRecord: '8-2-0' } },
+        leadingScorers: [{ info: { firstName: 'Marie-Philip', lastName: 'Poulin' }, stats: { points: 20 } }],
+        leadingRookie: null,
+        leadingPIM: null,
+        powerPlayStats: { overall: { pct: '22.0' } },
+        penaltyKillStats: { overall: { pct: '85.0' } },
+        longestStreaks: { points: [{ player: 'Poulin', streak: 3, length: 3 }] },
+      },
+      visitingTeam: {
+        teamInfo: { id: '5', abbreviation: 'OTT', name: 'Ottawa Charge' },
+        goalsFor: 30, goalsAgainst: 40,
+        teamRecord: { streak: '0-3-0', overall: { formattedRecord: '4-8-0' }, past_10_games: { formattedRecord: '2-8-0' } },
+        leadingScorers: [],
+        leadingRookie: null,
+        leadingPIM: null,
+        powerPlayStats: { overall: { pct: '15.0' } },
+        penaltyKillStats: { overall: { pct: '78.0' } },
+        longestStreaks: { points: [] },
+      },
+      previousMeetings: [{ gameId: '150', datePlayed: '2026-05-01', homeTeamId: '3', homeCity: 'Montreal', homeScore: '4', visitingTeamId: '5', visitingCity: 'Ottawa', visitingScore: '2' }],
+      headToHeadRecords: { homeTeam: { previousFiveYears: { formattedRecord: '6-2-0' } }, visitingTeam: { previousFiveYears: { formattedRecord: '2-6-0' } } },
+    }
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(htPayload) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/preview?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/preview?gameId=210')
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.homeTeam).toMatchObject({ id: 3, abbreviation: 'MTL', streak: '3-0-0' })
+    expect(body.visitingTeam).toMatchObject({ id: 5, abbreviation: 'OTT' })
+    expect(body.seasonSeries).toEqual([{ gameId: 150, datePlayed: '2026-05-01', homeTeamId: 3, homeCity: 'Montreal', homeScore: 4, visitingTeamId: 5, visitingCity: 'Ottawa', visitingScore: 2 }])
+    expect(body.headToHeadRecords).toEqual(htPayload.headToHeadRecords)
+    expect(body.longestStreaks.home).toEqual(htPayload.homeTeam.longestStreaks)
+    // miscellaneousRecords/lineup deliberately excluded
+    expect(body.homeTeam.miscellaneousRecords).toBeUndefined()
+    expect(body.homeTeam.lineup).toBeUndefined()
+  })
+
+  it('502s when the HockeyTech fetch fails', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/preview?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/preview?gameId=210')
+    )
+    expect(res.status).toBe(502)
+  })
+})
+
+describe('GET /pwhl/prediction', () => {
+  // Mocks the 3 Supabase REST calls the route makes, keyed by URL substring:
+  // the single-game lookup, the 2-team pwhl_team_seasons pull, and the
+  // season-wide Final game log (for streak + this-season H2H).
+  function mockSupabaseFlow({ game, teams, seasonGames }) {
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      if (u.includes('pwhl_game_log?game_id=eq.')) {
+        return Promise.resolve({ ok: true, json: async () => (game ? [game] : []) })
+      }
+      if (u.includes('pwhl_team_seasons')) {
+        return Promise.resolve({ ok: true, json: async () => teams })
+      }
+      if (u.includes('pwhl_game_log?season_id=eq.')) {
+        return Promise.resolve({ ok: true, json: async () => seasonGames })
+      }
+      throw new Error(`unexpected fetch: ${u}`)
+    })
+  }
+
+  const homeTeamRow = { team_id: 3, gp: 10, wins: 8, losses: 2, ot_losses: 0, points: 16, goals_for: 45, goals_against: 25, pp_pct: 0.22, pk_pct: 0.85, corsi_for_pct: 54.2 }
+  const awayTeamRow = { team_id: 5, gp: 10, wins: 4, losses: 6, ot_losses: 0, points: 8, goals_for: 25, goals_against: 40, pp_pct: 0.15, pk_pct: 0.78, corsi_for_pct: 46.1 }
+
+  it('400s when gameId is missing', async () => {
+    const env = makeEnv()
+    const res = await handlePWHL(
+      makeRequest('/pwhl/prediction'), env, makeCtx(), new URL('https://example.com/pwhl/prediction')
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('429s when the AI rate limiter rejects', async () => {
+    const env = makeEnv({ AI_ROUTE_LIMITER: makeFakeRateLimiter(vi.fn().mockResolvedValue({ success: false })) })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
+    )
+    expect(res.status).toBe(429)
+  })
+
+  it('serves from KV cache without calling the AI model', async () => {
+    const cached = { gameId: 210, homeWinPct: 60 }
+    const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:prediction:210': cached }) })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
+    )
+    expect(await res.json()).toEqual(cached)
+    expect(env.AI.run).not.toHaveBeenCalled()
+  })
+
+  it('404s when the game is not found in pwhl_game_log', async () => {
+    const env = makeEnv()
+    mockSupabaseFlow({ game: null, teams: [], seasonGames: [] })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/prediction?gameId=999'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=999')
+    )
+    expect(res.status).toBe(404)
+  })
+
+  it('computes win probability/Corsi/streaks and generates a narrative', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Montreal should win behind their possession edge.' }) } })
+    mockSupabaseFlow({
+      game: { game_id: 210, season_id: 8, home_team_id: 3, away_team_id: 5 },
+      teams: [homeTeamRow, awayTeamRow],
+      seasonGames: [
+        { game_id: 201, home_team_id: 3, away_team_id: 5, home_score: 4, away_score: 2, ot: false, shootout: false },
+        { game_id: 205, home_team_id: 3, away_team_id: 8, home_score: 3, away_score: 1, ot: false, shootout: false },
+      ],
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.homeAbbr).toBe('MTL')
+    expect(body.awayAbbr).toBe('OTT')
+    expect(body.isPlayoff).toBe(false)
+    expect(body.homeWinPct).toBeGreaterThan(body.awayWinPct) // MTL is better on every input
+    expect(body.homeStreak).toBe('W2')
+    expect(body.h2hRecord).toBe('1-0')
+    expect(body.corsiForPct).toEqual({ home: 54.2, away: 46.1 })
+    expect(body.corsiCaveat).toMatch(/not 5-on-5/i)
+    expect(body.narrative).toBe('Montreal should win behind their possession edge.')
+    expect(JSON.parse(await env.CACHE.get('pwhl:prediction:210')).homeWinPct).toBe(body.homeWinPct)
+  })
+
+  it('resolves playoff status via getAllPWHLSeasonTypes and skips the points term', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'A tight playoff tilt.' }) } })
+    mockSupabaseFlow({
+      game: { game_id: 300, season_id: 9, home_team_id: 3, away_team_id: 5 },
+      teams: [homeTeamRow, awayTeamRow],
+      seasonGames: [],
+    })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/prediction?gameId=300'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=300')
+    )
+    expect(res.status).toBe(200)
+    expect((await res.json()).isPlayoff).toBe(true)
+    expect(getAllPWHLSeasonTypes).toHaveBeenCalled()
+  })
+
+  it('returns an error when the AI response is empty', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: '' }) } })
+    mockSupabaseFlow({
+      game: { game_id: 210, season_id: 8, home_team_id: 3, away_team_id: 5 },
+      teams: [homeTeamRow, awayTeamRow],
+      seasonGames: [],
+    })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
+    )
+    expect(res.status).toBe(502)
+    expect((await res.json()).error).toMatch(/empty/i)
+  })
+
+  it('502s when the AI call throws', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockRejectedValue(new Error('AI unavailable')) } })
+    mockSupabaseFlow({
+      game: { game_id: 210, season_id: 8, home_team_id: 3, away_team_id: 5 },
+      teams: [homeTeamRow, awayTeamRow],
+      seasonGames: [],
+    })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
     )
     expect(res.status).toBe(502)
   })

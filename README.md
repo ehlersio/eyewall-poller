@@ -75,7 +75,7 @@ Test files:
 - `src/__tests__/seasons.test.js` — `seasons.js`'s own resolution logic. Covers: the manual override, KV cache hits, the "reject a zero-games-played candidate" fallback, the "reject a hidden `current_season_id`" fallback, and — the two tests that actually matter most — a regression test asserting `feed=statviewfeed` (not `feed=modulekit`) gets called, and a fixture built from the real 2026-07-05 production bootstrap payload confirming resolution picks season 8 (regular) over season 9 (playoffs) even though 9 is more recent by date. Both of those fixtures exist because they're exactly the two real bugs that shipped to production before being caught.
 - `src/__tests__/worker-routes.test.js` — the dispatcher (`/config/seasons`, `/config/seasons/pwhl-types`, `/pwhl/*` vs. everything-else routing).
 - `src/__tests__/nhl-routes.test.js` — `handleNHL`'s routes: a representative slice of read-proxy routes, all `POLL_SECRET`-gated mutating/ingest routes (asserting actual KV mutations/merge logic, not just status codes), and the AI-calling routes (`/prediction/analyze`, `/summary/narrative`). Writing these tests found and fixed a real bug in `/reddit/ingest` (`getNewsSources()` was called with the team config object instead of the abbr string, throwing on every real ingest call).
-- `src/__tests__/pwhl-routes.test.js` — `handlePWHL`'s equivalent: `/pwhl/standings`'s enrichment logic, the `POLL_SECRET`-gated cache-bust/ingest routes, and the AI-calling routes (`/pwhl/scout`, `/pwhl/summary/narrative`).
+- `src/__tests__/pwhl-routes.test.js` — `handlePWHL`'s equivalent: `/pwhl/standings`'s enrichment logic, the `POLL_SECRET`-gated cache-bust/ingest routes, the AI-calling routes (`/pwhl/scout`, `/pwhl/summary/narrative`, `/pwhl/prediction`), and `/pwhl/preview`'s gameCenterPreview normalization.
 
 The remaining ~35 plain read-proxy routes (parse params → cache check → `sbRows()`/fetch → cache write → JSON) all follow the same shape already covered here and are mechanical to extend if ever needed.
 
@@ -107,8 +107,8 @@ Set via `wrangler secret put <NAME>`. Never commit values.
 | Binding | Type | Description |
 |---------|------|-------------|
 | `CACHE` | KV Namespace | All KV read/write operations |
-| `AI` | Workers AI | Required for `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/prediction/analyze`, `/draft/analyze` |
-| `AI_ROUTE_LIMITER` | Rate Limit | Per-IP, per-route limit (10 req/60s) on the 4 AI-calling routes with no secret check — `/prediction/analyze`, `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`. Provisioned automatically from `wrangler.toml` at deploy time, no dashboard setup needed. |
+| `AI` | Workers AI | Required for `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/prediction/analyze`, `/draft/analyze`, `/pwhl/prediction` |
+| `AI_ROUTE_LIMITER` | Rate Limit | Per-IP, per-route limit (10 req/60s) on the AI-calling routes with no secret check — `/prediction/analyze`, `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/pwhl/prediction`. Provisioned automatically from `wrangler.toml` at deploy time, no dashboard setup needed. |
 
 View current secrets:
 ```powershell
@@ -210,6 +210,8 @@ Key patterns:
 | `POST` | `/pwhl/cache/bust?secret=&teamId=&season=` | Invalidate one team's KV caches (players/shots/schedule/lastgame) for a given season |
 | `GET` | `/pwhl/summary?gameId=` | Game summary (goals, MVPs, team stats) from HockeyTech |
 | `POST` | `/pwhl/summary/narrative?gameId=&period=&carAbbr=` | AI period/game narrative (cached per team perspective) |
+| `GET` | `/pwhl/preview?gameId=` | Pre-game preview for an upcoming game — season series, head-to-head, streaks, team-scoped leading scorers, special teams (Session 51, live HockeyTech `gameCenterPreview` passthrough) |
+| `GET` | `/pwhl/prediction?gameId=&force=` | Win probability + AI narrative for an upcoming game (Session 51) — PWHL analog of `/prediction/analyze`'s fallback-tier heuristic, not its DB-first Tier-1 system. `corsiForPct` is all-situations shot-attempt share, not 5v5-filtered |
 
 ## October Season Prep
 
