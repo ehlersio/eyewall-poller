@@ -6,7 +6,7 @@
  */
 
 import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit } from './shared.js';
-import { resolvePWHLSeason } from './seasons.js';
+import { resolvePWHLSeason, getAllPWHLSeasonTypes } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
 // (see seasons.js) when the param is omitted instead of a hardcoded '8'.
@@ -17,6 +17,30 @@ async function seasonParam(url, env) {
   const raw = url.searchParams.get('season');
   if (raw) return parseInt(raw, 10);
   return (await resolvePWHLSeason(env)).seasonId;
+}
+
+// Live-fetch + cache HockeyTech's gameCenterPreview view, used by
+// /pwhl/preview (season series / H2H / streaks / leaders / special teams).
+// 30min TTL — pre-game data (records, streaks) shifts daily, unlike the
+// 1hr/24hr TTLs used for Final-game data elsewhere in this file (that
+// convention was chosen because Final results don't change).
+// /pwhl/prediction deliberately does NOT call this — it stays Supabase-only
+// (pwhl_team_seasons + pwhl_game_log), matching how NHL's own
+// /prediction/analyze is self-contained from cached standings+schedule with
+// no second external view dependency. The richer HockeyTech-sourced H2H
+// narrative lives in /pwhl/preview's section of the popup instead.
+async function fetchGameCenterPreview(env, gameId) {
+  const kvKey = `pwhl:gcpreview:${gameId}`;
+  const cached = await kvGet(env, kvKey);
+  if (cached) return cached;
+  const htRes = await fetch(
+    `${HT_BASE}?feed=statviewfeed&view=gameCenterPreview&game_id=${gameId}&key=${HT_KEY}&client_code=pwhl&lang=en&league_id=`,
+    { headers: HT_HDR }
+  );
+  if (!htRes.ok) throw new Error(`HockeyTech ${htRes.status}`);
+  const raw = unwrapJsonp(await htRes.text());
+  await kvPut(env, kvKey, raw, 1800);
+  return raw;
 }
 
 // PWHL team ID → abbreviation map
@@ -1494,6 +1518,294 @@ Write in plain text, no markdown. 1-2 sentences max.`;
       console.error('[PWHL] narrative AI error:', e);
       return new Response(JSON.stringify({ error: 'AI generation failed' }), { status: 502, headers: corsHeaders() });
     }
+  }
+
+  // ── Pre-game preview (Session 51) ────────────────────────────
+  // GET /pwhl/preview?gameId=210
+  // Live-fetched from HockeyTech's gameCenterPreview view — season series,
+  // head-to-head, streaks, team-scoped leading scorers, special teams, for
+  // an upcoming (not-yet-played) PWHL game. Deliberately excludes
+  // miscellaneousRecords (confirmed all-zero in every game checked) and
+  // lineup (confirmed always null pre-2026-27-preseason; revisit once a
+  // genuinely scheduled game with real lineup data exists).
+  if (url.pathname === '/pwhl/preview') {
+    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey  = `pwhl:preview:${gameId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let raw;
+    try {
+      raw = await fetchGameCenterPreview(env, gameId);
+    } catch (e) {
+      return new Response(JSON.stringify({ error: 'gameCenterPreview fetch failed', detail: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    const team = (t) => t ? {
+      id:            parseInt(t.teamInfo?.id, 10) || null,
+      abbreviation:  t.teamInfo?.abbreviation || '',
+      name:          t.teamInfo?.name || '',
+      goalsFor:      t.goalsFor ?? null,
+      goalsAgainst:  t.goalsAgainst ?? null,
+      // teamRecord.streak is a plain string ("1-0-0-0"), NOT the same
+      // {wins,losses,...,formattedRecord} object shape as the other
+      // teamRecord splits (overall/home/visiting/past_10_games) -- confirmed
+      // live against game 326's real payload (Session 51).
+      streak:        t.teamRecord?.streak || null,
+      overallRecord: t.teamRecord?.overall?.formattedRecord || null,
+      last10Record:  t.teamRecord?.past_10_games?.formattedRecord || null,
+      leadingScorers: (t.leadingScorers || []).slice(0, 5).map(s => ({
+        name:   `${s.info?.firstName || ''} ${s.info?.lastName || ''}`.trim(),
+        stats:  s.stats || null,
+      })),
+      leadingRookie: t.leadingRookie ? {
+        name:  `${t.leadingRookie.info?.firstName || ''} ${t.leadingRookie.info?.lastName || ''}`.trim(),
+        stats: t.leadingRookie.stats || null,
+      } : null,
+      leadingPIM: t.leadingPIM ? {
+        name:  `${t.leadingPIM.info?.firstName || ''} ${t.leadingPIM.info?.lastName || ''}`.trim(),
+        stats: t.leadingPIM.stats || null,
+      } : null,
+      powerPlay:    t.powerPlayStats?.overall   || null,
+      penaltyKill:  t.penaltyKillStats?.overall || null,
+    } : null;
+
+    const payload = {
+      gameId,
+      homeTeam:     team(raw.homeTeam),
+      visitingTeam: team(raw.visitingTeam),
+      // In-season game-by-game log between these two teams — count varies
+      // (0 for a series/season opener, several for teams that meet often).
+      seasonSeries: (raw.previousMeetings || []).map(m => ({
+        gameId:     parseInt(m.gameId, 10) || null,
+        datePlayed: m.datePlayed || m.game_date_iso_8601 || null,
+        homeTeamId: parseInt(m.homeTeamId, 10) || null,
+        homeCity:   m.homeCity || '',
+        homeScore:  parseInt(m.homeScore, 10) || 0,
+        visitingTeamId: parseInt(m.visitingTeamId, 10) || null,
+        visitingCity:   m.visitingCity || '',
+        visitingScore:  parseInt(m.visitingScore, 10) || 0,
+      })),
+      // Multi-season aggregate (previousYear/currentYear/previousFiveYears),
+      // NOT a game log — that's seasonSeries above.
+      headToHeadRecords: raw.headToHeadRecords || null,
+      longestStreaks: {
+        home:      raw.homeTeam?.longestStreaks     || null,
+        visiting:  raw.visitingTeam?.longestStreaks || null,
+      },
+      generatedAt: new Date().toISOString(),
+    };
+
+    await kvPut(env, kvKey, payload, 1800);
+    return json(payload);
+  }
+
+  // GET /pwhl/prediction?gameId=210
+  // Team-level win prediction (heuristic + AI narrative) — PWHL analog of
+  // NHL's /prediction/analyze FALLBACK tier (nhl.js:2228-2382), not NHL's
+  // preferred DB-first Tier-1 system (ai_predictions.py, RAPM/WAR/zone-start
+  // driven) — that one needs shift-level data PWHL doesn't have until the
+  // WAR/RAPM October blocker clears (see eyewall-pipeline CLAUDE.md). Don't
+  // present this as full parity with NHL's "real" prediction system.
+  //
+  // "Corsi" here (corsiForPct) is shot-attempt share — goals + shots +
+  // blocked shots — at ALL STRENGTHS, not 5-on-5 filtered (PWHL's PBP data
+  // has no strength-state reconstruction yet). It's still more complete
+  // than NHL's own possession proxy in /prediction/analyze, which is only
+  // shots-on-goal share and doesn't count blocked shots at all — but it's
+  // not a true 5v5 possession stat either. Labeled explicitly in the AI
+  // prompt and in corsiCaveat below so nothing overclaims precision.
+  //
+  // Public, billed-AI route; rate-limited below (no secret check — called
+  // directly from the frontend, same pattern as /pwhl/scout).
+  if (url.pathname === '/pwhl/prediction') {
+    const limited = await checkAiRateLimit(env, request, 'pwhl-prediction');
+    if (limited) return limited;
+
+    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+    const forceRegen = url.searchParams.get('force') === '1';
+
+    const kvKey = `pwhl:prediction:${gameId}`;
+    if (!forceRegen) {
+      const cached = await kvGet(env, kvKey);
+      if (cached) return json(cached);
+    }
+
+    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+
+    const gameRes = await fetch(
+      `${SB_URL}/rest/v1/pwhl_game_log?game_id=eq.${gameId}&select=game_id,season_id,home_team_id,away_team_id`,
+      { headers: sbH }
+    );
+    if (!gameRes.ok) return new Response(JSON.stringify({ error: `Supabase ${gameRes.status}` }), { status: 502, headers: corsHeaders() });
+    const [game] = await gameRes.json();
+    if (!game || !game.home_team_id || !game.away_team_id) {
+      return new Response(JSON.stringify({ error: 'Game not found in pwhl_game_log' }), { status: 404, headers: corsHeaders() });
+    }
+
+    const seasonId  = game.season_id;
+    const homeId    = game.home_team_id;
+    const awayId    = game.away_team_id;
+
+    const seasonTypeMap = await getAllPWHLSeasonTypes(env);
+    const seasonType    = seasonTypeMap?.[seasonId] || 'regular';
+    const isPlayoff      = seasonType === 'playoffs';
+
+    const [teamsRes, logRes] = await Promise.all([
+      fetch(`${SB_URL}/rest/v1/pwhl_team_seasons?team_id=in.(${homeId},${awayId})&season_id=eq.${seasonId}&season_type=eq.${seasonType}`, { headers: sbH }),
+      fetch(`${SB_URL}/rest/v1/pwhl_game_log?season_id=eq.${seasonId}&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ot,shootout`, { headers: sbH }),
+    ]);
+    if (!teamsRes.ok) return new Response(JSON.stringify({ error: `Supabase ${teamsRes.status}` }), { status: 502, headers: corsHeaders() });
+    const teamRows = await teamsRes.json();
+    const games    = logRes.ok ? await logRes.json() : [];
+
+    const home = teamRows.find(t => t.team_id === homeId);
+    const away = teamRows.find(t => t.team_id === awayId);
+    if (!home || !away) {
+      return new Response(JSON.stringify({ error: 'pwhl_team_seasons rows not found for both teams' }), { status: 404, headers: corsHeaders() });
+    }
+
+    // Streak, computed live from the game log — same result-string logic as
+    // /pwhl/standings' streak calc above, scoped to just these 2 teams.
+    const streakFor = (teamId) => {
+      const results = games
+        .filter(g => g.home_team_id === teamId || g.away_team_id === teamId)
+        .map(g => {
+          const isHomeG = g.home_team_id === teamId;
+          const my  = isHomeG ? g.home_score : g.away_score;
+          const opp = isHomeG ? g.away_score : g.home_score;
+          const extra = g.ot || g.shootout;
+          return my > opp ? 'W' : extra ? 'O' : 'L';
+        });
+      let streak = 0, streakType = '';
+      for (const res of results) {
+        if (!streakType) { streakType = res === 'W' ? 'W' : 'L'; streak = 1; }
+        else if ((res === 'W' && streakType === 'W') || (res !== 'W' && streakType === 'L')) streak++;
+        else break;
+      }
+      return streak ? `${streakType}${streak}` : 'unknown';
+    };
+    const homeStreak = streakFor(homeId);
+    const awayStreak = streakFor(awayId);
+
+    // This-season head-to-head between these 2 teams (long-run multi-season
+    // H2H lives in /pwhl/preview's headToHeadRecords instead).
+    const h2hGames = games.filter(g =>
+      (g.home_team_id === homeId && g.away_team_id === awayId) ||
+      (g.home_team_id === awayId && g.away_team_id === homeId)
+    );
+    const h2hHomeWins = h2hGames.filter(g => {
+      const homeWasHome = g.home_team_id === homeId;
+      const myScore  = homeWasHome ? g.home_score : g.away_score;
+      const oppScore = homeWasHome ? g.away_score : g.home_score;
+      return myScore > oppScore;
+    }).length;
+    const h2hRecord = h2hGames.length > 0
+      ? `${h2hHomeWins}-${h2hGames.length - h2hHomeWins}`
+      : 'no prior meetings';
+
+    const homeAbbr = PWHL_TEAM_CODES[homeId] || `T${homeId}`;
+    const awayAbbr = PWHL_TEAM_CODES[awayId] || `T${awayId}`;
+
+    const hGp = home.gp || 1, aGp = away.gp || 1;
+    const hGpg = (home.goals_for ?? 0) / hGp,     aGpg = (away.goals_for ?? 0) / aGp;
+    const hGag = (home.goals_against ?? 0) / hGp, aGag = (away.goals_against ?? 0) / aGp;
+    const hCF  = home.corsi_for_pct ?? null,      aCF  = away.corsi_for_pct ?? null;
+    const hPP  = (home.pp_pct ?? 0) * 100,        aPP  = (away.pp_pct ?? 0) * 100;
+    const hPK  = (home.pk_pct ?? 0) * 100,        aPK  = (away.pk_pct ?? 0) * 100;
+
+    // Pythagorean expected score — same geometric-mean-of-rates shape as
+    // NHL's /prediction/analyze (nhl.js:2306-2310), home-ice adjustment
+    // ported unchanged.
+    const clamp    = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    const expHome  = clamp(Math.sqrt(Math.max(hGpg, 0.5) * Math.max(aGag, 0.5)) + 0.12, 1.5, 5.0).toFixed(1);
+    const expAway  = clamp(Math.sqrt(Math.max(aGpg, 0.5) * Math.max(hGag, 0.5)) - 0.12, 1.5, 5.0).toFixed(1);
+
+    // Win probability — additive heuristic ported from NHL's
+    // /prediction/analyze (nhl.js:2312-2327), with real Corsi-for% swapped
+    // in for NHL's SOG-for-only "possession" term.
+    let homeScore = 0, awayScore = 0;
+    if (!isPlayoff) {
+      const ptsDiff = (home.points ?? 0) - (away.points ?? 0);
+      homeScore += ptsDiff > 0 ? Math.min(ptsDiff / 20, 1) : 0;
+      awayScore += ptsDiff < 0 ? Math.min(-ptsDiff / 20, 1) : 0;
+    }
+    if (hGpg > aGpg) homeScore += 0.6; else awayScore += 0.6;
+    if (hGag < aGag) homeScore += 0.6; else awayScore += 0.6;
+    if (hPP  > aPP)  homeScore += 0.4; else awayScore += 0.4;
+    if (hCF != null && aCF != null) {
+      if (hCF > aCF) homeScore += 0.5; else awayScore += 0.5;
+    }
+    if (homeStreak.startsWith('W')) homeScore += 0.3;
+    if (awayStreak.startsWith('W')) awayScore += 0.3;
+    const totalScore = homeScore + awayScore || 1;
+    const homeWinPct = Math.round((homeScore / totalScore) * 100);
+
+    const prompt = `You are EyeWall Analytics, a PWHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. The shot-attempt numbers below are ALL-SITUATIONS (not 5-on-5 only) — describe it as "shot-attempt share," not as a 5v5/possession-only stat.
+
+Game: ${homeAbbr} (HOME) vs ${awayAbbr} (AWAY)
+Context: ${isPlayoff ? 'PLAYOFFS' : 'Regular Season'}
+
+${homeAbbr} stats:
+- Record: ${home.wins}-${home.losses}-${home.ot_losses} (${home.points} pts)
+- GF/GA per game: ${hGpg.toFixed(2)} / ${hGag.toFixed(2)}
+- PP%: ${hPP.toFixed(1)}% · PK%: ${hPK.toFixed(1)}%
+- Shot-attempt share (Corsi For%, all situations): ${hCF != null ? hCF.toFixed(1) : '—'}%
+- Current streak: ${homeStreak}
+
+${awayAbbr} stats:
+- Record: ${away.wins}-${away.losses}-${away.ot_losses} (${away.points} pts)
+- GF/GA per game: ${aGpg.toFixed(2)} / ${aGag.toFixed(2)}
+- PP%: ${aPP.toFixed(1)}% · PK%: ${aPK.toFixed(1)}%
+- Shot-attempt share (Corsi For%, all situations): ${aCF != null ? aCF.toFixed(1) : '—'}%
+- Current streak: ${awayStreak}
+
+Head-to-head this season: ${homeAbbr} ${h2hRecord}
+Expected score (Pythagorean): ${homeAbbr} ${expHome} - ${awayAbbr} ${expAway}
+Model win probability: ${homeAbbr} ${homeWinPct}%${isPlayoff ? '\n\nNote: This is a playoff game. Ignore regular season points — focus on possession, goaltending, and recent form.' : ''}
+
+Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.`;
+
+    let narrative = '';
+    try {
+      const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+        messages: [{ role: 'user', content: prompt }],
+      });
+      narrative = aiResponse.response?.trim() || '';
+    } catch (e) {
+      console.error('PWHL prediction AI error:', e);
+    }
+    if (!narrative) return new Response(JSON.stringify({ error: 'Empty AI response' }), { status: 502, headers: corsHeaders() });
+
+    const result = {
+      gameId,
+      homeTeamId: homeId,
+      awayTeamId: awayId,
+      homeAbbr,
+      awayAbbr,
+      isPlayoff,
+      homeWinPct,
+      awayWinPct: 100 - homeWinPct,
+      expHome: parseFloat(expHome),
+      expAway: parseFloat(expAway),
+      narrative,
+      h2hRecord,
+      homeStreak,
+      awayStreak,
+      corsiForPct: { home: hCF, away: aCF },
+      corsiCaveat: 'All-situations shot-attempt share (goals+shots+blocked), not 5-on-5 filtered.',
+      generatedAt: new Date().toISOString(),
+    };
+
+    // 30min TTL, not NHL's 24hr (nhl.js:2379) — that convention assumes a
+    // day's worth of staleness is fine for lineup-change risk only; PWHL's
+    // inputs here (streaks, Corsi) can shift same-day as games finish, and
+    // Session 51 explicitly rejected reusing the 24hr convention for this.
+    await kvPut(env, kvKey, result, 1800);
+    return json(result);
   }
 
   return new Response('EyeWall Poller', { status: 200 });
