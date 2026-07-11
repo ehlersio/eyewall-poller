@@ -679,7 +679,7 @@ describe('GET /prediction/analyze', () => {
     expect((await res.json()).error).toMatch(/not found in schedule/i)
   })
 
-  it('generates and caches a prediction for a game with standings on both sides', async () => {
+  it('generates and caches a prediction for a game with standings on both sides, falling back to the SOG-share proxy when team_seasons has no Corsi data', async () => {
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [
       { teamAbbrev: { default: 'CAR' }, gamesPlayed: 10, wins: 7, losses: 3, otLosses: 0, points: 14, goalFor: 35, goalAgainst: 25, powerPlayPct: 24, penaltyKillPct: 80, shotsForPerGame: 32, shotsAgainstPerGame: 28, streakCode: 'W', streakCount: 3 },
@@ -689,6 +689,10 @@ describe('GET /prediction/analyze', () => {
       CACHE: makeFakeCache({ 'schedule:CAR': schedule, standings }),
       AI: { run: vi.fn().mockResolvedValue({ response: 'CAR should win this one comfortably.' }) },
     })
+    // team_seasons has no rows for either team yet (e.g. before the
+    // Session 52 Corsi rollup has run for this season) — route must fall
+    // back to the SOG-share proxy rather than erroring.
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
 
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
@@ -701,9 +705,44 @@ describe('GET /prediction/analyze', () => {
     expect(body.oppAbbr).toBe('BOS')
     expect(body.narrative).toBe('CAR should win this one comfortably.')
     expect(env.AI.run).toHaveBeenCalledTimes(1)
+    // SOG-share proxy: carCF = carSF/(carSF+oppSA)*100 = 32/(32+31)*100 = 50.8
+    expect(body.carCF).toBe('50.8')
+    expect(body.corsiForPct).toEqual({ car: 50.8, opp: expect.any(Number) })
+    expect(body.corsiCaveat).toMatch(/shots-on-goal share only/i)
 
     const cached = JSON.parse(await env.CACHE.get('prediction:123'))
     expect(cached.narrative).toBe('CAR should win this one comfortably.')
+  })
+
+  it('uses real 5v5 Corsi from team_seasons when both teams have it, instead of the SOG-share proxy', async () => {
+    const schedule = [{ id: 124, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, gamesPlayed: 10, wins: 7, losses: 3, otLosses: 0, points: 14, goalFor: 35, goalAgainst: 25, powerPlayPct: 24, penaltyKillPct: 80, shotsForPerGame: 32, shotsAgainstPerGame: 28, streakCode: 'W', streakCount: 3 },
+      { teamAbbrev: { default: 'BOS' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 28, goalAgainst: 30, powerPlayPct: 18, penaltyKillPct: 76, shotsForPerGame: 29, shotsAgainstPerGame: 31, streakCode: 'L', streakCount: 1 },
+    ]
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR': schedule, standings }),
+      AI: { run: vi.fn().mockResolvedValue({ response: 'CAR has the possession edge.' }) },
+    })
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { team: 'CAR', corsi_for_pct: 0.55, corsi_for_pct_5v5: 0.592 },
+        { team: 'BOS', corsi_for_pct: 0.47, corsi_for_pct_5v5: 0.431 },
+      ],
+    })
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=124'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=124')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    // 0.592 * 100 = 59.2 (5v5 preferred over all-situations or SOG proxy)
+    expect(body.carCF).toBe('59.2')
+    expect(body.corsiForPct).toEqual({ car: 59.2, opp: 43.1 })
+    expect(body.corsiCaveat).toMatch(/5-on-5 shot-attempt share/i)
   })
 })
 

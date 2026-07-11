@@ -2274,9 +2274,54 @@ export async function handleNHL(request, env, ctx, url) {
     const carSA  = carTeam.shotsAgainstPerGame || 0;
     const oppSA  = oppTeam.shotsAgainstPerGame || 0;
 
-    // Corsi proxy (SOG share)
-    const carCF = carSF + oppSA > 0 ? (carSF / (carSF + oppSA) * 100).toFixed(1) : null;
-    const oppCF = oppSF + carSA > 0 ? (oppSF / (oppSF + carSA) * 100).toFixed(1) : null;
+    // Real Corsi (shot-attempt share: goals+shots+blocked+missed), from
+    // team_seasons — replaces the SOG-share-only proxy this route used to
+    // compute inline (Session 52; that proxy ignored blocked/missed shots
+    // entirely). Prefers the 5v5-filtered column over all-situations, over
+    // the old SOG-share proxy as a last resort — unlike PWHL's own
+    // /pwhl/prediction (pwhl.js), which is still all-situations only since
+    // PWHL's strength-state reconstruction is a separate, harder problem
+    // (see eyewall-pipeline's pwhl_strength_state.py); NHL's shot_events
+    // already carries a real situation_code natively, so 5v5 costs nothing
+    // extra here. team_seasons.corsi_for_pct[_5v5] are stored as 0-1
+    // fractions, same convention as this table's existing xgf_pct column
+    // — scaled to a percentage below like every frontend xgf_pct reader
+    // already does (see LeagueView.jsx).
+    let carCF = null, oppCF = null, corsiSource = 'sog_share_proxy';
+    try {
+      const season = await resolveNHLSeason(env);
+      const teamRows = await sbRows(
+        `team_seasons?team=in.(${tc.abbr},${oppAbbr})&season=eq.${season}&game_type=eq.2` +
+        `&select=team,corsi_for_pct,corsi_for_pct_5v5`
+      );
+      const carRow = teamRows.find(r => r.team === tc.abbr);
+      const oppRow = teamRows.find(r => r.team === oppAbbr);
+      if (carRow?.corsi_for_pct_5v5 != null && oppRow?.corsi_for_pct_5v5 != null) {
+        carCF = (carRow.corsi_for_pct_5v5 * 100).toFixed(1);
+        oppCF = (oppRow.corsi_for_pct_5v5 * 100).toFixed(1);
+        corsiSource = '5v5';
+      } else if (carRow?.corsi_for_pct != null && oppRow?.corsi_for_pct != null) {
+        carCF = (carRow.corsi_for_pct * 100).toFixed(1);
+        oppCF = (oppRow.corsi_for_pct * 100).toFixed(1);
+        corsiSource = 'all_situations';
+      }
+    } catch (e) {
+      console.error('team_seasons Corsi fetch failed, falling back to SOG-share proxy:', e);
+    }
+    if (carCF === null || oppCF === null) {
+      // Fallback: team_seasons rows/columns not populated yet for this
+      // season (e.g. before moneypuck.py's nightly Corsi rollup has run,
+      // or before docs/session52_new_columns.sql has been applied).
+      carCF = carSF + oppSA > 0 ? (carSF / (carSF + oppSA) * 100).toFixed(1) : null;
+      oppCF = oppSF + carSA > 0 ? (oppSF / (oppSF + carSA) * 100).toFixed(1) : null;
+      corsiSource = 'sog_share_proxy';
+    }
+    const corsiCaveat = corsiSource === '5v5'
+      ? '5-on-5 shot-attempt share (goals+shots+blocked+missed).'
+      : corsiSource === 'all_situations'
+        ? 'All-situations shot-attempt share (goals+shots+blocked+missed), not 5-on-5 filtered.'
+        : 'Shots-on-goal share only (blocked/missed shots not counted) — real Corsi data unavailable for this team/season yet.';
+    const corsiLabel = corsiSource === 'sog_share_proxy' ? 'Corsi proxy (SOG share)' : 'Corsi (real shot-attempt share)';
 
     // PDO proxy
 
@@ -2336,7 +2381,7 @@ ${tc.abbr} stats:
 - GF/GA per game: ${carGpg.toFixed(2)} / ${carGag.toFixed(2)}
 - PP%: ${(carTeam.powerPlayPct ?? 0).toFixed(1)}% · PK%: ${(carTeam.penaltyKillPct ?? 0).toFixed(1)}%
 - SOG/GP: ${carSF.toFixed(1)} for / ${carSA.toFixed(1)} against
-- Corsi proxy (SOG share): ${carCF ?? '—'}%
+- ${corsiLabel}: ${carCF ?? '—'}%
 - Current streak: ${carStreak}
 
 ${oppAbbr} stats:
@@ -2344,12 +2389,14 @@ ${oppAbbr} stats:
 - GF/GA per game: ${oppGpg.toFixed(2)} / ${oppGag.toFixed(2)}
 - PP%: ${(oppTeam.powerPlayPct ?? 0).toFixed(1)}% · PK%: ${(oppTeam.penaltyKillPct ?? 0).toFixed(1)}%
 - SOG/GP: ${oppSF.toFixed(1)} for / ${oppSA.toFixed(1)} against
-- Corsi proxy (SOG share): ${oppCF ?? '—'}%
+- ${corsiLabel}: ${oppCF ?? '—'}%
 - Current streak: ${oppStreak}
 
 Head-to-head this season: ${tc.abbr} ${h2hRecord}
 Expected score (Pythagorean): ${tc.abbr} ${expCar} - ${oppAbbr} ${expOpp}
 Model win probability: ${tc.abbr} ${carWinPct}%${isPlayoff ? '\n\nNote: This is a playoff game. Ignore regular season points — focus on possession, goaltending, and recent form.' : ''}
+
+${corsiSource === 'sog_share_proxy' ? 'Note: the Corsi figure above is a shots-on-goal-only proxy (real shot-attempt data unavailable) — describe it as "shot share," not "Corsi" or "possession," in your analysis.' : `Note: the Corsi figure above is ${corsiCaveat} Describe it as "shot-attempt share" or "Corsi," accurately reflecting that scope.`}
 
 Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.`;
 
@@ -2372,6 +2419,8 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       carStreak,
       oppStreak,
       carCF,
+      corsiForPct: { car: carCF != null ? parseFloat(carCF) : null, opp: oppCF != null ? parseFloat(oppCF) : null },
+      corsiCaveat,
       generatedAt: new Date().toISOString(),
     };
 
