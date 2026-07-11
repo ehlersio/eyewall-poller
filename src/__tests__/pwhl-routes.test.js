@@ -564,6 +564,28 @@ describe('GET /pwhl/prediction', () => {
     expect(JSON.parse(await env.CACHE.get('pwhl:prediction:210')).homeWinPct).toBe(body.homeWinPct)
   })
 
+  it('uses real 5v5 Corsi from pwhl_team_seasons when both teams have it, instead of the all-situations column', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Montreal has the 5v5 possession edge.' }) } })
+    mockSupabaseFlow({
+      game: { game_id: 210, season_id: 8, home_team_id: 3, away_team_id: 5 },
+      teams: [
+        { ...homeTeamRow, corsi_for_pct_5v5: 58.9 },
+        { ...awayTeamRow, corsi_for_pct_5v5: 44.3 },
+      ],
+      seasonGames: [],
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    // 5v5 preferred over all-situations (54.2/46.1 on the base fixture rows)
+    expect(body.corsiForPct).toEqual({ home: 58.9, away: 44.3 })
+    expect(body.corsiCaveat).toMatch(/5-on-5 shot-attempt share/i)
+    expect(body.corsiCaveat).not.toMatch(/not 5-on-5/i)
+  })
+
   it('resolves playoff status via getAllPWHLSeasonTypes and skips the points term', async () => {
     const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'A tight playoff tilt.' }) } })
     mockSupabaseFlow({
