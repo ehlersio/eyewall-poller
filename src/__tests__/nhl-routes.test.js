@@ -127,6 +127,71 @@ describe('GET /player-analytics', () => {
   })
 })
 
+describe('GET /player-results-vs-process', () => {
+  it('400s when playerId is missing', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/player-results-vs-process?season=20252026'), env, makeCtx(),
+      new URL('https://example.com/player-results-vs-process?season=20252026')
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('serves from KV cache without hitting Supabase', async () => {
+    const cachedRow = [{ narrative_text: 'cached blurb', generated_at: '2026-01-01' }]
+    const env = makeEnv({
+      CACHE: { async get() { return JSON.stringify(cachedRow) }, async put() {} },
+    })
+    const res = await handleNHL(
+      makeRequest('/player-results-vs-process?playerId=1&season=20252026'), env, makeCtx(),
+      new URL('https://example.com/player-results-vs-process?playerId=1&season=20252026')
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cachedRow)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('fetches the narrative_type=results_vs_process row from Supabase on a cache miss', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ narrative_text: 'Kopitar is outperforming his process...', generated_at: '2026-01-01' }],
+    })
+
+    const res = await handleNHL(
+      makeRequest('/player-results-vs-process?playerId=8471685&season=20252026'), env, makeCtx(),
+      new URL('https://example.com/player-results-vs-process?playerId=8471685&season=20252026')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body[0].narrative_text).toContain('outperforming')
+
+    const fetchedUrl = globalThis.fetch.mock.calls[0][0]
+    expect(String(fetchedUrl)).toContain('player_narratives')
+    expect(String(fetchedUrl)).toContain('narrative_type=eq.results_vs_process')
+    expect(String(fetchedUrl)).toContain('player_id=eq.8471685')
+
+    const cached = await env.CACHE.get('nhl:player-results-vs-process:8471685:20252026')
+    expect(JSON.parse(cached)[0].narrative_text).toContain('outperforming')
+  })
+
+  it('returns an empty array (not a 502) when the Supabase fetch fails', async () => {
+    // Mirrors /player-scouting's swallow-and-return-[] behavior -- a missing
+    // narrative shouldn't surface as an error to the player popup.
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await handleNHL(
+      makeRequest('/player-results-vs-process?playerId=1&season=20252026'), env, makeCtx(),
+      new URL('https://example.com/player-results-vs-process?playerId=1&season=20252026')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([])
+  })
+})
+
 describe('GET /player-shots', () => {
   it('400s when playerId is missing', async () => {
     const env = makeEnv()

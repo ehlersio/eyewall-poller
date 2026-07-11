@@ -1521,7 +1521,11 @@ export async function handleNHL(request, env, ctx, url) {
       'finishing,goals_per60,a1_per60,xgf_per60,penalties_per60,competition,teammates,game_score,' +
       'pct_ev_off,pct_ev_def,pct_pp,pct_pk,pct_finishing,pct_goals,pct_a1,' +
       'pct_penalties,pct_competition,pct_teammates,games_played,' +
-      'xga_per60,hdca_per60,hits,blocked_shots,takeaways,giveaways';
+      'xga_per60,hdca_per60,hits,blocked_shots,takeaways,giveaways,' +
+      // Session 56 -- both null below eyewall-pipeline's moneypuck.py
+      // RESULTS_VS_PROCESS_MIN_GP (25 GP) guardrail; the frontend should
+      // treat "null" as "not enough games yet," not re-derive a GP number.
+      'on_ice_gf_pct,results_vs_process_diff';
     const DEF_COLS = 'player_id,hits,blocked_shots,takeaways,giveaways';
 
     let rows, poRows;
@@ -1804,6 +1808,35 @@ export async function handleNHL(request, env, ctx, url) {
       rows = await sbRows(
         `player_scouting?player_id=eq.${playerId}&season=eq.${season}` +
         `&select=scouting_text,generated_at&limit=1`
+      );
+    } catch {
+      rows = [];
+    }
+
+    await kvPut(env, kvKey, rows, 3600);
+    return json(rows);
+  }
+
+  if (url.pathname === '/player-results-vs-process') {
+    // Session 56 -- mirrors /player-scouting's shape exactly (single-player,
+    // single-season lookup) rather than joining into /player-analytics's
+    // bulk 2000-row response: the frontend only ever needs one player's
+    // blurb at a time (player popup), so a light second lookup fits with
+    // less disruption than a bulk join nobody would otherwise use.
+    const playerId = url.searchParams.get('playerId');
+    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    if (!playerId) return new Response(JSON.stringify({ error: 'playerId required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey  = `nhl:player-results-vs-process:${playerId}:${season}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let rows;
+    try {
+      rows = await sbRows(
+        `player_narratives?player_id=eq.${playerId}&season=eq.${season}` +
+        `&narrative_type=eq.results_vs_process` +
+        `&select=narrative_text,generated_at&limit=1`
       );
     } catch {
       rows = [];
