@@ -1713,9 +1713,29 @@ Write in plain text, no markdown. 1-2 sentences max.`;
     const hGp = home.gp || 1, aGp = away.gp || 1;
     const hGpg = (home.goals_for ?? 0) / hGp,     aGpg = (away.goals_for ?? 0) / aGp;
     const hGag = (home.goals_against ?? 0) / hGp, aGag = (away.goals_against ?? 0) / aGp;
-    const hCF  = home.corsi_for_pct ?? null,      aCF  = away.corsi_for_pct ?? null;
     const hPP  = (home.pp_pct ?? 0) * 100,        aPP  = (away.pp_pct ?? 0) * 100;
     const hPK  = (home.pk_pct ?? 0) * 100,        aPK  = (away.pk_pct ?? 0) * 100;
+
+    // Real Corsi, preferring the 5v5-filtered column over all-situations —
+    // same preference-order pattern as NHL's /prediction/analyze
+    // (nhl.js:2299-2307). Unlike NHL's team_seasons, pwhl_team_seasons
+    // stores corsi_for_pct[_5v5] already scaled to a percentage (see
+    // pwhl_stats.py::run_team_shot_totals[_5v5]), not a 0-1 fraction — no
+    // *100 here, that would double-scale.
+    let hCF, aCF, corsiSource;
+    if (home.corsi_for_pct_5v5 != null && away.corsi_for_pct_5v5 != null) {
+      hCF = home.corsi_for_pct_5v5; aCF = away.corsi_for_pct_5v5; corsiSource = '5v5';
+    } else if (home.corsi_for_pct != null && away.corsi_for_pct != null) {
+      hCF = home.corsi_for_pct; aCF = away.corsi_for_pct; corsiSource = 'all_situations';
+    } else {
+      hCF = null; aCF = null; corsiSource = 'unavailable';
+    }
+    const corsiCaveat = corsiSource === '5v5'
+      ? '5-on-5 shot-attempt share (goals+shots+blocked), not all-situations.'
+      : corsiSource === 'all_situations'
+        ? 'All-situations shot-attempt share (goals+shots+blocked), not 5-on-5 filtered.'
+        : 'Shot-attempt share unavailable for this team/season yet.';
+    const corsiLabel = corsiSource === '5v5' ? 'Shot-attempt share (Corsi For%, 5-on-5)' : 'Shot-attempt share (Corsi For%, all situations)';
 
     // Pythagorean expected score — same geometric-mean-of-rates shape as
     // NHL's /prediction/analyze (nhl.js:2306-2310), home-ice adjustment
@@ -1744,7 +1764,7 @@ Write in plain text, no markdown. 1-2 sentences max.`;
     const totalScore = homeScore + awayScore || 1;
     const homeWinPct = Math.round((homeScore / totalScore) * 100);
 
-    const prompt = `You are EyeWall Analytics, a PWHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. The shot-attempt numbers below are ALL-SITUATIONS (not 5-on-5 only) — describe it as "shot-attempt share," not as a 5v5/possession-only stat.
+    const prompt = `You are EyeWall Analytics, a PWHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. ${corsiSource === '5v5' ? 'The shot-attempt numbers below are 5-ON-5 filtered — describe it as "5v5 shot-attempt share" or "possession," accurately reflecting that scope.' : corsiSource === 'all_situations' ? 'The shot-attempt numbers below are ALL-SITUATIONS (not 5-on-5 only) — describe it as "shot-attempt share," not as a 5v5/possession-only stat.' : 'Shot-attempt data is unavailable for one or both teams — do not reference Corsi or possession.'}
 
 Game: ${homeAbbr} (HOME) vs ${awayAbbr} (AWAY)
 Context: ${isPlayoff ? 'PLAYOFFS' : 'Regular Season'}
@@ -1753,14 +1773,14 @@ ${homeAbbr} stats:
 - Record: ${home.wins}-${home.losses}-${home.ot_losses} (${home.points} pts)
 - GF/GA per game: ${hGpg.toFixed(2)} / ${hGag.toFixed(2)}
 - PP%: ${hPP.toFixed(1)}% · PK%: ${hPK.toFixed(1)}%
-- Shot-attempt share (Corsi For%, all situations): ${hCF != null ? hCF.toFixed(1) : '—'}%
+- ${corsiLabel}: ${hCF != null ? hCF.toFixed(1) : '—'}%
 - Current streak: ${homeStreak}
 
 ${awayAbbr} stats:
 - Record: ${away.wins}-${away.losses}-${away.ot_losses} (${away.points} pts)
 - GF/GA per game: ${aGpg.toFixed(2)} / ${aGag.toFixed(2)}
 - PP%: ${aPP.toFixed(1)}% · PK%: ${aPK.toFixed(1)}%
-- Shot-attempt share (Corsi For%, all situations): ${aCF != null ? aCF.toFixed(1) : '—'}%
+- ${corsiLabel}: ${aCF != null ? aCF.toFixed(1) : '—'}%
 - Current streak: ${awayStreak}
 
 Head-to-head this season: ${homeAbbr} ${h2hRecord}
@@ -1796,7 +1816,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       homeStreak,
       awayStreak,
       corsiForPct: { home: hCF, away: aCF },
-      corsiCaveat: 'All-situations shot-attempt share (goals+shots+blocked), not 5-on-5 filtered.',
+      corsiCaveat,
       generatedAt: new Date().toISOString(),
     };
 
