@@ -192,6 +192,48 @@ describe('GET /player-results-vs-process', () => {
   })
 })
 
+describe('GET /team-seasons', () => {
+  it('selects magic/tragic number columns but not clinch_indicator (Session 59 — live standings is the clinch source of truth)', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { team: 'CAR', xgf_pct: 0.52, roster_war_score: 12.3, games_played: 60, magic_number: 4, tragic_number: 40, clinched: false, eliminated: false },
+      ],
+    })
+
+    const res = await handleNHL(
+      makeRequest('/team-seasons?season=20252026'), env, makeCtx(),
+      new URL('https://example.com/team-seasons?season=20252026')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body[0]).toMatchObject({ team: 'CAR', magic_number: 4, tragic_number: 40, clinched: false, eliminated: false })
+
+    const fetchedUrl = String(globalThis.fetch.mock.calls[0][0])
+    expect(fetchedUrl).toContain('magic_number')
+    expect(fetchedUrl).toContain('tragic_number')
+    expect(fetchedUrl).toContain('clinched')
+    expect(fetchedUrl).toContain('eliminated')
+    expect(fetchedUrl).not.toContain('clinch_indicator')
+  })
+
+  it('serves from KV cache without hitting Supabase', async () => {
+    const cachedRows = [{ team: 'CAR', magic_number: 2 }]
+    const env = makeEnv({
+      CACHE: { async get() { return JSON.stringify(cachedRows) }, async put() {} },
+    })
+    const res = await handleNHL(
+      makeRequest('/team-seasons?season=20252026'), env, makeCtx(),
+      new URL('https://example.com/team-seasons?season=20252026')
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cachedRows)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-shots', () => {
   it('400s when playerId is missing', async () => {
     const env = makeEnv()
