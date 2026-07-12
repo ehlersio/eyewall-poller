@@ -1708,11 +1708,23 @@ export async function handleNHL(request, env, ctx, url) {
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
+    // magic_number/tragic_number/clinched/eliminated are playoff_race.py's
+    // nightly forecast (Session 57). Deliberately not selecting
+    // team_seasons.clinch_indicator here — the frontend already gets the
+    // live, real-time clinchIndicator per team from /cache/standings (see
+    // getStandings() in nhlApi.js), which is the NHL's own ground truth and
+    // updates far more often than this nightly-batched table. Mixing a
+    // second, staler clinch_indicator into this route's response would just
+    // invite the two to disagree. Per playoff_race.py's docstring, once the
+    // live indicator is populated for a team it wins outright; these
+    // computed numbers are a pre-clinch/pre-elimination estimate only, and
+    // that precedence is a frontend-merge concern, not this route's.
     let rows;
     try {
       rows = await sbRows(
         `team_seasons?season=eq.${season}&game_type=eq.2` +
-        `&select=team,xgf_pct,roster_war_score,games_played&limit=32`
+        `&select=team,xgf_pct,roster_war_score,games_played,` +
+        `magic_number,tragic_number,clinched,eliminated&limit=32`
       );
     } catch (e) {
       return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
