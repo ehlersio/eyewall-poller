@@ -44,7 +44,7 @@ async function fetchGameCenterPreview(env, gameId) {
 }
 
 // PWHL team ID → abbreviation map
-const PWHL_TEAM_CODES = {
+export const PWHL_TEAM_CODES = {
   1:'BOS', 2:'MIN', 3:'MTL', 4:'NY', 5:'OTT', 6:'TOR', 8:'SEA', 9:'VAN',
   // 2026-27 expansion teams — IDs confirmed via HockeyTech's real signing
   // data + team-filter dropdown (docs/hockeytech-api-notes.md, 2026-07-04).
@@ -660,24 +660,23 @@ export async function handlePWHL(request, env, ctx, url) {
     return json(payload);
   }
 
-  // GET /pwhl/player/landing?id=198
-  // Player detail lookup for PWHLPlayerPopup (e.g. from milestone taps).
-  // Unlike NHL's /player/landing, this queries Supabase directly instead
-  // of an external API — pwhl_players is already the source of truth,
-  // no HockeyTech per-player endpoint needed.
+  // GET /pwhl/player/landing?id=198&season=8
+  // Player detail lookup for PWHLPlayerPopup — self-fetches identity + a
+  // season's stat line by id, the same role NHL's own /player/landing
+  // (proxying api-web.nhle.com) plays for NHL's PlayerPopup. Unlike NHL's
+  // route, this queries Supabase directly — pwhl_players is already the
+  // source of truth, no HockeyTech per-player endpoint needed.
   //
-  // PWHLPlayerPopup (unlike NHL's PlayerPopup) doesn't fetch its own
-  // season stats — it reads goals/points/wins/etc. directly off the
-  // player object passed in. So this merges the player's most recent
-  // regular-season stat line (pwhl_player_seasons for skaters,
-  // pwhl_goalie_seasons for goalies) onto the identity row before
-  // returning. "Most recent" is picked via season_id desc rather than a
-  // hardcoded season, so this doesn't need updating at the October flip.
+  // ?season= pins the stat line to that season_id (the frontend's season
+  // picker passes the exact id it's showing, e.g. PWHLPlayersView's Stats
+  // tab); omitted, falls back to the most recent regular-season row so
+  // season-agnostic callers (MilestonesFeed) keep working unchanged.
   if (url.pathname === '/pwhl/player/landing') {
-    const playerId = url.searchParams.get('id');
+    const playerId    = url.searchParams.get('id');
+    const seasonParam = url.searchParams.get('season');
     if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
 
-    const kvKey  = `pwhl:player:landing:${playerId}`;
+    const kvKey  = `pwhl:player:landing:${playerId}:${seasonParam || 'latest'}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
@@ -693,11 +692,11 @@ export async function handlePWHL(request, env, ctx, url) {
 
     const player = playerRows[0];
     const statsTable = player.position === 'G' ? 'pwhl_goalie_seasons' : 'pwhl_player_seasons';
+    const statsQuery = seasonParam
+      ? `player_id=eq.${playerId}&season_id=eq.${seasonParam}&season_type=eq.regular&limit=1&select=*`
+      : `player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc&limit=1&select=*`;
 
-    const statsRes = await fetch(
-      `${SB_URL}/rest/v1/${statsTable}?player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc&limit=1&select=*`,
-      { headers: sbH }
-    );
+    const statsRes = await fetch(`${SB_URL}/rest/v1/${statsTable}?${statsQuery}`, { headers: sbH });
     const statsRows = statsRes.ok ? await statsRes.json() : [];
     const stats = statsRows[0] || {};
 

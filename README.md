@@ -150,16 +150,19 @@ Key patterns:
 | `pwhl:summary:{gameId}` | 1hr | PWHL game summary (goals, MVPs, team stats) |
 | `pwhl:narrative:{period}:{gameId}:{carAbbr}` | 24hr | AI period/game narrative per team perspective |
 | `pwhl:pshots:{playerId}:{season}` | 6hr | PWHL player shot heat map data |
+| `pwhl:player:landing:{playerId}:{season|'latest'}` | 1hr | Single PWHL player's identity + one season's stat line |
 | `config:season:nhl` | 6hr | Live-resolved current NHL season (see [Live Season Resolution](#live-season-resolution)) |
 | `config:season:pwhl` | 6hr | Live-resolved current PWHL season `{seasonId, seasonType, startYear}` |
 | `config:season:nhl:override` | none (manual) | Forces a specific NHL season, bypassing live resolution entirely |
 | `config:season:pwhl:override` | none (manual) | Forces a specific PWHL season, bypassing live resolution entirely |
+| `players-search-index` | 6hr | Flat NHL+PWHL player list for the global player-search autocomplete |
 
 ## Config Endpoints
 
 | Method | Path | Description |
 |--------|------|--------------|
 | `GET` | `/config/seasons` | Live-resolved current NHL + PWHL season (see [Live Season Resolution](#live-season-resolution)). Consumed by the frontend at app boot and by the pipeline's `season_lookup.py`. |
+| `GET` | `/players-search-index` | Flat `{id, name, team, position, sport}` list of every NHL + PWHL player, for the frontend's player-search autocomplete. NHL team is resolved from each player's most-recently-updated current-season `player_seasons` row (the `players` table itself has no team column). |
 
 ## NHL Endpoints
 
@@ -200,6 +203,7 @@ Key patterns:
 | `GET` | `/pwhl/pbp?gameId=` | Completed game PBP + shot events |
 | `GET` | `/pwhl/salaries?teamId=&season=` | Salary data |
 | `GET` | `/pwhl/league-players?season=` | All teams' skaters + goalies |
+| `GET` | `/pwhl/player/landing?id=&season=` | Single player's identity + one season's stat line, merged (pwhl_players + pwhl_player_seasons/pwhl_goalie_seasons). Powers `PWHLPlayerPopup`'s self-fetch-by-id. `season` pins the stat line to that `season_id`; omitted, falls back to the most recent regular-season row. |
 | `GET` | `/pwhl/player-shots?playerId=&season=` | Player shot heat map data |
 | `GET` | `/pwhl/today?season=` | Today's games with live status |
 | `GET` | `/pwhl/live/:gameId` | Live PBP + normalized events |

@@ -17,22 +17,31 @@ vi.mock('../seasons.js', () => ({
   getSeasonsConfig: vi.fn(),
   refreshSeasonsCache: vi.fn(),
   getAllPWHLSeasonTypes: vi.fn(),
+  resolveNHLSeason: vi.fn().mockResolvedValue(20252026),
 }))
 vi.mock('../nhl.js', () => ({
   handleNHL: vi.fn().mockResolvedValue(new Response('nhl-handler-called')),
   poll: vi.fn(),
   refreshPPUnits: vi.fn(),
 }))
-vi.mock('../pwhl.js', () => ({
-  handlePWHL: vi.fn().mockResolvedValue(new Response('pwhl-handler-called')),
-  pollPWHL: vi.fn(),
-}))
+vi.mock('../pwhl.js', async () => {
+  const actual = await vi.importActual('../pwhl.js')
+  return {
+    handlePWHL: vi.fn().mockResolvedValue(new Response('pwhl-handler-called')),
+    pollPWHL: vi.fn(),
+    PWHL_TEAM_CODES: actual.PWHL_TEAM_CODES,
+  }
+})
 
 import worker from '../worker.js'
 import { handleNHL } from '../nhl.js'
 import { handlePWHL } from '../pwhl.js'
 import { getSeasonsConfig, getAllPWHLSeasonTypes } from '../seasons.js'
 import { makeEnv, makeCtx, makeRequest } from './route-harness.js'
+
+beforeEach(() => {
+  globalThis.fetch = vi.fn()
+})
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -74,6 +83,76 @@ describe('GET /config/seasons/pwhl-types', () => {
 
     expect(res.status).toBe(502)
     expect((await res.json()).error).toMatch(/unavailable/i)
+  })
+})
+
+describe('GET /players-search-index', () => {
+  function mockSupabaseFetch({ players, teamRows, pwhlRows }) {
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      if (u.includes('/rest/v1/players?')) {
+        return Promise.resolve({ ok: true, json: async () => players })
+      }
+      if (u.includes('/rest/v1/player_seasons?')) {
+        return Promise.resolve({ ok: true, json: async () => teamRows })
+      }
+      if (u.includes('/rest/v1/pwhl_players?')) {
+        return Promise.resolve({ ok: true, json: async () => pwhlRows })
+      }
+      throw new Error(`unexpected fetch: ${u}`)
+    })
+  }
+
+  it('serves from KV cache without hitting Supabase', async () => {
+    const cachedIndex = [{ id: 1, name: 'Cached Player', team: 'CAR', position: 'C', sport: 'nhl' }]
+    const env = makeEnv({ CACHE: { async get() { return JSON.stringify(cachedIndex) }, async put() {} } })
+
+    const res = await worker.fetch(makeRequest('/players-search-index'), env, makeCtx())
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cachedIndex)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('joins NHL players with their most-recently-updated current-season team, unions PWHL, and caches the result', async () => {
+    mockSupabaseFetch({
+      players: [
+        { id: 1, name: 'Sebastian Aho', position: 'C' },
+        { id: 2, name: 'Retired Guy', position: 'D' }, // no current-season row -> team null
+      ],
+      teamRows: [
+        // player 1 traded mid-season: two team-stint rows: NYR is the more
+        // recently updated (still-live) one, CAR has gone stale
+        { player_id: 1, team: 'NYR', updated_at: '2026-03-01T00:00:00Z' },
+        { player_id: 1, team: 'CAR', updated_at: '2026-01-01T00:00:00Z' },
+      ],
+      pwhlRows: [
+        { player_id: 100, first_name: 'Marie-Philip', last_name: 'Poulin', position: 'F', team_id: 2 },
+        { player_id: 101, first_name: null, last_name: null, position: null, team_id: null }, // no name -> filtered out
+      ],
+    })
+
+    const env = makeEnv()
+    const res = await worker.fetch(makeRequest('/players-search-index'), env, makeCtx())
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toEqual([
+      { id: 1, name: 'Sebastian Aho', team: 'NYR', position: 'C', sport: 'nhl' },
+      { id: 2, name: 'Retired Guy', team: null, position: 'D', sport: 'nhl' },
+      { id: 100, name: 'Marie-Philip Poulin', team: 'MIN', position: 'F', sport: 'pwhl' },
+    ])
+
+    const cached = await env.CACHE.get('players-search-index')
+    expect(JSON.parse(cached)).toEqual(body)
+  })
+
+  it('returns 502 when the NHL players fetch fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+
+    expect(res.status).toBe(502)
   })
 })
 

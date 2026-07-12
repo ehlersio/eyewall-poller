@@ -628,3 +628,116 @@ describe('GET /pwhl/prediction', () => {
     expect(res.status).toBe(502)
   })
 })
+
+describe('GET /pwhl/player/landing', () => {
+  function mockPlayerFetch({ playerRows, statsRows }) {
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      if (u.includes('/rest/v1/pwhl_players?')) {
+        return Promise.resolve({ ok: true, json: async () => playerRows })
+      }
+      // Both pwhl_player_seasons and pwhl_goalie_seasons hit this branch —
+      // whichever table statsTable resolves to gets statsRows.
+      return Promise.resolve({ ok: true, json: async () => statsRows })
+    })
+  }
+
+  it('returns 400 when id is missing', async () => {
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/landing'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/player/landing')
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('serves from KV cache, keyed separately per season, without hitting Supabase', async () => {
+    const env = makeEnv({
+      CACHE: { async get(key) {
+        return key === 'pwhl:player:landing:198:8' ? JSON.stringify({ player_id: 198, points: 40 }) : null
+      }, async put() {} },
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/landing?id=198&season=8'), env, makeCtx(),
+      new URL('https://example.com/pwhl/player/landing?id=198&season=8')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ player_id: 198, points: 40 })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('returns 404 when the player is not found', async () => {
+    mockPlayerFetch({ playerRows: [], statsRows: [] })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/landing?id=999'), makeEnv(), makeCtx(),
+      new URL('https://example.com/pwhl/player/landing?id=999')
+    )
+    expect(res.status).toBe(404)
+  })
+
+  it('pins the stat line to the requested season_id and caches per-season', async () => {
+    mockPlayerFetch({
+      playerRows: [{ player_id: 198, first_name: 'Marie-Philip', last_name: 'Poulin', position: 'F' }],
+      statsRows: [{ player_id: 198, season_id: 5, points: 22 }],
+    })
+
+    const env = makeEnv()
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/landing?id=198&season=5'), env, makeCtx(),
+      new URL('https://example.com/pwhl/player/landing?id=198&season=5')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({ player_id: 198, first_name: 'Marie-Philip', points: 22 })
+
+    // The historical-season fetch used season_id=eq., not order=...desc
+    const statsCall = globalThis.fetch.mock.calls.find(([u]) => String(u).includes('pwhl_player_seasons'))
+    expect(statsCall[0]).toContain('season_id=eq.5')
+    expect(statsCall[0]).not.toContain('order=season_id.desc')
+
+    const cached = await env.CACHE.get('pwhl:player:landing:198:5')
+    expect(JSON.parse(cached)).toEqual(body)
+  })
+
+  it('falls back to the most recent regular-season row when season is omitted', async () => {
+    mockPlayerFetch({
+      playerRows: [{ player_id: 198, first_name: 'Marie-Philip', last_name: 'Poulin', position: 'F' }],
+      statsRows: [{ player_id: 198, season_id: 8, points: 40 }],
+    })
+
+    const env = makeEnv()
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/landing?id=198'), env, makeCtx(),
+      new URL('https://example.com/pwhl/player/landing?id=198')
+    )
+
+    expect(res.status).toBe(200)
+    expect((await res.json())).toMatchObject({ points: 40 })
+
+    const statsCall = globalThis.fetch.mock.calls.find(([u]) => String(u).includes('pwhl_player_seasons'))
+    expect(statsCall[0]).toContain('order=season_id.desc')
+    expect(statsCall[0]).not.toContain('season_id=eq.')
+
+    const cached = await env.CACHE.get('pwhl:player:landing:198:latest')
+    expect(cached).toBeTruthy()
+  })
+
+  it('queries pwhl_goalie_seasons instead of pwhl_player_seasons for goalies', async () => {
+    mockPlayerFetch({
+      playerRows: [{ player_id: 55, first_name: 'Aerin', last_name: 'Frankel', position: 'G' }],
+      statsRows: [{ player_id: 55, season_id: 8, sv_pct: 0.93 }],
+    })
+
+    const env = makeEnv()
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/landing?id=55&season=8'), env, makeCtx(),
+      new URL('https://example.com/pwhl/player/landing?id=55&season=8')
+    )
+
+    expect(res.status).toBe(200)
+    expect((await res.json())).toMatchObject({ sv_pct: 0.93 })
+    const statsCall = globalThis.fetch.mock.calls.find(([u]) => String(u).includes('_seasons?'))
+    expect(statsCall[0]).toContain('pwhl_goalie_seasons')
+  })
+})
