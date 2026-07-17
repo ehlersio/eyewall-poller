@@ -92,6 +92,78 @@ describe('GET /pwhl/standings', () => {
   })
 })
 
+describe('GET /pwhl/team-seasons/compare', () => {
+  it('400s when teamId or seasons is missing', async () => {
+    const env = makeEnv()
+    const noTeam = await handlePWHL(
+      makeRequest('/pwhl/team-seasons/compare?seasons=8,5'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-seasons/compare?seasons=8,5')
+    )
+    expect(noTeam.status).toBe(400)
+
+    const noSeasons = await handlePWHL(
+      makeRequest('/pwhl/team-seasons/compare?teamId=2'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-seasons/compare?teamId=2')
+    )
+    expect(noSeasons.status).toBe(400)
+  })
+
+  it('queries box-score columns only (not corsi_for/roster_war_score) for the given team + season_id list', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { season_id: 8, season_type: 'regular', gp: 24, wins: 15, losses: 7, ot_losses: 2, points: 32, goals_for: 70, goals_against: 55, pp_pct: 20.1, pk_pct: 82.4 },
+        { season_id: 5, season_type: 'regular', gp: 24, wins: 12, losses: 10, ot_losses: 2, points: 26, goals_for: 60, goals_against: 62, pp_pct: 18.5, pk_pct: 79.0 },
+      ],
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-seasons/compare?teamId=2&seasons=8,5'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-seasons/compare?teamId=2&seasons=8,5')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toHaveLength(2)
+    expect(body[0]).toMatchObject({ season_id: 8, wins: 15, points: 32 })
+
+    const fetchedUrl = String(globalThis.fetch.mock.calls[0][0])
+    expect(fetchedUrl).toContain('team_id=eq.2')
+    expect(fetchedUrl).toContain('season_id=in.(8,5)')
+    expect(fetchedUrl).toContain('goals_for')
+    expect(fetchedUrl).toContain('pp_pct')
+    expect(fetchedUrl).not.toContain('corsi_for')
+    expect(fetchedUrl).not.toContain('roster_war_score')
+  })
+
+  it('returns 502 when the Supabase fetch fails', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-seasons/compare?teamId=2&seasons=8'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-seasons/compare?teamId=2&seasons=8')
+    )
+
+    expect(res.status).toBe(502)
+  })
+
+  it('serves from KV cache without hitting Supabase', async () => {
+    const cachedRows = [{ season_id: 8, wins: 15 }]
+    const env = makeEnv({ CACHE: { async get() { return JSON.stringify(cachedRows) }, async put() {} } })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-seasons/compare?teamId=2&seasons=8'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-seasons/compare?teamId=2&seasons=8')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cachedRows)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /pwhl/game-box', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const cached = { skaters: [{ game_id: 210, player_id: 1, team_id: 1 }], goalies: [] }

@@ -234,6 +234,67 @@ describe('GET /team-seasons', () => {
   })
 })
 
+describe('GET /team-seasons/compare', () => {
+  it('400s when team or seasons is missing', async () => {
+    const env = makeEnv()
+    const noTeam = await handleNHL(
+      makeRequest('/team-seasons/compare?seasons=20262027,20252026'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/compare?seasons=20262027,20252026')
+    )
+    expect(noTeam.status).toBe(400)
+
+    const noSeasons = await handleNHL(
+      makeRequest('/team-seasons/compare?team=CAR'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/compare?team=CAR')
+    )
+    expect(noSeasons.status).toBe(400)
+  })
+
+  it('queries box-score columns only (not xgf_pct/roster_war_score) for the given team + season list', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { season: 20262027, games_played: 5,  wins: 4, losses: 1, ot_losses: 0, points: 8,  goals_for: 20, goals_against: 10, pp_pct: 25.0, pk_pct: 80.0 },
+        { season: 20252026, games_played: 82, wins: 45, losses: 30, ot_losses: 7, points: 97, goals_for: 260, goals_against: 230, pp_pct: 22.5, pk_pct: 78.3 },
+      ],
+    })
+
+    const res = await handleNHL(
+      makeRequest('/team-seasons/compare?team=CAR&seasons=20262027,20252026'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/compare?team=CAR&seasons=20262027,20252026')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toHaveLength(2)
+    expect(body[0]).toMatchObject({ season: 20262027, wins: 4, points: 8 })
+
+    const fetchedUrl = String(globalThis.fetch.mock.calls[0][0])
+    expect(fetchedUrl).toContain('team=eq.CAR')
+    expect(fetchedUrl).toContain('season=in.(20262027,20252026)')
+    expect(fetchedUrl).toContain('game_type=eq.2')
+    expect(fetchedUrl).toContain('goals_for')
+    expect(fetchedUrl).toContain('pp_pct')
+    expect(fetchedUrl).not.toContain('xgf_pct')
+    expect(fetchedUrl).not.toContain('roster_war_score')
+  })
+
+  it('serves from KV cache without hitting Supabase', async () => {
+    const cachedRows = [{ season: 20252026, wins: 45 }]
+    const env = makeEnv({ CACHE: { async get() { return JSON.stringify(cachedRows) }, async put() {} } })
+
+    const res = await handleNHL(
+      makeRequest('/team-seasons/compare?team=CAR&seasons=20252026'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/compare?team=CAR&seasons=20252026')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cachedRows)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-shots', () => {
   it('400s when playerId is missing', async () => {
     const env = makeEnv()
