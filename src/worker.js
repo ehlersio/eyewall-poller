@@ -17,10 +17,10 @@
  * KV namespace binding: CACHE
  */
 
-import { handleNHL, poll, refreshPPUnits } from './nhl.js';
+import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS } from './nhl.js';
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES } from './pwhl.js';
 import { corsHeaders, json, kvGet, kvPut, sbError, SB_URL, SB_ANON } from './shared.js';
-import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, resolveNHLSeason } from './seasons.js';
+import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, resolveNHLSeason } from './seasons.js';
 
 async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
@@ -53,6 +53,96 @@ async function handleRequest(request, env, ctx) {
       );
     }
     return json(types);
+  }
+
+  // Season-by-season "is this comparable yet" signal for the
+  // season-over-season comparison feature (Session 64). Distinct from
+  // /config/seasons (current season only) — this enumerates every season
+  // that actually has team_seasons/pwhl_team_seasons rows, with a
+  // per-season team count and a comparable flag. "Comparable" means
+  // strictly more than half of the league's current active team count has
+  // a row for that season — catches an in-progress/partial season (e.g.
+  // PWHL mid-playoffs, or a freshly flipped NHL season before the pipeline
+  // has caught every team) without hiding a season that's just naturally
+  // missing a couple of laggard teams. Deliberately strict > not >=: a
+  // season sitting at exactly half (PWHL season 9's 4-of-12 today) is the
+  // case this flag exists to catch, not to wave through.
+  //
+  // Active team count is read live from TEAM_CONFIGS/PWHL_TEAM_CODES — the
+  // same maps every other roster-aware route in this Worker already uses —
+  // never hardcoded, since PWHL's 2026-27 expansion changes that number
+  // (12 today, was 8 before DET/HAM/LV/SJS were wired in).
+  //
+  // This season-level flag is independent of the per-team "does THIS team
+  // have a row" check the frontend still needs — a comparable season can
+  // still be missing one specific team's row. Two separate signals, not
+  // one collapsed into the other.
+  if (url.pathname === '/config/seasons/comparison') {
+    const kvKey  = 'config:seasons:comparison';
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+    const nhlActiveTeamCount  = Object.keys(TEAM_CONFIGS).length;
+    const pwhlActiveTeamCount = Object.keys(PWHL_TEAM_CODES).length;
+
+    let nhlSeasons = [];
+    try {
+      const r = await fetch(
+        `${SB_URL}/rest/v1/team_seasons?select=season,team&game_type=eq.2&limit=1000`,
+        { headers: sbH }
+      );
+      if (!r.ok) throw new Error(`Supabase ${r.status}`);
+      const rows = await r.json();
+      const bySeason = new Map();
+      for (const row of rows) {
+        if (!bySeason.has(row.season)) bySeason.set(row.season, new Set());
+        bySeason.get(row.season).add(row.team);
+      }
+      nhlSeasons = [...bySeason.entries()]
+        .map(([season, teams]) => ({
+          season,
+          teamCount: teams.size,
+          comparable: teams.size > nhlActiveTeamCount / 2,
+        }))
+        .sort((a, b) => b.season - a.season); // season is a Supabase bigint (number), not a string
+    } catch (e) {
+      console.warn(`NHL comparison-seasons query failed: ${e.message}`);
+    }
+
+    let pwhlSeasons = [];
+    try {
+      const [r, meta] = await Promise.all([
+        fetch(`${SB_URL}/rest/v1/pwhl_team_seasons?select=season_id,team_id&limit=2000`, { headers: sbH }),
+        getAllPWHLSeasons(env),
+      ]);
+      if (!r.ok) throw new Error(`Supabase ${r.status}`);
+      const rows = await r.json();
+      const metaById = new Map((meta || []).map(m => [m.seasonId, m]));
+      const bySeason = new Map();
+      for (const row of rows) {
+        if (!bySeason.has(row.season_id)) bySeason.set(row.season_id, new Set());
+        bySeason.get(row.season_id).add(row.team_id);
+      }
+      pwhlSeasons = [...bySeason.entries()]
+        .map(([seasonId, teams]) => ({
+          seasonId,
+          seasonType: metaById.get(seasonId)?.seasonType ?? null,
+          startYear:  metaById.get(seasonId)?.startYear ?? null,
+          teamCount:  teams.size,
+          comparable: teams.size > pwhlActiveTeamCount / 2,
+        }))
+        .sort((a, b) => b.seasonId - a.seasonId);
+    } catch (e) {
+      console.warn(`PWHL comparison-seasons query failed: ${e.message}`);
+    }
+
+    const result = {
+      nhl:  { activeTeamCount: nhlActiveTeamCount,  seasons: nhlSeasons },
+      pwhl: { activeTeamCount: pwhlActiveTeamCount, seasons: pwhlSeasons },
+    };
+    await kvPut(env, kvKey, result, 3600); // 1hr — matches /team-seasons' own cache TTL
+    return json(result);
   }
 
   // Flat NHL+PWHL player list for the global player-search autocomplete —
