@@ -24,7 +24,7 @@ const STATS_BASE = 'https://api.nhle.com/stats/rest/en';
 
 const DEFAULT_TEAM_ABBR = 'CAR';
 
-const TEAM_CONFIGS = {
+export const TEAM_CONFIGS = {
   // keywords: short names/nicknames used by beat writers and BR/Athletic article titles.
   // Used by teamFilterKeywords() to filter league-wide RSS feeds.
   ANA: { abbr:'ANA', teamId:24, franchiseId:32, displayName:'Anaheim Ducks',         keywords:['ducks','anaheim','drysdale','fowler','terry','zegras'],                       winCopy:"Let's go Ducks! 🦆",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`ANA vs ${o} — puck drop!`, hashtags:['#AnaheimDucks','#LetsGoDucks','#NHL'] },

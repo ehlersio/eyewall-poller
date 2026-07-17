@@ -243,6 +243,26 @@ export async function getAllPWHLSeasonTypes(env) {
   }
 }
 
+// Full per-season metadata (id, type, startYear) for every non-hidden PWHL
+// season HockeyTech's bootstrap knows about. Unlike getAllPWHLSeasonTypes()
+// (id -> type only), this keeps startYear too — the season-comparison
+// picker (Session 64) needs a real label ("2024-25"), not just
+// "regular"/"playoffs". Shares fetchPWHLBootstrap's cache with
+// resolvePWHLSeason()/getAllPWHLSeasonTypes() — still one HockeyTech call
+// backing three questions. Returns null (not a thrown error) on failure,
+// same convention as getAllPWHLSeasonTypes().
+export async function getAllPWHLSeasons(env) {
+  try {
+    const { seasons } = await fetchPWHLBootstrap(env);
+    return seasons
+      .filter(s => !s.hide_in_standings)
+      .map(s => ({ seasonId: Number(s.id), seasonType: s.seasonType, startYear: s.startYear }));
+  } catch (e) {
+    console.warn(`PWHL season list resolve failed: ${e.message}`);
+    return null;
+  }
+}
+
 // ── Combined config endpoint ──────────────────────────────────
 
 export async function getSeasonsConfig(env) {

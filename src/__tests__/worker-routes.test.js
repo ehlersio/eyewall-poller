@@ -17,13 +17,18 @@ vi.mock('../seasons.js', () => ({
   getSeasonsConfig: vi.fn(),
   refreshSeasonsCache: vi.fn(),
   getAllPWHLSeasonTypes: vi.fn(),
+  getAllPWHLSeasons: vi.fn(),
   resolveNHLSeason: vi.fn().mockResolvedValue(20252026),
 }))
-vi.mock('../nhl.js', () => ({
-  handleNHL: vi.fn().mockResolvedValue(new Response('nhl-handler-called')),
-  poll: vi.fn(),
-  refreshPPUnits: vi.fn(),
-}))
+vi.mock('../nhl.js', async () => {
+  const actual = await vi.importActual('../nhl.js')
+  return {
+    handleNHL: vi.fn().mockResolvedValue(new Response('nhl-handler-called')),
+    poll: vi.fn(),
+    refreshPPUnits: vi.fn(),
+    TEAM_CONFIGS: actual.TEAM_CONFIGS,
+  }
+})
 vi.mock('../pwhl.js', async () => {
   const actual = await vi.importActual('../pwhl.js')
   return {
@@ -36,7 +41,7 @@ vi.mock('../pwhl.js', async () => {
 import worker from '../worker.js'
 import { handleNHL } from '../nhl.js'
 import { handlePWHL } from '../pwhl.js'
-import { getSeasonsConfig, getAllPWHLSeasonTypes } from '../seasons.js'
+import { getSeasonsConfig, getAllPWHLSeasonTypes, getAllPWHLSeasons } from '../seasons.js'
 import { makeEnv, makeCtx, makeRequest } from './route-harness.js'
 
 beforeEach(() => {
@@ -83,6 +88,94 @@ describe('GET /config/seasons/pwhl-types', () => {
 
     expect(res.status).toBe(502)
     expect((await res.json()).error).toMatch(/unavailable/i)
+  })
+})
+
+describe('GET /config/seasons/comparison', () => {
+  function mockSupabaseFetch({ nhlRows, pwhlRows }) {
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      if (u.includes('/rest/v1/team_seasons?')) {
+        return Promise.resolve({ ok: true, json: async () => nhlRows })
+      }
+      if (u.includes('/rest/v1/pwhl_team_seasons?')) {
+        return Promise.resolve({ ok: true, json: async () => pwhlRows })
+      }
+      throw new Error(`unexpected fetch: ${u}`)
+    })
+  }
+
+  it('serves from KV cache without hitting Supabase', async () => {
+    const cachedResult = { nhl: { activeTeamCount: 32, seasons: [] }, pwhl: { activeTeamCount: 12, seasons: [] } }
+    const env = makeEnv({ CACHE: { async get() { return JSON.stringify(cachedResult) }, async put() {} } })
+
+    const res = await worker.fetch(makeRequest('/config/seasons/comparison'), env, makeCtx())
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cachedResult)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('flags a season above the strict->half-active-teams threshold as comparable and one at/below it as not', async () => {
+    // NHL: 32 active teams (real TEAM_CONFIGS) -> threshold is >16.
+    // 20262027: 20 distinct teams -> comparable. 20232024: exactly 16 -> NOT comparable (strict >, not >=).
+    // season comes back from Supabase as a number (bigint column), not a string -- use real numeric
+    // values here (a prior version of this test used strings and missed a live `.localeCompare` crash).
+    const nhlRows = [
+      ...Array.from({ length: 20 }, (_, i) => ({ season: 20262027, team: `T${i}` })),
+      ...Array.from({ length: 16 }, (_, i) => ({ season: 20232024, team: `T${i}` })),
+    ]
+    // PWHL: 12 active teams (real PWHL_TEAM_CODES) -> threshold is >6.
+    // season 8: 8 distinct teams -> comparable. season 9: 4 distinct teams -> NOT comparable.
+    const pwhlRows = [
+      ...Array.from({ length: 8 }, (_, i) => ({ season_id: 8, team_id: i })),
+      ...Array.from({ length: 4 }, (_, i) => ({ season_id: 9, team_id: i })),
+    ]
+    mockSupabaseFetch({ nhlRows, pwhlRows })
+    getAllPWHLSeasons.mockResolvedValue([
+      { seasonId: 8, seasonType: 'regular', startYear: 2025 },
+      { seasonId: 9, seasonType: 'playoffs', startYear: 2025 },
+    ])
+
+    const env = makeEnv()
+    const res = await worker.fetch(makeRequest('/config/seasons/comparison'), env, makeCtx())
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.nhl.activeTeamCount).toBe(32)
+    expect(body.nhl.seasons).toEqual([
+      { season: 20262027, teamCount: 20, comparable: true },
+      { season: 20232024, teamCount: 16, comparable: false },
+    ])
+    expect(body.pwhl.activeTeamCount).toBe(12)
+    expect(body.pwhl.seasons).toEqual([
+      { seasonId: 9, seasonType: 'playoffs', startYear: 2025, teamCount: 4, comparable: false },
+      { seasonId: 8, seasonType: 'regular',  startYear: 2025, teamCount: 8, comparable: true },
+    ])
+
+    const cached = await env.CACHE.get('config:seasons:comparison')
+    expect(JSON.parse(cached)).toEqual(body)
+  })
+
+  it('degrades to an empty season list for a league whose Supabase query fails, without failing the other league', async () => {
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      if (u.includes('/rest/v1/team_seasons?')) {
+        return Promise.resolve({ ok: false, status: 500 })
+      }
+      if (u.includes('/rest/v1/pwhl_team_seasons?')) {
+        return Promise.resolve({ ok: true, json: async () => [{ season_id: 8, team_id: 1 }] })
+      }
+      throw new Error(`unexpected fetch: ${u}`)
+    })
+    getAllPWHLSeasons.mockResolvedValue([{ seasonId: 8, seasonType: 'regular', startYear: 2025 }])
+
+    const res = await worker.fetch(makeRequest('/config/seasons/comparison'), makeEnv(), makeCtx())
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.nhl.seasons).toEqual([])
+    expect(body.pwhl.seasons).toHaveLength(1)
   })
 })
 
