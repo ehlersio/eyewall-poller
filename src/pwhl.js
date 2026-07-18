@@ -491,6 +491,39 @@ export async function handlePWHL(request, env, ctx, url) {
     return json(enriched);
   }
 
+  // Season-over-season team comparison (Session 64) -- box-score fields
+  // only (wins/losses/points/goals-for-against/PP%/PK%), mirroring NHL's
+  // /team-seasons/compare. Deliberately excludes corsi_for/corsi_for_5v5 and
+  // roster_war_score/xgf_pct -- null across PWHL team-seasons right now
+  // (confirmed via direct query, SESSION_63_FINDINGS.md), not just for
+  // older seasons. Filters by season_id only (not season_type) -- each
+  // season_id already maps to exactly one type per HockeyTech's bootstrap,
+  // same grouping /config/seasons/comparison uses. Missing seasons for the
+  // requested team are simply absent from the response array; the frontend
+  // already knows which seasons it asked for and renders the gap itself.
+  if (url.pathname === '/pwhl/team-seasons/compare') {
+    const teamId  = parseInt(url.searchParams.get('teamId') || '0', 10);
+    const seasons = (url.searchParams.get('seasons') || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!teamId || seasons.length === 0) {
+      return new Response(JSON.stringify({ error: 'teamId and seasons (comma-separated) are required' }), { status: 400, headers: corsHeaders() });
+    }
+    const kvKey  = `pwhl:team-seasons:compare:${teamId}:${seasons.slice().sort().join(',')}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+    const res = await fetch(
+      `${SB_URL}/rest/v1/pwhl_team_seasons?team_id=eq.${teamId}&season_id=in.(${seasons.join(',')})` +
+      `&select=season_id,season_type,gp,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct`,
+      { headers: sbH }
+    );
+    if (!res.ok) return new Response(JSON.stringify({ error: `Supabase ${res.status}` }), { status: 502, headers: corsHeaders() });
+    const rows = await res.json();
+
+    await kvPut(env, kvKey, rows, 3600);
+    return json(rows);
+  }
+
   // GET /pwhl/players?teamId=1&season=8
   if (url.pathname === '/pwhl/players') {
     const season = await seasonParam(url, env);

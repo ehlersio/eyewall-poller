@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, parseRSS, parseESPN, parseAtom, parseReddit, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, parseRSS, parseESPN, parseAtom, parseReddit, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit } from './shared.js';
 import { resolveNHLSeason } from './seasons.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
@@ -1725,6 +1725,46 @@ export async function handleNHL(request, env, ctx, url) {
         `team_seasons?season=eq.${season}&game_type=eq.2` +
         `&select=team,xgf_pct,roster_war_score,games_played,` +
         `magic_number,tragic_number,clinched,eliminated&limit=32`
+      );
+    } catch (e) {
+      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    await kvPut(env, kvKey, rows, 3600);
+    return json(rows);
+  }
+
+  // Season-over-season team comparison (Session 64) -- box-score fields
+  // only (wins/losses/points/goals-for-against/PP%/PK%), deliberately NOT
+  // the advanced-metric columns /team-seasons above selects (xgf_pct,
+  // roster_war_score) -- those are null across every NHL season right now,
+  // not just older ones (confirmed via direct query, SESSION_63_FINDINGS.md),
+  // so there's nothing real to compare yet. Distinct route rather than a
+  // param on /team-seasons: that route is single-season, current-season-
+  // shaped (falls back to resolveNHLSeason()); this one is explicitly
+  // multi-season and requires both params -- no "current season" default,
+  // since a comparison with no seasons specified isn't a comparison.
+  // Missing seasons for the requested team (e.g. an expansion team with no
+  // row for an old season) are simply absent from the response array --
+  // the frontend already knows which seasons it asked for and renders the
+  // gap as its own "not yet available" state rather than this route
+  // guessing at placeholder zeros.
+  if (url.pathname === '/team-seasons/compare') {
+    const team    = url.searchParams.get('team');
+    const seasons = (url.searchParams.get('seasons') || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!team || seasons.length === 0) {
+      return badRequest('team and seasons (comma-separated) are required');
+    }
+
+    const kvKey  = `nhl:team-seasons:compare:${team}:${seasons.slice().sort().join(',')}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let rows;
+    try {
+      rows = await sbRows(
+        `team_seasons?team=eq.${team}&season=in.(${seasons.join(',')})&game_type=eq.2` +
+        `&select=season,games_played,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct`
       );
     } catch (e) {
       return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
