@@ -739,6 +739,83 @@ export async function handlePWHL(request, env, ctx, url) {
     return json(data);
   }
 
+  // GET /pwhl/player/percentiles?id=198&season=8&seasonType=regular
+  // PWHL analog of NHL's /player-analytics (nhl.js) -- but shaped as a
+  // single player/season/season_type lookup (like this file's own
+  // /pwhl/player/landing above) rather than NHL's bulk whole-season fetch.
+  // NHL's route returns every player_seasons row for a season because
+  // MoneyPuck-derived percentiles there are computed client-side (in this
+  // Worker) from a full league CSV each time; PWHL's percentiles are
+  // instead precomputed league-wide by the Python pipeline
+  // (eyewall-pipeline#36, pwhl_percentiles.py) and stored directly on
+  // pwhl_player_seasons, so there's nothing to compute here -- just a
+  // straight read of one row, matching /pwhl/player/landing's convention.
+  //
+  // Conflict key on pwhl_player_seasons is
+  // player_id,team_id,season_id,season_type -- ?season= pins season_id the
+  // same way /pwhl/player/landing's ?season= does; season_type defaults to
+  // 'regular' (the common case) and can be overridden for playoffs.
+  //
+  // Sequencing note: toi_per_game/xg_for/finishing/pct_* columns come from
+  // eyewall-pipeline#36, which was open (not yet merged/DDL-applied) at the
+  // time this route was written. Until that DDL lands in production, this
+  // query will 502 (unknown column) rather than return nulls -- see this
+  // PR's description for the merge-order dependency. Once the columns
+  // exist, an unqualified/pre-pipeline row (or a player who hasn't cleared
+  // pwhl_percentiles.py's GP threshold) still resolves cleanly here: no row
+  // found, or found with pct_* all null, both return 200 with null
+  // percentile fields rather than a 404/error, same "not enough data yet"
+  // convention as NHL's results_vs_process/on_ice_gf_pct nulls.
+  if (url.pathname === '/pwhl/player/percentiles') {
+    const playerId    = url.searchParams.get('id');
+    const seasonQuery = url.searchParams.get('season');
+    const seasonType  = url.searchParams.get('seasonType') || 'regular';
+    if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey  = `pwhl:player:percentiles:${playerId}:${seasonQuery || 'latest'}:${seasonType}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+    const cols = 'player_id,team_id,season_id,season_type,toi_per_game,xg_for,finishing,' +
+      'pct_goals,pct_a1,pct_penalties,pct_finishing';
+    const statsQuery = seasonQuery
+      ? `player_id=eq.${playerId}&season_id=eq.${seasonQuery}&season_type=eq.${seasonType}&limit=1&select=${cols}`
+      : `player_id=eq.${playerId}&season_type=eq.${seasonType}&order=season_id.desc&limit=1&select=${cols}`;
+
+    let rows;
+    try {
+      const r = await fetch(`${SB_URL}/rest/v1/pwhl_player_seasons?${statsQuery}`, { headers: sbH });
+      if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
+      rows = await r.json();
+    } catch (e) {
+      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    const row = rows[0] || {};
+    const data = {
+      player_id:   parseInt(playerId, 10),
+      team_id:     row.team_id ?? null,
+      season_id:   row.season_id ?? (seasonQuery ? parseInt(seasonQuery, 10) : null),
+      season_type: row.season_type ?? seasonType,
+      toi_per_game: row.toi_per_game ?? null,
+      xg_for:       row.xg_for       ?? null,
+      finishing:    row.finishing    ?? null,
+      // Nulls (no row yet, or row exists but pct_* not populated) fall
+      // through as-is -- the frontend already treats null percentiles as
+      // "not enough data yet" rather than an error state.
+      percentiles: {
+        goals:     { pct: row.pct_goals     ?? null, label: 'Goals',       note: 'Percentile rank vs league, goals' },
+        a1:        { pct: row.pct_a1        ?? null, label: '1st Assists', note: 'Percentile rank vs league, primary assists' },
+        penalties: { pct: row.pct_penalties ?? null, label: 'Penalties',   note: 'Percentile rank vs league, penalty discipline' },
+        finishing: { pct: row.pct_finishing ?? null, label: 'Finishing',   note: 'Percentile rank vs league, goals above xGoals' },
+      },
+    };
+
+    await kvPut(env, kvKey, data, 3600); // 1hr -- matches /pwhl/player/landing's TTL
+    return json(data);
+  }
+
   // GET /pwhl/lastgame?teamId=1&season=8
   // Returns the most recent completed game with opponent abbr resolved.
   if (url.pathname === '/pwhl/lastgame') {
