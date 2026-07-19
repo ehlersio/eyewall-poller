@@ -1528,17 +1528,54 @@ export async function handleNHL(request, env, ctx, url) {
       'on_ice_gf_pct,results_vs_process_diff';
     const DEF_COLS = 'player_id,hits,blocked_shots,takeaways,giveaways';
 
+    async function fetchAnalytics(forSeason) {
+      const [rows, poRows] = await Promise.all([
+        sbRows(`player_seasons?season=eq.${forSeason}&game_type=eq.2&war=not.is.null&select=${ANA_COLS}&limit=2000`),
+        sbRows(`player_seasons?season=eq.${forSeason}&game_type=eq.3&select=${DEF_COLS}&limit=2000`).catch(() => []),
+      ]);
+      return { rows, poRows };
+    }
+
     let rows, poRows;
     try {
-      [rows, poRows] = await Promise.all([
-        sbRows(`player_seasons?season=eq.${season}&game_type=eq.2&war=not.is.null&select=${ANA_COLS}&limit=2000`),
-        sbRows(`player_seasons?season=eq.${season}&game_type=eq.3&select=${DEF_COLS}&limit=2000`).catch(() => []),
-      ]);
+      ({ rows, poRows } = await fetchAnalytics(season));
     } catch (e) {
       return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
     }
 
-    const result = { rows, poRows };
+    // Whole-season-empty fallback (Session 66, same shape as
+    // /players-search-index's team lookup): the live season can be flipped
+    // ahead of any real games (schedule released before puck drop), leaving
+    // `war=not.is.null` match nothing at all for it -- not a per-player gap,
+    // the pct_* percentiles this route serves are already computed
+    // position-grouped (fwd/def pools, moneypuck.py) for whichever season's
+    // rows they came from, so falling back to a whole prior season's rows
+    // preserves that grouping automatically; no per-request regrouping
+    // needed here. Flagged via statsStale/statsSeason (mirrors teamStale/
+    // teamSeason), not silent -- the frontend should label it "as of last
+    // season," not present a rookie's now-stale sophomore-year percentiles
+    // as current. A player with no prior-season row either (true rookie)
+    // still surfaces as absent from `rows`, same explicit-nothing shape as
+    // today, not a fabricated stale entry.
+    let statsStale = false;
+    let statsSeason = null;
+    if (rows.length === 0) {
+      const priorSeason = String(Number(season) - 10001); // 20262027 -> 20252026
+      try {
+        const fallback = await fetchAnalytics(priorSeason);
+        if (fallback.rows.length > 0) {
+          rows = fallback.rows;
+          poRows = fallback.poRows;
+          statsStale = true;
+          statsSeason = priorSeason;
+        }
+      } catch {
+        // Fallback query itself failed -- degrade to the empty live-season
+        // result rather than failing the whole request over it.
+      }
+    }
+
+    const result = { rows, poRows, statsStale, statsSeason };
     await kvPut(env, kvKey, result, 3600);
     return json(result);
   }
