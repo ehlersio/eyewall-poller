@@ -154,6 +154,23 @@ async function handleRequest(request, env, ctx) {
   // keeps refreshing the current team's row on each run, so "most recently
   // updated" is the reliable signal for "current team" — the pre-trade row
   // goes stale. 6hr KV TTL matches /players-list's.
+  //
+  // Live season vs. schedule-released season (Session 66): the live NHL
+  // season can be flipped intentionally (e.g. once the new season's
+  // schedule is published, well before any games are played) while
+  // `player_seasons` for it stays genuinely empty until real games start
+  // generating rows in October. Zero rows for the live season is that gap,
+  // not an error — same shape TeamComparisonPopup.jsx's `isPending` already
+  // handles for team comparisons ("never trust the live-current season's
+  // own data, assume pending"). Here the useful equivalent is one season
+  // back: last season's team assignment is the best available signal until
+  // the new season's data exists, so it's used as an explicit, flagged
+  // fallback (`teamStale: true`) rather than surfacing `team: null` for
+  // literally every NHL player. Flagged, not silent, because it can be
+  // wrong in one specific way this fallback can't detect: a player who
+  // changed teams over the summer (free agency/trade) shows their OLD team
+  // until the new season's real rows land — the frontend must not present
+  // a stale team the same way as a confirmed-current one.
   if (url.pathname === '/players-search-index') {
     const kvKey  = 'players-search-index';
     const cached = await kvGet(env, kvKey);
@@ -178,19 +195,46 @@ async function handleRequest(request, env, ctx) {
     }
 
     const nhlSeason = String(await resolveNHLSeason(env));
-    const teamRes = await fetch(
-      `${SB_URL}/rest/v1/player_seasons?season=eq.${nhlSeason}&game_type=eq.2&select=player_id,team,updated_at&order=updated_at.desc`,
-      { headers: sbH }
-    );
-    const teamRows = teamRes.ok ? await teamRes.json() : [];
-    const teamByPlayer = {};
-    for (const row of teamRows) {
-      if (!(row.player_id in teamByPlayer)) teamByPlayer[row.player_id] = row.team; // first hit = most recently updated
+
+    async function fetchTeamByPlayer(season) {
+      const res = await fetch(
+        `${SB_URL}/rest/v1/player_seasons?season=eq.${season}&game_type=eq.2&select=player_id,team,updated_at&order=updated_at.desc`,
+        { headers: sbH }
+      );
+      const rows = res.ok ? await res.json() : [];
+      const byPlayer = {};
+      for (const row of rows) {
+        if (!(row.player_id in byPlayer)) byPlayer[row.player_id] = row.team; // first hit = most recently updated
+      }
+      return byPlayer;
     }
 
-    const nhlIndex = nhlPlayers.map(p => ({
-      id: p.id, name: p.name, team: teamByPlayer[p.id] || null, position: p.position, sport: 'nhl',
-    }));
+    const teamByPlayer = await fetchTeamByPlayer(nhlSeason);
+
+    // Only reached when the live season has zero player_seasons rows at all
+    // (season flipped ahead of real games existing, per the note above) —
+    // if the live season has real data, per-player misses are a separate,
+    // rarer thing (e.g. a brand-new call-up) that this fallback intentionally
+    // does not paper over, same as before this change.
+    let priorTeamByPlayer = {};
+    let priorSeason = null;
+    if (Object.keys(teamByPlayer).length === 0) {
+      priorSeason = String(Number(nhlSeason) - 10001); // 20262027 -> 20252026
+      priorTeamByPlayer = await fetchTeamByPlayer(priorSeason);
+    }
+
+    const nhlIndex = nhlPlayers.map(p => {
+      const liveTeam = teamByPlayer[p.id];
+      if (liveTeam) return { id: p.id, name: p.name, team: liveTeam, position: p.position, sport: 'nhl' };
+      const priorTeam = priorTeamByPlayer[p.id];
+      if (priorTeam) {
+        // Rookie/expansion players correctly have no prior-season row
+        // either — falls through to team: null below, same as a player
+        // with no data at all (not a second, different empty state).
+        return { id: p.id, name: p.name, team: priorTeam, teamStale: true, teamSeason: priorSeason, position: p.position, sport: 'nhl' };
+      }
+      return { id: p.id, name: p.name, team: null, position: p.position, sport: 'nhl' };
+    });
 
     // PWHL players — pwhl_players has no season dimension (one row per
     // player, reflecting current team assignment only).
