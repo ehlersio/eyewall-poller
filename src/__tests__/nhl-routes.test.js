@@ -125,6 +125,61 @@ describe('GET /player-analytics', () => {
 
     expect(res.status).toBe(502)
   })
+
+  // Session 66: the live season can be flipped ahead of any real games
+  // (schedule released before puck drop), leaving `war=not.is.null` match
+  // nothing for it -- same whole-season-empty shape as
+  // /players-search-index's team-lookup fallback (#22).
+  describe('the live season has zero rows (season flipped ahead of real data)', () => {
+    function mockFetchWithPriorSeason(priorRows) {
+      globalThis.fetch = vi.fn((url) => {
+        const u = String(url)
+        if (u.includes('season=eq.20262027')) {
+          return Promise.resolve({ ok: true, json: async () => [] }) // live season: nothing yet
+        }
+        if (u.includes('season=eq.20252026') && u.includes('game_type=eq.2')) {
+          return Promise.resolve({ ok: true, json: async () => priorRows })
+        }
+        if (u.includes('season=eq.20252026') && u.includes('game_type=eq.3')) {
+          return Promise.resolve({ ok: true, json: async () => [] })
+        }
+        throw new Error(`unexpected fetch: ${u}`)
+      })
+    }
+
+    it('falls back one season back and flags the result as stale with the specific season, not just non-empty', async () => {
+      mockFetchWithPriorSeason([{ player_id: 8478402, war: 4.2, pct_goals: 91 }])
+
+      const res = await handleNHL(
+        makeRequest('/player-analytics?season=20262027'), makeEnv(), makeCtx(),
+        new URL('https://example.com/player-analytics?season=20262027')
+      )
+
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      // Asserts the specific fallback season and rows, not just "truthy" --
+      // a wrong-season fallback would also satisfy a bare non-null check.
+      expect(body).toEqual({
+        rows: [{ player_id: 8478402, war: 4.2, pct_goals: 91 }],
+        poRows: [],
+        statsStale: true,
+        statsSeason: '20252026',
+      })
+    })
+
+    it('degrades to an explicit empty, non-stale result when the prior season has no rows either', async () => {
+      mockFetchWithPriorSeason([]) // no rows in the prior season either
+
+      const res = await handleNHL(
+        makeRequest('/player-analytics?season=20262027'), makeEnv(), makeCtx(),
+        new URL('https://example.com/player-analytics?season=20262027')
+      )
+
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body).toEqual({ rows: [], poRows: [], statsStale: false, statsSeason: null })
+    })
+  })
 })
 
 describe('GET /player-results-vs-process', () => {
