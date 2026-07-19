@@ -163,7 +163,7 @@ Key patterns:
 |--------|------|--------------|
 | `GET` | `/config/seasons` | Live-resolved current NHL + PWHL season (see [Live Season Resolution](#live-season-resolution)). Consumed by the frontend at app boot and by the pipeline's `season_lookup.py`. |
 | `GET` | `/config/seasons/comparison` | Every season with `team_seasons`/`pwhl_team_seasons` rows, per league, with a team count and a `comparable` flag (strictly more than half of the league's current active team count has a row). Backs the season-over-season comparison feature (Session 64) — distinct from `/config/seasons`, which only ever answers "what's current." 1hr KV cache (`config:seasons:comparison`). |
-| `GET` | `/players-search-index` | Flat `{id, name, team, position, sport}` list of every NHL + PWHL player, for the frontend's player-search autocomplete. NHL team is resolved from each player's most-recently-updated current-season `player_seasons` row (the `players` table itself has no team column). |
+| `GET` | `/players-search-index` | Flat `{id, name, team, position, sport}` list of every NHL + PWHL player, for the frontend's player-search autocomplete. NHL team is resolved from each player's most-recently-updated current-season `player_seasons` row (the `players` table itself has no team column). If the live season has zero `player_seasons` rows at all yet (season flipped ahead of real games, e.g. once the new schedule is released — see [Live Season Resolution](#live-season-resolution)), NHL entries fall back to one season back and add `teamStale: true` + `teamSeason: "<season>"`; a player with no row in either season gets `team: null` with no `teamStale` field. |
 
 ## NHL Endpoints
 

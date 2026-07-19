@@ -247,6 +247,68 @@ describe('GET /players-search-index', () => {
 
     expect(res.status).toBe(502)
   })
+
+  // Session 66: the live season (mocked here as 20252026, per the module
+  // mock above) can be flipped ahead of any real player_seasons rows
+  // existing for it (schedule released, season hasn't started) -- these
+  // cover the one-season-back fallback that kicks in when that season's
+  // player_seasons query comes back completely empty.
+  describe('current-season player_seasons is empty (season flipped ahead of real data)', () => {
+    function mockSupabaseFetchWithPriorSeason({ players, priorTeamRows, pwhlRows }) {
+      globalThis.fetch = vi.fn((url) => {
+        const u = String(url)
+        if (u.includes('/rest/v1/players?')) {
+          return Promise.resolve({ ok: true, json: async () => players })
+        }
+        if (u.includes('season=eq.20252026')) {
+          return Promise.resolve({ ok: true, json: async () => [] }) // live season: no rows yet
+        }
+        if (u.includes('season=eq.20242025')) {
+          return Promise.resolve({ ok: true, json: async () => priorTeamRows }) // one season back
+        }
+        if (u.includes('/rest/v1/pwhl_players?')) {
+          return Promise.resolve({ ok: true, json: async () => pwhlRows })
+        }
+        throw new Error(`unexpected fetch: ${u}`)
+      })
+    }
+
+    it('falls back to the specific correct team from one season back, flagged as stale', async () => {
+      mockSupabaseFetchWithPriorSeason({
+        players: [{ id: 8478402, name: 'Connor McDavid', position: 'C' }],
+        priorTeamRows: [{ player_id: 8478402, team: 'EDM', updated_at: '2026-04-01T00:00:00Z' }],
+        pwhlRows: [],
+      })
+
+      const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      // Asserts the exact resolved team, not just that it's non-null --
+      // "found *a* team" would pass even if the fallback picked up the
+      // wrong player's row or the wrong season entirely.
+      expect(body).toEqual([
+        { id: 8478402, name: 'Connor McDavid', team: 'EDM', teamStale: true, teamSeason: '20242025', position: 'C', sport: 'nhl' },
+      ])
+    })
+
+    it('degrades to an explicit null team (not stale) for a player with no prior-season row either', async () => {
+      mockSupabaseFetchWithPriorSeason({
+        players: [{ id: 9999999, name: 'Brand New Rookie', position: 'C' }],
+        priorTeamRows: [], // rookie/expansion-style player: no row last season either
+        pwhlRows: [],
+      })
+
+      const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body).toEqual([
+        { id: 9999999, name: 'Brand New Rookie', team: null, position: 'C', sport: 'nhl' },
+      ])
+      expect(body[0]).not.toHaveProperty('teamStale')
+    })
+  })
 })
 
 describe('routing', () => {
