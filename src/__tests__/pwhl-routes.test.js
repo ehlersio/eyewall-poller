@@ -1044,3 +1044,107 @@ describe('GET /pwhl/player/percentiles', () => {
     expect(res.status).toBe(502)
   })
 })
+
+describe('GET /pwhl/player/career', () => {
+  // Shape matches a real live view=player pull (Session 74 investigation,
+  // player_id=31 -- Marie-Philip Poulin): careerStats[0].sections[], each
+  // section a { title, data: [{ row }] } list ending in a server-computed
+  // "Total" row. Rate fields (shooting_percentage etc.) come back as
+  // stringified numbers from HockeyTech, same as every other statviewfeed
+  // view in this codebase.
+  function skaterPayload({ withPlayoffs = true } = {}) {
+    const sections = [
+      {
+        title: 'Regular Season',
+        data: [
+          { row: { season_name: '2025-26 Regular Season', team_name: 'Montréal Victoire', games_played: '19', goals: '9', assists: '9', points: '18', shots: '58', shooting_percentage: '15.5' } },
+          { row: { season_name: 'Total', games_played: 70, goals: 38, assists: 29, points: 67, plus_minus: 30, penalty_minutes: 55, power_play_goals: 7, shots: 225, shooting_percentage: '16.9', short_handed_goals: 1, game_winning_goals: 10 } },
+        ],
+      },
+    ]
+    if (withPlayoffs) {
+      sections.push({
+        title: 'Playoffs',
+        data: [
+          { row: { season_name: '2026 Playoffs', team_name: 'Montréal Victoire', games_played: '9', goals: '2' } },
+          { row: { season_name: 'Total', games_played: 16, goals: 4, assists: 8, points: 12, shots: 73, shooting_percentage: '5.5' } },
+        ],
+      })
+    }
+    return { info: { position: 'F' }, careerStats: [{ sections }] }
+  }
+
+  it('400s when id is missing', async () => {
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/career'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/player/career')
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('serves from KV cache without hitting HockeyTech', async () => {
+    const cached = { player_id: 31, regularSeason: { goals: 38 }, playoffs: { goals: 4 } }
+    const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:player:career:31': cached }) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/career?id=31'), env, makeCtx(), new URL('https://example.com/pwhl/player/career?id=31')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cached)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('normalizes a live payload, coercing stringified rate stats to numbers and dropping season_name/team_name', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(skaterPayload()) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/career?id=31'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/player/career?id=31')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.player_id).toBe(31)
+    expect(body.regularSeason).toEqual({
+      games_played: 70, goals: 38, assists: 29, points: 67, plus_minus: 30,
+      penalty_minutes: 55, power_play_goals: 7, shots: 225, shooting_percentage: 16.9,
+      short_handed_goals: 1, game_winning_goals: 10,
+    })
+    expect(body.playoffs).toEqual({ games_played: 16, goals: 4, assists: 8, points: 12, shots: 73, shooting_percentage: 5.5 })
+    // per-season rows (only the "Total" row) and season_name/team_name must not leak through
+    expect(body.regularSeason.season_name).toBeUndefined()
+    expect(body.regularSeason.team_name).toBeUndefined()
+  })
+
+  it('returns playoffs: null when the player has no Playoffs section yet', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(skaterPayload({ withPlayoffs: false })) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/career?id=31'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/player/career?id=31')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.regularSeason.goals).toBe(38)
+    expect(body.playoffs).toBeNull()
+  })
+
+  it('502s when the HockeyTech fetch fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/career?id=31'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/player/career?id=31')
+    )
+
+    expect(res.status).toBe(502)
+  })
+
+  it('502s when the HockeyTech response fails to parse', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => 'not json' })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/career?id=31'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/player/career?id=31')
+    )
+
+    expect(res.status).toBe(502)
+  })
+})
