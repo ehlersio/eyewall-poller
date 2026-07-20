@@ -201,6 +201,7 @@ Key patterns:
 | `GET` | `/pwhl/schedule?teamId=&season=` | Team schedule |
 | `GET` | `/pwhl/roster?teamId=` | Bare roster (name + jersey) |
 | `GET` | `/pwhl/game-box?gameId=` | Per-player box score (skaters + goalies) for a completed game — box-score popup (Session 50) |
+| `GET` | `/pwhl/player-game-log?playerId=&seasonId=` | One player's game-by-game box score rows for a season — player Compare tab trend charts (Session 70) |
 | `GET` | `/pwhl/lastgame?teamId=&season=` | Most recent completed game |
 | `GET` | `/pwhl/pbp?gameId=` | Completed game PBP + shot events |
 | `GET` | `/pwhl/salaries?teamId=&season=` | Salary data |

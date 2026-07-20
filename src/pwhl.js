@@ -693,6 +693,41 @@ export async function handlePWHL(request, env, ctx, url) {
     return json(payload);
   }
 
+  // GET /pwhl/player-game-log?playerId=198&seasonId=8
+  // Per-player, per-season game-by-game box score rows for the player
+  // Compare tab's trend charts (Session 70). Unlike /pwhl/game-box above
+  // (one game, all players), this is one player, all games in a season --
+  // queries the same two tables, filtered the other way. Returns both
+  // skaters + goalies rows the same flat-arrays shape as /pwhl/game-box;
+  // the frontend already knows the player's position and just reads
+  // whichever array is non-empty, same convention as that route.
+  if (url.pathname === '/pwhl/player-game-log') {
+    const playerId = parseInt(url.searchParams.get('playerId') || '0', 10);
+    const seasonId = parseInt(url.searchParams.get('seasonId') || '0', 10);
+    if (!playerId || !seasonId) {
+      return new Response(JSON.stringify({ error: 'playerId and seasonId params required' }), { status: 400, headers: corsHeaders() });
+    }
+
+    const kvKey  = `pwhl:player-game-log:${playerId}:${seasonId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+    const [skRes, gRes] = await Promise.all([
+      fetch(`${SB_URL}/rest/v1/pwhl_skater_game_box?player_id=eq.${playerId}&season_id=eq.${seasonId}&order=game_id.asc`, { headers: sbH }),
+      fetch(`${SB_URL}/rest/v1/pwhl_goalie_game_box?player_id=eq.${playerId}&season_id=eq.${seasonId}&order=game_id.asc`, { headers: sbH }),
+    ]);
+    if (!skRes.ok) return new Response(JSON.stringify({ error: `Supabase ${skRes.status}` }), { status: 502, headers: corsHeaders() });
+    if (!gRes.ok)  return new Response(JSON.stringify({ error: `Supabase ${gRes.status}` }),  { status: 502, headers: corsHeaders() });
+
+    const payload = { skaters: await skRes.json(), goalies: await gRes.json() };
+    // 24hr -- same rationale as /pwhl/game-box: completed-game rows don't
+    // change once ingested, and a player's current-season log only grows
+    // by one row per new game, not worth a shorter TTL.
+    await kvPut(env, kvKey, payload, 24 * 3600);
+    return json(payload);
+  }
+
   // GET /pwhl/player/landing?id=198&season=8
   // Player detail lookup for PWHLPlayerPopup — self-fetches identity + a
   // season's stat line by id, the same role NHL's own /player/landing
