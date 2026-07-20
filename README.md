@@ -207,6 +207,7 @@ Key patterns:
 | `GET` | `/pwhl/salaries?teamId=&season=` | Salary data |
 | `GET` | `/pwhl/league-players?season=` | All teams' skaters + goalies |
 | `GET` | `/pwhl/player/landing?id=&season=` | Single player's identity + one season's stat line, merged (pwhl_players + pwhl_player_seasons/pwhl_goalie_seasons). Powers `PWHLPlayerPopup`'s self-fetch-by-id. `season` pins the stat line to that `season_id`; omitted, falls back to the most recent regular-season row. |
+| `GET` | `/pwhl/player/career?id=` | Career Regular Season / Playoffs totals, live proxy of HockeyTech's `view=player` server-computed `careerStats` Total rows (no Supabase, no aggregation on this side). `playoffs` is `null` if the player hasn't made the playoffs yet. |
 | `GET` | `/pwhl/player-shots?playerId=&season=` | Player shot heat map data |
 | `GET` | `/pwhl/today?season=` | Today's games with live status |
 | `GET` | `/pwhl/live/:gameId` | Live PBP + normalized events |

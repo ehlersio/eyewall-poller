@@ -19,6 +19,26 @@ async function seasonParam(url, env) {
   return (await resolvePWHLSeason(env)).seasonId;
 }
 
+// Pulls the server-computed "Total" row out of one careerStats section
+// (view=player's Regular Season / Playoffs split), coercing HockeyTech's
+// stringified numeric fields (e.g. "16.9") to real numbers and dropping
+// season_name/team_name, which don't apply to an aggregate row. Returns
+// null if the player has no rows in that section at all (e.g. hasn't made
+// the playoffs yet) -- callers must not assume both sections exist.
+function extractCareerTotal(sections, title) {
+  const section = (sections || []).find(s => s.title === title);
+  const totalItem = (section?.data || []).find(item => item.row?.season_name === 'Total');
+  if (!totalItem) return null;
+
+  const out = {};
+  for (const [k, v] of Object.entries(totalItem.row)) {
+    if (k === 'season_name' || k === 'team_name') continue;
+    const n = typeof v === 'string' ? Number(v) : v;
+    out[k] = typeof v === 'string' && v !== '' && !Number.isNaN(n) ? n : v;
+  }
+  return out;
+}
+
 // Live-fetch + cache HockeyTech's gameCenterPreview view, used by
 // /pwhl/preview (season series / H2H / streaks / leaders / special teams).
 // 30min TTL — pre-game data (records, streaks) shifts daily, unlike the
@@ -848,6 +868,57 @@ export async function handlePWHL(request, env, ctx, url) {
     };
 
     await kvPut(env, kvKey, data, 3600); // 1hr -- matches /pwhl/player/landing's TTL
+    return json(data);
+  }
+
+  // GET /pwhl/player/career?id=198
+  // Live proxy for HockeyTech's view=player careerStats Total rows -- the
+  // server already computes correctly-weighted career totals server-side
+  // (SESSION_74_FINDINGS_pwhl_career_investigation.md Q1: verified live
+  // that rate stats like shooting_percentage/savepct are real weighted
+  // recomputations from summed raw counts, not per-season averages), so
+  // this route does zero aggregation math of its own -- same
+  // live-HockeyTech-call shape as /pwhl/summary and /pwhl/preview, NOT
+  // /pwhl/player/landing (that one reads from Supabase, despite the
+  // similar name/pattern).
+  //
+  // No ?season= param -- confirmed live that careerStats is season-
+  // independent (identical Total rows whether season_id is omitted or set
+  // to an arbitrary/old value), so there's nothing to resolve here.
+  //
+  // 24hr TTL -- career totals only change when the player plays a new
+  // game, same infrequency class as other season-long PWHL data in this
+  // file.
+  if (url.pathname === '/pwhl/player/career') {
+    const playerId = url.searchParams.get('id');
+    if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey  = `pwhl:player:career:${playerId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const htRes = await fetch(
+      `${HT_BASE}?feed=statviewfeed&view=player&player_id=${playerId}&site_id=0&key=${HT_KEY}&client_code=pwhl&lang=en&league_id=&statsType=standard`,
+      { headers: HT_HDR }
+    );
+    if (!htRes.ok) return new Response(JSON.stringify({ error: `HockeyTech ${htRes.status}` }), { status: 502, headers: corsHeaders() });
+
+    let raw;
+    try {
+      const parsed = unwrapJsonp(await htRes.text());
+      raw = Array.isArray(parsed) ? parsed[0] : parsed;
+    } catch (e) {
+      return new Response(JSON.stringify({ error: 'player career parse failed', detail: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    const sections = raw?.careerStats?.[0]?.sections || [];
+    const data = {
+      player_id:     parseInt(playerId, 10),
+      regularSeason: extractCareerTotal(sections, 'Regular Season'),
+      playoffs:      extractCareerTotal(sections, 'Playoffs'),
+    };
+
+    await kvPut(env, kvKey, data, 24 * 3600);
     return json(data);
   }
 
