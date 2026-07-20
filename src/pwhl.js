@@ -19,13 +19,38 @@ async function seasonParam(url, env) {
   return (await resolvePWHLSeason(env)).seasonId;
 }
 
+// HockeyTech's view=player field names don't match the pwhl_player_seasons/
+// pwhl_goalie_seasons column names PWHLPlayerPopup's stat defs (and its
+// current-season/Compare-tab formatting) already key off of -- renaming
+// here means the frontend can run the exact same formatter over
+// current-season, Compare-tab, and Career data with no per-source key
+// mapping. Fields already matching (goals, assists, points, plus_minus,
+// shots, wins, losses, ot_losses, shutouts, saves, goals_against) are left
+// as-is; only the ones that differ need an entry.
+const SKATER_CAREER_RENAME = {
+  games_played:        'gp',
+  penalty_minutes:      'pim',
+  power_play_goals:     'pp_goals',
+  shooting_percentage:  'shot_pct',
+  short_handed_goals:   'sh_goals',
+  game_winning_goals:   'gw_goals',
+};
+const GOALIE_CAREER_RENAME = {
+  games_played:           'gp',
+  savepct:                'sv_pct',
+  goals_against_average:  'gaa',
+  minutes_played:         'toi',
+};
+
 // Pulls the server-computed "Total" row out of one careerStats section
 // (view=player's Regular Season / Playoffs split), coercing HockeyTech's
-// stringified numeric fields (e.g. "16.9") to real numbers and dropping
-// season_name/team_name, which don't apply to an aggregate row. Returns
-// null if the player has no rows in that section at all (e.g. hasn't made
-// the playoffs yet) -- callers must not assume both sections exist.
-function extractCareerTotal(sections, title) {
+// stringified numeric fields (e.g. "16.9") to real numbers, renaming keys
+// via renameMap (see SKATER_CAREER_RENAME/GOALIE_CAREER_RENAME above), and
+// dropping season_name/team_name, which don't apply to an aggregate row.
+// Returns null if the player has no rows in that section at all (e.g.
+// hasn't made the playoffs yet) -- callers must not assume both sections
+// exist.
+function extractCareerTotal(sections, title, renameMap = {}) {
   const section = (sections || []).find(s => s.title === title);
   const totalItem = (section?.data || []).find(item => item.row?.season_name === 'Total');
   if (!totalItem) return null;
@@ -33,8 +58,9 @@ function extractCareerTotal(sections, title) {
   const out = {};
   for (const [k, v] of Object.entries(totalItem.row)) {
     if (k === 'season_name' || k === 'team_name') continue;
+    const key = renameMap[k] || k;
     const n = typeof v === 'string' ? Number(v) : v;
-    out[k] = typeof v === 'string' && v !== '' && !Number.isNaN(n) ? n : v;
+    out[key] = typeof v === 'string' && v !== '' && !Number.isNaN(n) ? n : v;
   }
   return out;
 }
@@ -912,10 +938,11 @@ export async function handlePWHL(request, env, ctx, url) {
     }
 
     const sections = raw?.careerStats?.[0]?.sections || [];
+    const renameMap = raw?.info?.position === 'G' ? GOALIE_CAREER_RENAME : SKATER_CAREER_RENAME;
     const data = {
       player_id:     parseInt(playerId, 10),
-      regularSeason: extractCareerTotal(sections, 'Regular Season'),
-      playoffs:      extractCareerTotal(sections, 'Playoffs'),
+      regularSeason: extractCareerTotal(sections, 'Regular Season', renameMap),
+      playoffs:      extractCareerTotal(sections, 'Playoffs', renameMap),
     };
 
     await kvPut(env, kvKey, data, 24 * 3600);

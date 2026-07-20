@@ -1094,7 +1094,7 @@ describe('GET /pwhl/player/career', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
-  it('normalizes a live payload, coercing stringified rate stats to numbers and dropping season_name/team_name', async () => {
+  it('normalizes a live skater payload: coerces stringified rate stats to numbers, drops season_name/team_name, and renames HockeyTech fields to match pwhl_player_seasons keys', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(skaterPayload()) })
 
     const res = await handlePWHL(
@@ -1105,14 +1105,41 @@ describe('GET /pwhl/player/career', () => {
     const body = await res.json()
     expect(body.player_id).toBe(31)
     expect(body.regularSeason).toEqual({
-      games_played: 70, goals: 38, assists: 29, points: 67, plus_minus: 30,
-      penalty_minutes: 55, power_play_goals: 7, shots: 225, shooting_percentage: 16.9,
-      short_handed_goals: 1, game_winning_goals: 10,
+      gp: 70, goals: 38, assists: 29, points: 67, plus_minus: 30,
+      pim: 55, pp_goals: 7, shots: 225, shot_pct: 16.9,
+      sh_goals: 1, gw_goals: 10,
     })
-    expect(body.playoffs).toEqual({ games_played: 16, goals: 4, assists: 8, points: 12, shots: 73, shooting_percentage: 5.5 })
-    // per-season rows (only the "Total" row) and season_name/team_name must not leak through
+    expect(body.playoffs).toEqual({ gp: 16, goals: 4, assists: 8, points: 12, shots: 73, shot_pct: 5.5 })
+    // per-season rows (only the "Total" row), season_name/team_name, and the
+    // pre-rename HockeyTech key names must not leak through
     expect(body.regularSeason.season_name).toBeUndefined()
     expect(body.regularSeason.team_name).toBeUndefined()
+    expect(body.regularSeason.games_played).toBeUndefined()
+    expect(body.regularSeason.shooting_percentage).toBeUndefined()
+  })
+
+  it('normalizes a live goalie payload with the goalie rename map', async () => {
+    const sections = [
+      {
+        title: 'Regular Season',
+        data: [
+          { row: { season_name: 'Total', games_played: 62, wins: 41, losses: 11, ot_losses: 5, shutouts: 8, saves: 1551, goals_against: 103, savepct: '0.938', goals_against_average: '1.66', minutes_played: 3713 } },
+        ],
+      },
+    ]
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify({ info: { position: 'G' }, careerStats: [{ sections }] }) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/career?id=28'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/player/career?id=28')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.regularSeason).toEqual({
+      gp: 62, wins: 41, losses: 11, ot_losses: 5, shutouts: 8, saves: 1551,
+      goals_against: 103, sv_pct: 0.938, gaa: 1.66, toi: 3713,
+    })
+    expect(body.playoffs).toBeNull()
   })
 
   it('returns playoffs: null when the player has no Playoffs section yet', async () => {
