@@ -71,6 +71,19 @@ async function getTeamConfig(request, env) {
   return { ...base, season: await resolveNHLSeason(env) };
 }
 
+// Namespaced by season so multiple seasons' schedules can be cached side by
+// side without evicting each other — a bare `schedule:{abbr}` key can only
+// ever hold one season at a time. Current season stays on the existing
+// short TTL (schedule reshuffles as games get added/postponed); a past
+// season's final schedule is immutable, so it gets a long TTL instead —
+// still bustable manually via /cache, just not re-fetched every 10 minutes
+// for no reason.
+const CURRENT_SCHEDULE_TTL    = 600;             // 10 min — matches prior behavior
+const HISTORICAL_SCHEDULE_TTL = 60 * 24 * 3600;   // 60 days — past season, won't change
+function scheduleKey(abbr, season) {
+  return `schedule:${abbr}:${season}`;
+}
+
 // The scheduled poll job uses the default team's static config.
 // KV keys and notifications in poll() derive from this. `season` is NOT
 // included here — poll() resolves it live for itself (see poll() below)
@@ -1268,7 +1281,8 @@ async function fetchOdds(env) {
   // Skip entirely when there are no upcoming games within 7 days.
   // Avoids burning API quota during offseason and prevents 401 spam
   // when the key is over cap — no games means odds aren't needed anyway.
-  const schedule = await kvGet(env, `schedule:${TEAM_ABBR}`) || [];
+  const season   = await resolveNHLSeason(env);
+  const schedule = await kvGet(env, scheduleKey(TEAM_ABBR, season)) || [];
   const now      = Date.now();
   const week     = 7 * 24 * 60 * 60 * 1000;
   const hasUpcoming = schedule.some(g => {
@@ -1336,7 +1350,7 @@ export async function poll(env, _ctx) {
   // 1. Schedule
   const scheduleData = await nhlGet(`${NHL_BASE}/club-schedule-season/${TEAM_ABBR}/${season}`);
   const games = scheduleData?.games || [];
-  await kvPut(env, `schedule:${TEAM_ABBR}`, games, 600);
+  await kvPut(env, scheduleKey(TEAM_ABBR, season), games, CURRENT_SCHEDULE_TTL);
 
   // 2. Live game
   const liveGame = findLiveGame(games);
@@ -1480,22 +1494,53 @@ export async function handleNHL(request, env, ctx, url) {
     return json([]);
   }
 
-  // On-demand schedule for any team — mirrors the /news pattern.
-  // Warm: serve from KV. Cold: fetch in background, return [] immediately.
-  // Next request (~2s later) will get real data. Cron keeps CAR warm;
-  // all other teams populate on first user request.
+  // On-demand schedule for any team.
+  //
+  // ?season= (optional) selects a specific season, e.g. "20232024" — same
+  // 8-digit shape the upstream NHL API takes. Defaults to the live-resolved
+  // current season when omitted, preserving existing callers' behavior.
+  // Historical (non-current) seasons get a long TTL since a finished
+  // season's schedule never changes; current season keeps the short TTL.
+  //
+  // Current season: mirrors the /news pattern (warm: serve from KV; cold:
+  // fetch in background, return [] immediately, next request ~2s later
+  // gets real data) — appropriate here since the current season is
+  // requested constantly and cron already keeps CAR's copy warm.
+  //
+  // Historical season: fetched and cached SYNCHRONOUSLY on a cold miss
+  // instead — same shape as PWHL's /pwhl/schedule route (`pwhl.js`). A
+  // past season is a single one-off upstream call that then sits on a
+  // 60-day TTL; the fire-and-forget "empty now, retry later" pattern has
+  // no natural retry trigger once a user has already picked that season
+  // chip and is looking at an empty game row, so it isn't the right shape
+  // here the way it is for a page the user reloads/polls anyway.
   if (url.pathname === '/schedule' && request.method === 'GET') {
     const tc     = await getTeamConfig(request, env);
-    const cached = await kvGet(env, `schedule:${tc.abbr}`);
+    const season = url.searchParams.get('season') || String(tc.season);
+    const isCurrent = season === String(tc.season);
+    const cached = await kvGet(env, scheduleKey(tc.abbr, season));
     if (cached) return json(cached);
+
+    if (!isCurrent) {
+      try {
+        const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${season}`);
+        const games = data?.games || [];
+        await kvPut(env, scheduleKey(tc.abbr, season), games, HISTORICAL_SCHEDULE_TTL);
+        return json(games);
+      } catch (e) {
+        console.warn(`Schedule fetch (historical) ${tc.abbr} season ${season}: ${e.message}`);
+        return json([]);
+      }
+    }
+
     ctx.waitUntil((async () => {
       try {
-        const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${tc.season}`);
+        const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${season}`);
         const games = data?.games || [];
-        await kvPut(env, `schedule:${tc.abbr}`, games, 600);
-        console.log(`Schedule bg fetch: ${tc.abbr} (${games.length} games)`);
+        await kvPut(env, scheduleKey(tc.abbr, season), games, CURRENT_SCHEDULE_TTL);
+        console.log(`Schedule bg fetch: ${tc.abbr} season ${season} (${games.length} games)`);
       } catch (e) {
-        console.warn(`Schedule bg fetch ${tc.abbr}: ${e.message}`);
+        console.warn(`Schedule bg fetch ${tc.abbr} season ${season}: ${e.message}`);
       }
     })());
     return json([]);
@@ -2019,18 +2064,23 @@ export async function handleNHL(request, env, ctx, url) {
     const key = decodeURIComponent(url.pathname.slice('/cache/'.length));
     const val = await kvGet(env, key);
     if (val === null) {
-      // Background-populate schedule for non-CAR teams on cache miss
+      // Background-populate schedule for non-CAR teams (or historical
+      // seasons) on cache miss. Key shape is now `schedule:{abbr}:{season}`
+      // — fall back to the live-resolved current season if a caller hits
+      // this with the older 2-part `schedule:{abbr}` shape.
       if (key.startsWith('schedule:')) {
-        const abbr = key.split(':')[1];
-        const tc   = TEAM_CONFIGS[abbr];
+        const [, abbr, requestedSeason] = key.split(':');
+        const tc = TEAM_CONFIGS[abbr];
         if (tc) {
           ctx.waitUntil((async () => {
             try {
-              const season = await resolveNHLSeason(env);
+              const currentSeason = String(await resolveNHLSeason(env));
+              const season = requestedSeason || currentSeason;
               const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${season}`);
               const games = data?.games || [];
-              await kvPut(env, `schedule:${tc.abbr}`, games, 600);
-              console.log(`Schedule bg fetch (cache miss): ${tc.abbr} (${games.length} games)`);
+              const ttl   = season === currentSeason ? CURRENT_SCHEDULE_TTL : HISTORICAL_SCHEDULE_TTL;
+              await kvPut(env, scheduleKey(tc.abbr, season), games, ttl);
+              console.log(`Schedule bg fetch (cache miss): ${tc.abbr} season ${season} (${games.length} games)`);
             } catch (e) {
               console.warn(`Schedule bg fetch ${abbr}: ${e.message}`);
             }
@@ -2287,7 +2337,7 @@ export async function handleNHL(request, env, ctx, url) {
     if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
     const tc        = await getTeamConfig(request, env);
     const batchSize = parseInt(url.searchParams.get('batch') || '5', 10);
-    const schedule  = await kvGet(env, `schedule:${tc.abbr}`);
+    const schedule  = await kvGet(env, scheduleKey(tc.abbr, tc.season));
     const completed = (schedule || []).filter(g => isCompleted(g));
 
     // Find unprocessed games
@@ -2322,7 +2372,7 @@ export async function handleNHL(request, env, ctx, url) {
     const secret = url.searchParams.get('secret');
     if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
     const tc       = await getTeamConfig(request, env);
-    const schedule = await kvGet(env, `schedule:${tc.abbr}`);
+    const schedule = await kvGet(env, scheduleKey(tc.abbr, tc.season));
     const recent   = (schedule || [])
       .filter(g => isCompleted(g))
       .sort((a, b) => new Date(b.gameDate).getTime() - new Date(a.gameDate).getTime())[0];
@@ -2365,7 +2415,7 @@ export async function handleNHL(request, env, ctx, url) {
 
     // Fetch standings for both teams
     const standings = await kvGet(env, 'standings') || [];
-    const schedule  = await kvGet(env, `schedule:${tc.abbr}`) || [];
+    const schedule  = await kvGet(env, scheduleKey(tc.abbr, tc.season)) || [];
 
     // Find this game
     const game = schedule.find(g => String(g.id) === String(gameId));
