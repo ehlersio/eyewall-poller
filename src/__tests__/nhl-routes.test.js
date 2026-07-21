@@ -80,6 +80,63 @@ describe('GET /cache/:key', () => {
   })
 })
 
+// ── Season-aware /schedule (Session 77 — shot map history selector) ──
+// Key shape moved from `schedule:{abbr}` to `schedule:{abbr}:{season}` so
+// multiple seasons can be cached side by side. Current season keeps the
+// short (10 min) TTL; any other explicitly-requested season is treated as
+// historical/immutable and gets a long TTL instead.
+describe('GET /schedule', () => {
+  it('cold cache, no ?season=: background-fetches the current season and caches it under the season-namespaced key with the short TTL', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [{ id: 1 }] }) })
+    const ctx = makeCtx()
+
+    const res = await handleNHL(makeRequest('/schedule'), env, ctx, new URL('https://example.com/schedule'))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([])
+    await flushWaitUntil(ctx)
+
+    expect(putSpy).toHaveBeenCalledWith('schedule:CAR:20252026', JSON.stringify([{ id: 1 }]), { expirationTtl: 600 })
+  })
+
+  it('cold cache, explicit historical ?season=: fetches and returns that season SYNCHRONOUSLY (no background/retry-later gap), caching it with the long TTL', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [{ id: 99 }] }) })
+    const ctx = makeCtx()
+
+    const res = await handleNHL(
+      makeRequest('/schedule?season=20232024'), env, ctx,
+      new URL('https://example.com/schedule?season=20232024')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([{ id: 99 }]) // real data immediately, not []
+    expect(ctx._promises.length).toBe(0) // no ctx.waitUntil — this path doesn't defer
+
+    expect(putSpy).toHaveBeenCalledWith('schedule:CAR:20232024', JSON.stringify([{ id: 99 }]), { expirationTtl: 60 * 24 * 3600 })
+  })
+
+  it('warm cache for a specific historical season: serves directly from KV, no background fetch triggered', async () => {
+    const cachedGames = [{ id: 5 }]
+    const env = makeEnv({
+      CACHE: { async get(key) { return key === 'schedule:CAR:20232024' ? JSON.stringify(cachedGames) : null }, async put() {} },
+    })
+    const ctx = makeCtx()
+
+    const res = await handleNHL(
+      makeRequest('/schedule?season=20232024'), env, ctx,
+      new URL('https://example.com/schedule?season=20232024')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cachedGames)
+    expect(ctx._promises.length).toBe(0)
+  })
+})
+
 describe('GET /player-analytics', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const env = makeEnv({
@@ -683,7 +740,7 @@ describe('GET /shots/backfill', () => {
     const env = makeEnv({
       CACHE: {
         async get(key) {
-          if (key === 'schedule:CAR') return JSON.stringify(schedule)
+          if (key === 'schedule:CAR:20252026') return JSON.stringify(schedule)
           if (key === 'shots:done:111') return JSON.stringify(true) // already processed
           return null
         },
@@ -894,7 +951,7 @@ describe('GET /prediction/analyze', () => {
   })
 
   it('returns an error when the game is not found in the schedule', async () => {
-    const env = makeEnv({ CACHE: { async get(key) { return key === 'schedule:CAR' ? JSON.stringify([]) : null }, async put() {} } })
+    const env = makeEnv({ CACHE: { async get(key) { return key === 'schedule:CAR:20252026' ? JSON.stringify([]) : null }, async put() {} } })
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=999'), env, makeCtx(),
       new URL('https://example.com/prediction/analyze?gameId=999')
@@ -909,7 +966,7 @@ describe('GET /prediction/analyze', () => {
       { teamAbbrev: { default: 'BOS' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 28, goalAgainst: 30, powerPlayPct: 18, penaltyKillPct: 76, shotsForPerGame: 29, shotsAgainstPerGame: 31, streakCode: 'L', streakCount: 1 },
     ]
     const env = makeEnv({
-      CACHE: makeFakeCache({ 'schedule:CAR': schedule, standings }),
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
       AI: { run: vi.fn().mockResolvedValue({ response: 'CAR should win this one comfortably.' }) },
     })
     // team_seasons has no rows for either team yet (e.g. before the
@@ -944,7 +1001,7 @@ describe('GET /prediction/analyze', () => {
       { teamAbbrev: { default: 'BOS' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 28, goalAgainst: 30, powerPlayPct: 18, penaltyKillPct: 76, shotsForPerGame: 29, shotsAgainstPerGame: 31, streakCode: 'L', streakCount: 1 },
     ]
     const env = makeEnv({
-      CACHE: makeFakeCache({ 'schedule:CAR': schedule, standings }),
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
       AI: { run: vi.fn().mockResolvedValue({ response: 'CAR has the possession edge.' }) },
     })
     globalThis.fetch = vi.fn().mockResolvedValue({
