@@ -416,6 +416,27 @@ describe('GET /player-shots', () => {
     )
     expect(res.status).toBe(400)
   })
+
+  // Regression: car_game on the shot_events table only means "Carolina
+  // played in this game" (see eyewall-pipeline's shot_events.py), not
+  // "the requested team played in this game" -- filtering on it here
+  // silently restricted every non-CAR player's shots to games against
+  // Carolina. Assert it's gone from the outbound query, and that a non-CAR
+  // team param is passed through untouched.
+  it('does not filter on car_game, and passes a non-CAR team through', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    await handleNHL(
+      makeRequest('/player-shots?playerId=8478402&season=20252026&team=TOR'), env, makeCtx(),
+      new URL('https://example.com/player-shots?playerId=8478402&season=20252026&team=TOR')
+    )
+
+    const fetchedUrl = String(globalThis.fetch.mock.calls[0][0])
+    expect(fetchedUrl).not.toContain('car_game')
+    expect(fetchedUrl).toContain('team=eq.TOR')
+    expect(fetchedUrl).toContain('player_id=eq.8478402')
+  })
 })
 
 describe('POST /push/subscribe', () => {

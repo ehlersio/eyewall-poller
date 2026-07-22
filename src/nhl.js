@@ -1628,18 +1628,23 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/player-shots') {
     const playerId = url.searchParams.get('playerId');
     const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const team     = url.searchParams.get('team')?.toUpperCase() || 'CAR';
+    const team     = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     if (!playerId) return new Response(JSON.stringify({ error: 'playerId required' }), { status: 400, headers: corsHeaders() });
 
     const kvKey  = `nhl:player-shots:${playerId}:${season}:${team}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
+    // No car_game filter: that column only means "Carolina played in this
+    // game" (see eyewall-pipeline's shot_events.py), so filtering on it here
+    // silently restricted every non-CAR player's shots to games against
+    // Carolina. player_id + team already scope correctly on their own — a
+    // player only shoots for one team per row.
     let rows;
     try {
       rows = await sbRows(
         `shot_events?player_id=eq.${playerId}&season=eq.${season}` +
-        `&car_game=eq.true&team=eq.${team}` +
+        `&team=eq.${team}` +
         `&select=x,y,event_type,period,time_in_period,shot_type&limit=2000`
       );
     } catch (e) {
@@ -1697,7 +1702,7 @@ export async function handleNHL(request, env, ctx, url) {
   }
 
   if (url.pathname === '/team-lines') {
-    const team   = url.searchParams.get('team')?.toUpperCase() || 'CAR';
+    const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     const kvKey  = `nhl:team-lines:${team}:${season}`;
     const cached = await kvGet(env, kvKey);
@@ -1740,7 +1745,7 @@ export async function handleNHL(request, env, ctx, url) {
   // Serves both getGameLogInsights and getTeamGameLog on the frontend —
   // same table+filter (team+season), union of both callers' select columns.
   if (url.pathname === '/game-log') {
-    const team   = url.searchParams.get('team')?.toUpperCase() || 'CAR';
+    const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     const limit  = url.searchParams.get('limit'); // optional passthrough — omitted means unlimited
     const kvKey  = `nhl:game-log:${team}:${season}:${limit || 'all'}`;
@@ -1764,7 +1769,7 @@ export async function handleNHL(request, env, ctx, url) {
   }
 
   if (url.pathname === '/xg-trend') {
-    const team   = url.searchParams.get('team')?.toUpperCase() || 'CAR';
+    const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     const kvKey  = `nhl:xg-trend:${team}:${season}`;
     const cached = await kvGet(env, kvKey);
@@ -1859,7 +1864,7 @@ export async function handleNHL(request, env, ctx, url) {
   // Serves both getPowerRankingsNarrative (limit=1) and getPowerRankingsHistory
   // (limit=28) on the frontend — same table/filter/order, different limit.
   if (url.pathname === '/power-rankings') {
-    const team   = url.searchParams.get('team')?.toUpperCase() || 'CAR';
+    const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     const limit  = Math.min(parseInt(url.searchParams.get('limit') || '28', 10) || 28, 100);
     const kvKey  = `nhl:power-rankings:${team}:${season}:${limit}`;
@@ -1981,7 +1986,7 @@ export async function handleNHL(request, env, ctx, url) {
   }
 
   if (url.pathname === '/team-skaters') {
-    const team     = url.searchParams.get('team')?.toUpperCase() || 'CAR';
+    const team     = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     const gameType = url.searchParams.get('gameType') || '2';
     const kvKey    = `nhl:team-skaters:${team}:${season}:${gameType}`;
