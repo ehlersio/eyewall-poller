@@ -1655,6 +1655,68 @@ export async function handleNHL(request, env, ctx, url) {
     return json(rows);
   }
 
+  // GET /nhl/shots?team=CAR&season=20252026
+  // Season-wide shots for the shot map's "All N" chip -- both teams' shots
+  // from every game `team` played, matching what extractShotEvents(pbp)
+  // already returns for a single game (not just `team`'s own shots).
+  //
+  // shot_events.car_game only ever means "Carolina played in this game"
+  // (see eyewall-pipeline's shot_events.py) -- it can't be used to scope to
+  // an arbitrary requested team the way special_teams.py's car_game bug
+  // taught us. So instead of trusting that column, this resolves `team`'s
+  // own completed game_ids directly from the NHL schedule API first, then
+  // filters shot_events by that game_id list -- same fix shape as
+  // special_teams.py's fetch_game_ids_for_team(), just sourced from the
+  // live NHL API here instead of Supabase's game_log (the Worker doesn't
+  // otherwise read game_log).
+  if (url.pathname === '/nhl/shots') {
+    const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const kvKey  = `nhl:shots:${team}:${season}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let gameIds;
+    try {
+      const schedule = await nhlGet(`${NHL_BASE}/club-schedule-season/${team}/${season}`);
+      gameIds = (schedule?.games || []).filter(isCompleted).map(g => g.id);
+    } catch (e) {
+      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
+    }
+    if (!gameIds.length) {
+      await kvPut(env, kvKey, [], 3600);
+      return json([]);
+    }
+
+    const PAGE = 1000;
+    const allRows = [];
+    let offset = 0;
+    while (true) {
+      const r = await fetch(
+        `${SB_URL}/rest/v1/shot_events?game_id=in.(${gameIds.join(',')})&season=eq.${season}` +
+        `&select=game_id,team,x,y,event_type,period,time_in_period,shot_type&order=game_id.asc`,
+        {
+          headers: {
+            'apikey':        SB_ANON,
+            'Authorization': `Bearer ${SB_ANON}`,
+            'Range':         `${offset}-${offset + PAGE - 1}`,
+            'Range-Unit':    'items',
+            'Prefer':        'count=none',
+          },
+        }
+      );
+      if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
+      const rows = await r.json();
+      allRows.push(...rows);
+      if (rows.length < PAGE) break;
+      offset += PAGE;
+    }
+
+    await kvPut(env, kvKey, allRows, 3600);
+    console.log(`NHL shots: team=${team} season=${season} games=${gameIds.length} total=${allRows.length}`);
+    return json(allRows);
+  }
+
   if (url.pathname === '/goalie-shots') {
     const goalieId = url.searchParams.get('goalieId');
     const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
