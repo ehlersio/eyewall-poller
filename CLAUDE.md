@@ -1,6 +1,6 @@
 # eyewall-poller
 
-Cloudflare Workers backend for EyeWall Analytics — a hockey analytics platform covering NHL (Carolina Hurricanes focus) and PWHL. Polls live game data, serves API endpoints to the frontend, sends push notifications.
+Cloudflare Workers backend for EyeWall Analytics — a hockey analytics platform covering NHL (all 32 teams selectable frontend-side; `getTeamConfig(request, env)` in `nhl.js` reads `?team=` genuinely generically for most read routes — but see "NHL multi-team status" below, several code paths are still structurally Carolina-only) and PWHL (fully multi-team, no team hardcoded anywhere). Polls live game data, serves API endpoints to the frontend, sends push notifications.
 
 ## Stack
 - Cloudflare Workers, Wrangler 4
@@ -61,6 +61,17 @@ Before opening a PR, check whether the change affects anything `README.md` docum
 Rather than duplicate the bootstrap-fetch logic, `fetchPWHLBootstrap(env)` was extracted as a shared, independently-cached step (`config:season:pwhl:bootstrap` KV key, same 6hr TTL) that both `resolvePWHLSeason()` and the new `getAllPWHLSeasonTypes(env)` call — one HockeyTech fetch answers both questions. `getAllPWHLSeasonTypes()` returns the full `{season_id: season_type}` map (or `null` on failure — never a guess), exposed via `GET /config/seasons/pwhl-types`. Python-pipeline-only; the frontend has no use for this and doesn't consume it, so it's a separate route rather than a new field bolted onto `/config/seasons` (which the frontend does depend on the exact shape of, via `seasonClient.js`).
 
 Consumed by `eyewall-pipeline`'s `season_lookup.get_season_type()`.
+
+## NHL multi-team status (2026-07)
+
+This app's NHL side was originally Carolina-only. The frontend now lets a user select any of the 32 teams (`teamConfig.js`/`TeamPicker.jsx` in `eyewall-analytics`), and `getTeamConfig(request, env)` here (`nhl.js:68-72`) genuinely resolves `?team=` from the request — most read routes (`/schedule`, `/team-lines`, `/game-log`, `/xg-trend`, `/power-rankings`, `/team-skaters`, `/player-shots`, etc.) work correctly for any team today.
+
+**Fixed 2026-07:** `/player-shots` used to additionally filter `shot_events` on `car_game=eq.true` — that column only means "Carolina played in this game" (see `eyewall-pipeline`'s `shot_events.py`), not "the requested team played in this game," so every non-CAR team's request silently returned only that team's shots from games against Carolina. Dropped the filter — `player_id`+`team` already scope correctly on their own.
+
+**Still genuinely single-team (not just defaulted — the shared logic has no per-request team concept at all):**
+- `poll()`, `detectAndNotify()`, `notifyGameOver()`, `generateGameSummary()`, `aggregatePlayerShots()` (`nhl.js`) all read module-level `TEAM_ABBR`/`TEAM_ID` constants (seeded from `DEFAULT_TEAM_ABBR = 'CAR'`). Push notifications, AI game summaries, and shot backfill only ever fire for Carolina regardless of what any frontend user has selected. `pollPWHL()`/`pollPWHLGame()` in `pwhl.js` already solve the equivalent problem generically (finds all live games, derives home/away per-game, no team hardcoded) — that's the template if this ever gets tackled, but it's a real infra/cost tradeoff (32x the per-cycle NHL API calls vs. a subscriber-driven redesign), not a mechanical fix. Deliberately not in scope for the 2026-07 pass.
+- `buildGamePost()`'s share text is a plain `"CAR ${carScore}..."` string literal, independent of the `TEAM_ABBR` constant above — would need its own fix even after the poll loop is genericized.
+- Several routes (`/player-shots`, `/team-lines`, `/game-log`, `/xg-trend`, `/power-rankings`, `/team-skaters`) each independently repeat `url.searchParams.get('team')?.toUpperCase() || 'CAR'` rather than sharing `DEFAULT_TEAM_ABBR` — cosmetic duplication, not a correctness bug (the frontend always passes `team=` today).
 
 ## PWHL team IDs
 HockeyTech IDs, including 2026-27 expansion teams: DET=10, HAM=11, LV=12, SJS=13. Enumerated in `PWHL_TEAM_CODES` here — **this same map is independently duplicated in `pwhl_stats.py` and `pwhl_salaries.py` (eyewall-pipeline) and `pwhlConfig.js` (eyewall-analytics).** A future expansion wave needs all four touched — confirm via grep, don't assume.
