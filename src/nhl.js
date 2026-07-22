@@ -117,10 +117,6 @@ async function sbRows(path) {
   return r.json();
 }
 
-function findLiveGame(games) {
-  return games.find(g => g.gameState === 'LIVE' || g.gameState === 'CRIT') || null;
-}
-
 function isCompleted(game) {
   return ['OFF','FINAL','F','FINAL_OVERTIME','FINAL_SHOOTOUT'].includes(game.gameState);
 }
@@ -161,138 +157,159 @@ async function broadcast(env, payload, teamAbbr, eventType) {
 }
 
 // ── Event detection ───────────────────────────────────────────
+// Broadcasts to BOTH teams playing in `game`, each framed from their own
+// perspective — mirrors pollPWHLGame's dual-broadcast pattern in pwhl.js.
+// Used to only ever run for TEAM_ABBR (Carolina); poll() now calls this for
+// every live game league-wide, so there's no fixed "our team" here anymore.
 
-async function detectAndNotify(env, liveId, pbp, games) {
-  if (!liveId || !pbp?.plays) return;
+async function detectAndNotify(env, game, pbp) {
+  if (!game || !pbp?.plays) return;
 
-  const liveGame  = games.find(g => g.id === liveId);
-  const isHome    = liveGame?.homeTeam?.abbrev === TEAM_ABBR;
-  const carScore  = isHome ? (liveGame?.homeTeam?.score ?? 0) : (liveGame?.awayTeam?.score ?? 0);
-  const oppScore  = isHome ? (liveGame?.awayTeam?.score ?? 0) : (liveGame?.homeTeam?.score ?? 0);
-  const oppAbbr   = isHome ? liveGame?.awayTeam?.abbrev : liveGame?.homeTeam?.abbrev;
+  const liveId    = game.id;
+  const homeAbbr  = game.homeTeam?.abbrev;
+  const awayAbbr  = game.awayTeam?.abbrev;
+  const homeId    = game.homeTeam?.id;
+  const awayId    = game.awayTeam?.id;
+  const homeScore = game.homeTeam?.score ?? 0;
+  const awayScore = game.awayTeam?.score ?? 0;
   const playCount = pbp.plays.length;
   const period    = pbp.periodDescriptor?.number || 1;
 
   const stateKey  = `push:gamestate:${liveId}`;
   const lastState = (await kvGet(env, stateKey)) || {
-    carScore: 0, oppScore: 0, playCount: 0, started: false, period: 0,
-    carGoalScorers: {}, // { playerId: count } for hat trick tracking
+    homeScore: 0, awayScore: 0, playCount: 0, started: false, period: 0,
+    goalScorers: {}, // { playerId: count } for hat trick tracking
   };
 
   const lastPlayIdx = lastState.playCount;
   const newPlays    = pbp.plays.slice(lastPlayIdx);
   const periodLabel = n => n === 4 ? 'OT' : n === 5 ? 'SO' : `P${n}`;
 
-  // Broadcast helper with teamAbbr baked in
-  const notify = (payload, eventType) => broadcast(env, payload, `NHL:${TEAM_ABBR}`, eventType);
+  const notify = (abbr, payload, eventType) => broadcast(env, payload, `NHL:${abbr}`, eventType);
 
   // ── Game just started ─────────────────────────────────────
-  if (!lastState.started && liveGame?.gameState === 'LIVE') {
-    await notify({
-      title: '🏒 Game Starting!',
-      body:  TEAM_CONFIG.gameStartBody(oppAbbr),
-      tag:   `game-start-${liveId}`,
-      url:   '/',
-    }, 'gameStart');
+  if (!lastState.started && game.gameState === 'LIVE') {
+    for (const [abbr, oppAbbr] of [[homeAbbr, awayAbbr], [awayAbbr, homeAbbr]]) {
+      await notify(abbr, {
+        title: '🏒 Game Starting!',
+        body:  TEAM_CONFIGS[abbr]?.gameStartBody(oppAbbr) || `${abbr} vs ${oppAbbr} — puck drop!`,
+        tag:   `game-start-${liveId}`,
+        url:   '/',
+      }, 'gameStart');
+    }
   }
 
   // ── Period start (P2, P3, OT only — P1 = game start) ─────
-  if (period > 1 && period !== lastState.period && liveGame?.gameState === 'LIVE') {
-    await notify({
-      title: `🏒 ${periodLabel(period)} Starting`,
-      body:  `${TEAM_ABBR} ${carScore}–${oppScore} ${oppAbbr} — ${periodLabel(period)} underway`,
-      tag:   `period-start-${liveId}-${period}`,
-      url:   '/',
-    }, 'periodStart');
+  if (period > 1 && period !== lastState.period && game.gameState === 'LIVE') {
+    for (const [abbr, myScore, oppScore, oppAbbr] of [
+      [homeAbbr, homeScore, awayScore, awayAbbr],
+      [awayAbbr, awayScore, homeScore, homeAbbr],
+    ]) {
+      await notify(abbr, {
+        title: `🏒 ${periodLabel(period)} Starting`,
+        body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr} — ${periodLabel(period)} underway`,
+        tag:   `period-start-${liveId}-${period}`,
+        url:   '/',
+      }, 'periodStart');
+    }
   }
 
   // ── Period end ────────────────────────────────────────────
   if (lastState.period > 0 && period > lastState.period && lastState.started) {
-    await notify({
-      title: `🔔 End of ${periodLabel(lastState.period)}`,
-      body:  `${TEAM_ABBR} ${carScore}–${oppScore} ${oppAbbr} after ${periodLabel(lastState.period)}`,
-      tag:   `period-end-${liveId}-${lastState.period}`,
-      url:   '/',
-    }, 'periodEnd');
+    for (const [abbr, myScore, oppScore, oppAbbr] of [
+      [homeAbbr, homeScore, awayScore, awayAbbr],
+      [awayAbbr, awayScore, homeScore, homeAbbr],
+    ]) {
+      await notify(abbr, {
+        title: `🔔 End of ${periodLabel(lastState.period)}`,
+        body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr} after ${periodLabel(lastState.period)}`,
+        tag:   `period-end-${liveId}-${lastState.period}`,
+        url:   '/',
+      }, 'periodEnd');
+    }
   }
 
-  // ── Our team scored ───────────────────────────────────────
-  const carGoalScorers = { ...lastState.carGoalScorers };
-  if (carScore > lastState.carScore) {
-    const newGoals = carScore - lastState.carScore;
+  // ── Goals — both directions independently (a poll cycle can, in theory,
+  // catch both teams having scored since the last check) ───────────────
+  const goalScorers = { ...lastState.goalScorers };
+
+  const handleGoal = async (scoringAbbr, scoringTeamId, scoringScore, otherAbbr, otherScore, lastScoringScore) => {
+    const newGoals = scoringScore - lastScoringScore;
     const goalPlay = [...pbp.plays].reverse().find(p =>
-      p.typeDescKey === 'goal' && p.details?.eventOwnerTeamId === TEAM_ID
+      p.typeDescKey === 'goal' && p.details?.eventOwnerTeamId === scoringTeamId
     );
-    const scorer   = goalPlay?.details?.scoringPlayerName || TEAM_ABBR;
+    const scorer   = goalPlay?.details?.scoringPlayerName || scoringAbbr;
     const scorerId = String(goalPlay?.details?.scoringPlayerId || '');
     const shotType = goalPlay?.details?.shotType || null;
     const isSH     = goalPlay?.details?.situationCode?.charAt(1) === '4'; // strength indicator
 
-    // Track for hat trick
-    if (scorerId) {
-      carGoalScorers[scorerId] = (carGoalScorers[scorerId] || 0) + newGoals;
-    }
+    if (scorerId) goalScorers[scorerId] = (goalScorers[scorerId] || 0) + newGoals;
 
     // SH goals still notify under the 'goal' preference — there's no
     // separate shorthanded-goal toggle in NotificationBell's PREF_GROUPS
     // for users to filter by, so no separate eventType is needed here.
-    await notify({
-      title: `🚨 GOAL! ${TEAM_ABBR} ${carScore}–${oppScore} ${oppAbbr}`,
+    await notify(scoringAbbr, {
+      title: `🚨 GOAL! ${scoringAbbr} ${scoringScore}–${otherScore} ${otherAbbr}`,
       body:  newGoals > 1
         ? `${newGoals} goals scored!`
         : `${scorer} scores!${shotType ? ` (${shotType})` : ''}${isSH ? ' ⚡ Short-Handed!' : ''}`,
-      tag:   `goal-${liveId}-${carScore}`,
+      tag:   `goal-${liveId}-${scoringAbbr}-${scoringScore}`,
       url:   '/',
     }, 'goal');
 
-    // Hat trick check
-    if (scorerId && carGoalScorers[scorerId] === 3) {
-      await notify({
+    await notify(otherAbbr, {
+      title: `${scoringAbbr} scores. ${otherAbbr} ${otherScore}–${scoringScore} ${scoringAbbr}`,
+      body:  otherScore === scoringScore ? `${scoringAbbr} ties it up — stay sharp!`
+          : otherScore > scoringScore    ? `Still leading — hold the line!`
+          :                                `${scoringAbbr} takes the lead. Time to push back!`,
+      tag:   `opp-goal-${liveId}-${scoringAbbr}-${scoringScore}`,
+      url:   '/',
+    }, 'oppGoal');
+
+    if (scorerId && goalScorers[scorerId] === 3) {
+      await notify(scoringAbbr, {
         title: `🎩 HAT TRICK! ${scorer}`,
         body:  `${scorer} scores their 3rd goal of the game!`,
         tag:   `hattrick-${liveId}-${scorerId}`,
         url:   '/',
       }, 'hatTrick');
     }
+  };
+
+  if (homeScore > lastState.homeScore) {
+    await handleGoal(homeAbbr, homeId, homeScore, awayAbbr, awayScore, lastState.homeScore);
+  }
+  if (awayScore > lastState.awayScore) {
+    await handleGoal(awayAbbr, awayId, awayScore, homeAbbr, homeScore, lastState.awayScore);
   }
 
-  // ── Opponent scored ───────────────────────────────────────
-  if (oppScore > lastState.oppScore) {
-    const isTied  = carScore === oppScore;
-    const leading = carScore > oppScore;
-    await notify({
-      title: `${oppAbbr} scores. ${TEAM_ABBR} ${carScore}–${oppScore} ${oppAbbr}`,
-      body:  isTied  ? `${oppAbbr} ties it up — stay sharp!`
-          : leading  ? `Still leading — hold the line!`
-          :            `${oppAbbr} takes the lead. Time to push back!`,
-      tag:   `opp-goal-${liveId}-${oppScore}`,
-      url:   '/',
-    }, 'oppGoal');
-  }
-
-  // ── Goalie pulled ─────────────────────────────────────────
-  const goaliePull = newPlays.find(p =>
-    p.typeDescKey === 'goalie-pulled' && p.details?.eventOwnerTeamId !== TEAM_ID
-  );
+  // ── Goalie pulled — notify whichever team benefits (empty-net look) ──
+  const goaliePull = newPlays.find(p => p.typeDescKey === 'goalie-pulled');
   if (goaliePull) {
-    await notify({
-      title: `🥅 ${oppAbbr} pulled their goalie!`,
-      body:  `6-on-5 — ${TEAM_ABBR} ${carScore}–${oppScore}. Empty net opportunity!`,
+    const pulledTeamId  = goaliePull.details?.eventOwnerTeamId;
+    const benefitAbbr   = pulledTeamId === homeId ? awayAbbr : homeAbbr;
+    const pulledAbbr    = pulledTeamId === homeId ? homeAbbr : awayAbbr;
+    const benefitScore  = pulledTeamId === homeId ? awayScore : homeScore;
+    const pulledScore   = pulledTeamId === homeId ? homeScore : awayScore;
+    await notify(benefitAbbr, {
+      title: `🥅 ${pulledAbbr} pulled their goalie!`,
+      body:  `6-on-5 — ${benefitAbbr} ${benefitScore}–${pulledScore}. Empty net opportunity!`,
       tag:   `goalie-pull-${liveId}-${lastPlayIdx}`,
       url:   '/',
     }, 'goaliePulled');
   }
 
-  // ── Opponent penalty (our power play) ────────────────────
-  const oppPenalty = newPlays.find(p =>
-    p.typeDescKey === 'penalty' && p.details?.eventOwnerTeamId !== TEAM_ID
-  );
-  if (oppPenalty) {
-    const dur  = oppPenalty.details?.duration || 2;
-    const desc = oppPenalty.details?.descKey?.replace(/-/g, ' ') || 'penalty';
-    await notify({
-      title: `⚡ ${TEAM_ABBR} Power Play!`,
-      body:  `${oppAbbr} — ${dur} min ${desc}`,
+  // ── Penalty — notify whichever team gets the power play ──────────────
+  const penalty = newPlays.find(p => p.typeDescKey === 'penalty');
+  if (penalty) {
+    const penTeamId = penalty.details?.eventOwnerTeamId;
+    const ppAbbr    = penTeamId === homeId ? awayAbbr : homeAbbr;
+    const penAbbr   = penTeamId === homeId ? homeAbbr : awayAbbr;
+    const dur  = penalty.details?.duration || 2;
+    const desc = penalty.details?.descKey?.replace(/-/g, ' ') || 'penalty';
+    await notify(ppAbbr, {
+      title: `⚡ ${ppAbbr} Power Play!`,
+      body:  `${penAbbr} — ${dur} min ${desc}`,
       tag:   `pp-${liveId}-${lastPlayIdx}`,
       url:   '/',
     }, 'penalty');
@@ -300,121 +317,54 @@ async function detectAndNotify(env, liveId, pbp, games) {
 
   // Save new state
   await kvPut(env, stateKey, {
-    carScore, oppScore, playCount, period,
+    homeScore, awayScore, playCount, period,
     started: true,
-    carGoalScorers,
+    goalScorers,
   }, 24 * 3600);
 }
 
 async function notifyGameOver(env, game) {
-  const isHome   = game.homeTeam?.abbrev === TEAM_ABBR;
-  const carScore = isHome ? game.homeTeam?.score : game.awayTeam?.score;
-  const oppScore = isHome ? game.awayTeam?.score : game.homeTeam?.score;
-  const oppAbbr  = isHome ? game.awayTeam?.abbrev : game.homeTeam?.abbrev;
-  const won      = carScore > oppScore;
-
   const sentKey     = `push:gameover:${game.id}`;
   const alreadySent = await kvGet(env, sentKey);
   if (alreadySent) return;
 
-  if (won) {
-    await broadcast(env, {
-      title: `🏆 ${TEAM_ABBR} Win! ${TEAM_ABBR} ${carScore}–${oppScore} ${oppAbbr}`,
-      body:  TEAM_CONFIG.winCopy,
-      tag:   `win-${game.id}`,
+  const homeAbbr  = game.homeTeam?.abbrev;
+  const awayAbbr  = game.awayTeam?.abbrev;
+  const homeScore = game.homeTeam?.score ?? 0;
+  const awayScore = game.awayTeam?.score ?? 0;
+
+  for (const [abbr, myScore, oppScore, oppAbbr] of [
+    [homeAbbr, homeScore, awayScore, awayAbbr],
+    [awayAbbr, awayScore, homeScore, homeAbbr],
+  ]) {
+    const won = myScore > oppScore;
+    await broadcast(env, won ? {
+      title: `🏆 ${abbr} Win! ${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
+      body:  TEAM_CONFIGS[abbr]?.winCopy || 'Final score — great win!',
+      tag:   `win-${game.id}-${abbr}`,
       url:   '/',
-    }, `NHL:${TEAM_ABBR}`, 'win');
-  } else {
-    await broadcast(env, {
-      title: `Final: ${TEAM_ABBR} ${carScore}–${oppScore} ${oppAbbr}`,
-      body:  TEAM_CONFIG.lossCopy,
-      tag:   `final-${game.id}`,
+    } : {
+      title: `Final: ${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
+      body:  TEAM_CONFIGS[abbr]?.lossCopy || 'Final score.',
+      tag:   `final-${game.id}-${abbr}`,
       url:   '/',
-    }, `NHL:${TEAM_ABBR}`, 'loss');
+    }, `NHL:${abbr}`, won ? 'win' : 'loss');
   }
 
   await kvPut(env, sentKey, true, 24 * 3600);
 
-  // Generate AI game summary (once per game, stored in KV)
-  await generateGameSummary(env, game).catch(e =>
-    console.error('Summary generation error:', e.message)
-  );
-
-  // Aggregate shot locations for player heat maps
-  await aggregatePlayerShots(env, game).catch(e =>
-    console.error('Shot aggregation error:', e.message)
-  );
-}
-
-// ── Player Shot Aggregation ───────────────────────────────────
-async function aggregatePlayerShots(env, game) {
-  const gameId  = game.id;
-  const doneKey = `shots:done:${gameId}`;
-  if (await kvGet(env, doneKey)) return; // already processed
-
-  const isHome = game.homeTeam?.abbrev === TEAM_ABBR;
-
-  // Fetch fresh PBP (may already be in KV from summary generation)
-  const pbp = await kvGet(env, `pbp:${gameId}`)
-    || await nhlGet(`${NHL_BASE}/gamecenter/${gameId}/play-by-play`).catch(() => null);
-  if (!pbp?.plays) return;
-
-  // Build player name map
-  const playerMap = {};
-  (pbp.rosterSpots || []).forEach(p => {
-    if (p.playerId) {
-      playerMap[String(p.playerId)] =
-        `${p.firstName?.default || ''} ${p.lastName?.default || ''}`.trim();
-    }
-  });
-
-  // Extract team shot events with coordinates
-  const shotTypes = new Set(['shot-on-goal', 'missed-shot', 'blocked-shot', 'goal']);
-  const carTeamId = isHome ? game.homeTeam?.id : game.awayTeam?.id;
-
-  const shotsByPlayer = {};
-  pbp.plays.forEach(p => {
-    if (!shotTypes.has(p.typeDescKey)) return;
-    const d = p.details;
-    if (!d || d.xCoord == null || d.eventOwnerTeamId !== carTeamId) return;
-
-    const shooterId = String(d.scoringPlayerId || d.shootingPlayerId || '');
-    if (!shooterId) return;
-
-    if (!shotsByPlayer[shooterId]) shotsByPlayer[shooterId] = [];
-    shotsByPlayer[shooterId].push({
-      x: d.xCoord,
-      y: d.yCoord,
-      t: p.typeDescKey === 'shot-on-goal' ? 's'
-       : p.typeDescKey === 'goal'         ? 'g'
-       : p.typeDescKey === 'missed-shot'  ? 'm'
-       : 'b', // blocked
-      p: p.periodDescriptor?.number || 1,
-      st: d.shotType || null,
-    });
-  });
-
-  // Merge into existing season shot data per player
-  const TTL_SEASON = 8 * 30 * 24 * 3600; // 8 months
-  for (const [playerId, shots] of Object.entries(shotsByPlayer)) {
-    const key      = `shots:${TEAM_ABBR}:${playerId}`;
-    const existing = (await kvGet(env, key)) || { name: playerMap[playerId] || playerId, shots: [] };
-    existing.shots = [...existing.shots, ...shots];
-    existing.name  = playerMap[playerId] || existing.name;
-    existing.games = (existing.games || 0) + 1;
-    await kvPut(env, key, existing, TTL_SEASON);
+  // AI game summary (and the social post it triggers) deliberately stay
+  // scoped to this app's own team, not every team playing tonight — X
+  // posting for all 32 teams was explicitly deferred (2026-07), and
+  // summary:${gameId} has no other reader (the in-app "game summary" UI
+  // reads the separate, already-per-team /summary/narrative system, not
+  // this KV blob) so there's no reason to generate it for games this app's
+  // own team wasn't even in.
+  if (homeAbbr === DEFAULT_TEAM_ABBR || awayAbbr === DEFAULT_TEAM_ABBR) {
+    await generateGameSummary(env, game).catch(e =>
+      console.error('Summary generation error:', e.message)
+    );
   }
-
-  // Update the player index
-  const indexKey = `shots:${TEAM_ABBR}:index`;
-  const index    = (await kvGet(env, indexKey)) || {};
-  for (const [playerId, shots] of Object.entries(shotsByPlayer)) {
-    index[playerId] = { name: playerMap[playerId] || playerId, count: (index[playerId]?.count || 0) + shots.length };
-  }
-  await kvPut(env, indexKey, index, TTL_SEASON);
-
-  await kvPut(env, doneKey, true, TTL_SEASON);
-  console.log(`Shot aggregation: ${Object.keys(shotsByPlayer).length} ${TEAM_ABBR} players, game ${gameId}`);
 }
 
 // ── Game Summary Card ─────────────────────────────────────────
@@ -1347,18 +1297,34 @@ export async function poll(env, _ctx) {
   const season = await resolveNHLSeason(env);
   if (new Date().getTime() > seasonEndFor(season).getTime()) { console.log('Season over'); return; }
 
-  // 1. Schedule
+  // 1. Schedule — still just this app's own default team specifically.
+  // Pre-warms its cache; every other team's schedule is fetched on-demand
+  // by its own /schedule request already (getTeamConfig() resolves a real
+  // per-request team), so this doesn't need to become a 32-team loop.
   const scheduleData = await nhlGet(`${NHL_BASE}/club-schedule-season/${TEAM_ABBR}/${season}`);
   const games = scheduleData?.games || [];
   await kvPut(env, scheduleKey(TEAM_ABBR, season), games, CURRENT_SCHEDULE_TTL);
 
-  // 2. Live game
-  const liveGame = findLiveGame(games);
-  const liveId   = liveGame?.id || null;
-  await kvPut(env, 'live:gameId', liveId, 60);
+  // 2. League-wide scoreboard — one call covers every team's game today,
+  // live or finished, the same way pollPWHLGame() (pwhl.js) gets all of
+  // today's PWHL games from one query. Replaces the old per-CAR-schedule
+  // live check, which could only ever detect CAR's own live/just-ended
+  // game — this app's push notifications now work for any of the 32 teams
+  // a user might actually be subscribed to, not just CAR.
+  const scoreboard     = await nhlGet(`${NHL_BASE}/score/now`);
+  const todaysGames    = scoreboard?.games || [];
+  const liveGames      = todaysGames.filter(g => g.gameState === 'LIVE' || g.gameState === 'CRIT');
+  const completedToday = todaysGames.filter(isCompleted);
 
-  // 3. Live PBP + boxscore + push notifications
-  if (liveId) {
+  await kvPut(env, 'live:gameIds', liveGames.map(g => g.id), 60);
+  // Back-compat for /health, which has always reported this app's own live
+  // game specifically, not the full league-wide set computed above.
+  const ownLiveGame = liveGames.find(g => g.homeTeam?.abbrev === TEAM_ABBR || g.awayTeam?.abbrev === TEAM_ABBR);
+  await kvPut(env, 'live:gameId', ownLiveGame?.id || null, 60);
+
+  // 3. Live PBP + boxscore + push notifications, once per live game
+  for (const liveGame of liveGames) {
+    const liveId = liveGame.id;
     const [pbpRes, bsRes] = await Promise.allSettled([
       nhlGet(`${NHL_BASE}/gamecenter/${liveId}/play-by-play`),
       nhlGet(`${NHL_BASE}/gamecenter/${liveId}/boxscore`),
@@ -1368,36 +1334,43 @@ export async function poll(env, _ctx) {
       await kvPut(env, `pbp:${liveId}`, pbpData, 60);
       // Detect goals + events and send push notifications
       if (env.VAPID_PRIVATE_KEY) {
-        await detectAndNotify(env, liveId, pbpData, games).catch(e =>
-          console.error('Push notification error:', e.message)
+        await detectAndNotify(env, liveGame, pbpData).catch(e =>
+          console.error(`Push notification error (game ${liveId}):`, e.message)
         );
       }
     }
     if (bsRes.status === 'fulfilled') {
       await kvPut(env, `boxscore:${liveId}`, bsRes.value, 60);
     }
-  } else {
-    // Check if a game just ended — notify game over
-    const justEnded = [...games]
-      .filter(g => isCompleted(g))
-      .sort((a, b) => new Date(b.gameDate).getTime() - new Date(a.gameDate).getTime())[0];
-    if (justEnded && env.VAPID_PRIVATE_KEY) {
-      await notifyGameOver(env, justEnded).catch(e =>
-        console.error('Game over notification error:', e.message)
+  }
+
+  // Game-over notifications — every game that finished today, any team.
+  // notifyGameOver() already dedups per game_id via push:gameover:${id},
+  // so calling it again for an already-notified game on every later cycle
+  // is a cheap no-op, not a re-send.
+  if (env.VAPID_PRIVATE_KEY) {
+    for (const game of completedToday) {
+      await notifyGameOver(env, game).catch(e =>
+        console.error(`Game over notification error (game ${game.id}):`, e.message)
       );
     }
-    // Cache most recent completed game PBP
-    if (justEnded) {
-      const existing = await kvGet(env, `pbp:${justEnded.id}`);
-      if (!existing) {
-        const [p, b] = await Promise.allSettled([
-          nhlGet(`${NHL_BASE}/gamecenter/${justEnded.id}/play-by-play`),
-          nhlGet(`${NHL_BASE}/gamecenter/${justEnded.id}/boxscore`),
-        ]);
-        if (p.status === 'fulfilled') await kvPut(env, `pbp:${justEnded.id}`, p.value, 3600);
-        if (b.status === 'fulfilled') await kvPut(env, `boxscore:${justEnded.id}`, b.value, 3600);
-      }
-      await kvPut(env, 'recentGame:id', justEnded.id, 3600);
+  }
+
+  // Cache this app's own most recent completed game's PBP — unchanged
+  // from before this refactor, and deliberately not tied to the
+  // league-wide game-over loop above; still just CAR's own schedule.
+  const justEnded = [...games]
+    .filter(g => isCompleted(g))
+    .sort((a, b) => new Date(b.gameDate).getTime() - new Date(a.gameDate).getTime())[0];
+  if (justEnded) {
+    const existing = await kvGet(env, `pbp:${justEnded.id}`);
+    if (!existing) {
+      const [p, b] = await Promise.allSettled([
+        nhlGet(`${NHL_BASE}/gamecenter/${justEnded.id}/play-by-play`),
+        nhlGet(`${NHL_BASE}/gamecenter/${justEnded.id}/boxscore`),
+      ]);
+      if (p.status === 'fulfilled') await kvPut(env, `pbp:${justEnded.id}`, p.value, 3600);
+      if (b.status === 'fulfilled') await kvPut(env, `boxscore:${justEnded.id}`, b.value, 3600);
     }
   }
 
@@ -1436,7 +1409,7 @@ export async function poll(env, _ctx) {
     }
   }
 
-  console.log(`Poll done. Live: ${liveId || 'none'}.`);
+  console.log(`Poll done. Live: ${liveGames.length}. Completed today: ${completedToday.length}.`);
 }
 
 // ── PP/PK unit refresh ──────────────────────────────────────
@@ -2121,8 +2094,15 @@ export async function handleNHL(request, env, ctx, url) {
   // Health
   if (url.pathname === '/health') {
     const liveId   = await kvGet(env, 'live:gameId');
+    const liveIds  = await kvGet(env, 'live:gameIds');
     const subs     = (await kvGet(env, 'push:subs')) || [];
-    return json({ ok: true, liveGameId: liveId, subscribers: subs.length, timestamp: new Date().toISOString() });
+    return json({
+      ok: true,
+      liveGameId:  liveId,        // this app's own team's live game, if any (back-compat)
+      liveGameIds: liveIds || [], // every live NHL game right now, any team
+      subscribers: subs.length,
+      timestamp:   new Date().toISOString(),
+    });
   }
 
   // KV cache read — on a schedule miss, trigger background population
@@ -2396,43 +2376,6 @@ export async function handleNHL(request, env, ctx, url) {
         .catch(e => console.error('PP units error:', e.message))
     );
     return json({ ok: true, status: 'refreshing — check /cache/pp_units:all in ~5s' });
-  }
-
-  // Backfill shot data for completed games — processes in batches to avoid timeout
-  if (url.pathname === '/shots/backfill') {
-    const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
-    const tc        = await getTeamConfig(request, env);
-    const batchSize = parseInt(url.searchParams.get('batch') || '5', 10);
-    const schedule  = await kvGet(env, scheduleKey(tc.abbr, tc.season));
-    const completed = (schedule || []).filter(g => isCompleted(g));
-
-    // Find unprocessed games
-    const unprocessed = [];
-    for (const game of completed) {
-      const done = await kvGet(env, `shots:done:${game.id}`);
-      if (!done) unprocessed.push(game);
-    }
-
-    // Process one batch
-    const batch = unprocessed.slice(0, batchSize);
-    let processed = 0;
-    for (const game of batch) {
-      if (!await kvGet(env, `pbp:${game.id}`)) {
-        const pbpRes = await nhlGet(`${NHL_BASE}/gamecenter/${game.id}/play-by-play`).catch(() => null);
-        if (pbpRes) await kvPut(env, `pbp:${game.id}`, pbpRes, 7 * 24 * 3600);
-      }
-      await aggregatePlayerShots(env, game).catch(e => console.error(`Backfill error game ${game.id}:`, e.message));
-      processed++;
-    }
-
-    return json({
-      ok: true,
-      processed,
-      remaining: unprocessed.length - processed,
-      total: completed.length,
-      done: completed.length - unprocessed.length + processed,
-    });
   }
 
   if (url.pathname === '/summary/generate') {
