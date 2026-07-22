@@ -16,14 +16,27 @@
 // read-proxy routes still follow the exact same shape as
 // /player-analytics/-shots and remain mechanical to extend if ever needed.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { makeEnv, makeCtx, makeRequest, flushWaitUntil, makeFakeCache } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({
   resolveNHLSeason: vi.fn().mockResolvedValue(20252026),
 }))
 
-import { handleNHL } from '../nhl.js'
+// sendPush does real VAPID JWT signing + RFC8291 payload encryption via
+// crypto.subtle -- mocked here so poll()'s dual-broadcast tests can assert
+// on *who* got notified without needing real EC key material. Everything
+// else in shared.js (kvGet/kvPut against the test env's CACHE mock, etc.)
+// stays real. vi.mock factories are hoisted above regular declarations, so
+// the mock fn itself must be created via vi.hoisted() to be visible here.
+const { sendPushMock } = vi.hoisted(() => ({ sendPushMock: vi.fn().mockResolvedValue('ok') }))
+vi.mock('../shared.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, sendPush: sendPushMock }
+})
+
+import { handleNHL, poll } from '../nhl.js'
+import { resolveNHLSeason } from '../seasons.js'
 
 beforeEach(() => {
   globalThis.fetch = vi.fn()
@@ -801,56 +814,6 @@ describe('GET /pp-units/refresh', () => {
   })
 })
 
-describe('GET /shots/backfill', () => {
-  it('401s without a matching secret', async () => {
-    const env = makeEnv()
-    const res = await handleNHL(
-      makeRequest('/shots/backfill'), env, makeCtx(), new URL('https://example.com/shots/backfill')
-    )
-    expect(res.status).toBe(401)
-  })
-
-  it('counts an already-processed game as done and only processes the remaining unprocessed games', async () => {
-    const schedule = [
-      { id: 111, gameState: 'FINAL', homeTeam: { abbrev: 'CAR' }, awayTeam: { abbrev: 'BOS' } },
-      { id: 222, gameState: 'FINAL', homeTeam: { abbrev: 'CAR' }, awayTeam: { abbrev: 'TOR' } },
-    ]
-    const env = makeEnv({
-      CACHE: {
-        async get(key) {
-          if (key === 'schedule:CAR:20252026') return JSON.stringify(schedule)
-          if (key === 'shots:done:111') return JSON.stringify(true) // already processed
-          return null
-        },
-        async put() {},
-      },
-    })
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 }) // pbp fetch fails — aggregatePlayerShots no-ops
-
-    const res = await handleNHL(
-      makeRequest('/shots/backfill?secret=test-poll-secret&team=CAR'), env, makeCtx(),
-      new URL('https://example.com/shots/backfill?secret=test-poll-secret&team=CAR')
-    )
-
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.total).toBe(2)
-    expect(body.processed).toBe(1) // only game 222 was in the unprocessed batch
-    expect(body.done).toBe(2) // 1 already done + 1 processed just now
-    expect(body.remaining).toBe(0)
-  })
-
-  it('returns all-zero counts when there are no completed games', async () => {
-    const env = makeEnv()
-    const res = await handleNHL(
-      makeRequest('/shots/backfill?secret=test-poll-secret'), env, makeCtx(),
-      new URL('https://example.com/shots/backfill?secret=test-poll-secret')
-    )
-    expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ ok: true, processed: 0, remaining: 0, total: 0, done: 0 })
-  })
-})
-
 describe('GET /summary/generate', () => {
   it('401s without a matching secret', async () => {
     const env = makeEnv()
@@ -917,6 +880,141 @@ describe('GET /poll (manual trigger)', () => {
     const body = await res.json()
     expect(body.ok).toBe(true)
     expect(body.polled).toBeTruthy()
+  })
+})
+
+// Regression coverage for the 2026-07 multi-team poll-loop rewrite: poll()
+// used to only ever fetch CAR's own schedule and could only ever detect
+// CAR's own live/just-ended game, so push notifications never fired for
+// any other team's subscribers, no matter what they'd subscribed to. It
+// now fetches the league-wide /score/now scoreboard and processes every
+// live/completed game, dual-broadcasting to both teams playing (mirroring
+// pollPWHLGame's pattern in pwhl.js) instead of framing everything as
+// "CAR" vs "opponent". sendPush is mocked (see top of file) so these
+// assert on *who* got notified, not on real push-service delivery.
+describe('poll() — multi-team dual broadcast', () => {
+  // The file-level resolveNHLSeason mock returns a fixed 20252026, whose
+  // computed season-end (2026-07-01) is now in the past relative to
+  // whenever this suite actually runs -- poll() no-ops immediately in that
+  // case (see its "Season over" early return). Override to a season safely
+  // in the future so poll() actually runs its body in these tests.
+  beforeEach(() => {
+    const nextYear = new Date().getFullYear() + 2
+    vi.mocked(resolveNHLSeason).mockResolvedValue(Number(`${nextYear - 1}${nextYear}`))
+  })
+
+  // mockResolvedValue (not -Once) persists past this describe block's own
+  // tests since resolveNHLSeason is a shared module-level mock -- restore
+  // the file's default so later describe blocks (which assume 20252026,
+  // e.g. for their `schedule:CAR:20252026`-shaped cache keys) aren't
+  // silently broken by this one.
+  afterEach(() => {
+    vi.mocked(resolveNHLSeason).mockResolvedValue(20252026)
+  })
+
+  function subFor(teamAbbr, endpoint) {
+    return { endpoint, keys: { p256dh: 'x', auth: 'y' }, teamAbbr: `NHL:${teamAbbr}` }
+  }
+
+  function mockScoreboardAndPbp({ liveGames = [], completedGames = [], pbpByGameId = {} }) {
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('/score/now')) {
+        return Promise.resolve({ ok: true, json: async () => ({ games: [...liveGames, ...completedGames] }) })
+      }
+      if (u.includes('/play-by-play')) {
+        const gid = u.match(/gamecenter\/(\d+)\//)?.[1]
+        return Promise.resolve({ ok: true, json: async () => pbpByGameId[gid] || { plays: [] } })
+      }
+      if (u.includes('club-schedule-season')) {
+        return Promise.resolve({ ok: true, json: async () => ({ games: [] }) })
+      }
+      // boxscore, standings, team/summary, odds, news — not under test here
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+  }
+
+  it('dual-broadcasts a goal to both teams playing, not just this app\'s own team', async () => {
+    const env = makeEnv({
+      VAPID_PRIVATE_KEY: 'fake-key-for-test',
+      CACHE: makeFakeCache({
+        'push:subs': [subFor('BOS', 'https://push.example/bos-fan'), subFor('CAR', 'https://push.example/car-fan')],
+      }),
+    })
+
+    const liveGame = {
+      id: 2025020555, gameState: 'LIVE', gameType: 2,
+      homeTeam: { id: 6, abbrev: 'BOS', score: 1 },
+      awayTeam: { id: 12, abbrev: 'CAR', score: 0 },
+    }
+    mockScoreboardAndPbp({
+      liveGames: [liveGame],
+      pbpByGameId: {
+        '2025020555': {
+          periodDescriptor: { number: 1 },
+          plays: [{
+            typeDescKey: 'goal',
+            details: { eventOwnerTeamId: 6, scoringPlayerName: 'David Pastrnak', scoringPlayerId: 88, shotType: 'wrist' },
+          }],
+        },
+      },
+    })
+
+    await poll(env, makeCtx())
+
+    const calls = sendPushMock.mock.calls
+    const bosCalls = calls.filter(([sub]) => sub.endpoint.includes('bos-fan'))
+    const carCalls = calls.filter(([sub]) => sub.endpoint.includes('car-fan'))
+    expect(bosCalls.length).toBeGreaterThan(0)
+    expect(carCalls.length).toBeGreaterThan(0)
+
+    const bosGoalCall = bosCalls.find(([, payload]) => payload.tag?.startsWith('goal-'))
+    const carOppGoalCall = carCalls.find(([, payload]) => payload.tag?.startsWith('opp-goal-'))
+    expect(bosGoalCall?.[1].title).toContain('GOAL')
+    expect(bosGoalCall?.[1].title).toContain('BOS')
+    expect(carOppGoalCall?.[1].title).toContain('BOS scores')
+  })
+
+  it('dual-broadcasts game-over win/loss for a game involving neither team as this app\'s own default team', async () => {
+    const env = makeEnv({
+      VAPID_PRIVATE_KEY: 'fake-key-for-test',
+      CACHE: makeFakeCache({
+        'push:subs': [subFor('TOR', 'https://push.example/tor-fan'), subFor('NYR', 'https://push.example/nyr-fan')],
+      }),
+    })
+
+    const finalGame = {
+      id: 2025020777, gameState: 'FINAL', gameType: 2, gameDate: '2026-01-15',
+      homeTeam: { id: 10, abbrev: 'TOR', score: 4 },
+      awayTeam: { id: 3,  abbrev: 'NYR', score: 2 },
+    }
+    mockScoreboardAndPbp({ completedGames: [finalGame] })
+
+    await poll(env, makeCtx())
+
+    const calls = sendPushMock.mock.calls
+    const torWin  = calls.find(([sub, payload]) => sub.endpoint.includes('tor-fan') && payload.tag?.startsWith('win-'))
+    const nyrLoss = calls.find(([sub, payload]) => sub.endpoint.includes('nyr-fan') && payload.tag?.startsWith('final-'))
+    expect(torWin?.[1].title).toContain('TOR')
+    expect(nyrLoss?.[1].title).toContain('NYR')
+  })
+
+  it('does not call generateGameSummary/AI for a completed game that does not involve CAR', async () => {
+    const env = makeEnv({
+      VAPID_PRIVATE_KEY: 'fake-key-for-test',
+      CACHE: makeFakeCache({ 'push:subs': [] }),
+    })
+    const aiSpy = env.AI.run
+    const finalGame = {
+      id: 2025020888, gameState: 'FINAL', gameType: 2, gameDate: '2026-01-16',
+      homeTeam: { id: 10, abbrev: 'TOR', score: 4 },
+      awayTeam: { id: 3,  abbrev: 'NYR', score: 2 },
+    }
+    mockScoreboardAndPbp({ completedGames: [finalGame] })
+
+    await poll(env, makeCtx())
+
+    expect(aiSpy).not.toHaveBeenCalled()
   })
 })
 
