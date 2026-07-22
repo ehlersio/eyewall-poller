@@ -439,6 +439,63 @@ describe('GET /player-shots', () => {
   })
 })
 
+describe('GET /nhl/shots', () => {
+  // Regression: an earlier version of this route filtered shot_events on
+  // car_game=eq.true, which only ever means "Carolina played in this game"
+  // -- for any other requested team that would have silently returned
+  // CAR's shots instead of the requested team's. Assert the route resolves
+  // the requested team's own game_ids from the NHL schedule API first and
+  // scopes shot_events by that game_id list instead.
+  it('resolves game_ids from the requested (non-CAR) team schedule, not car_game', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('club-schedule-season')) {
+        expect(u).toContain('club-schedule-season/TOR/20252026')
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            games: [
+              { id: 2025020001, gameState: 'OFF' },
+              { id: 2025020002, gameState: 'FUT' }, // not completed -- excluded
+              { id: 2025020003, gameState: 'FINAL' },
+            ],
+          }),
+        })
+      }
+      // Supabase shot_events call
+      expect(u).not.toContain('car_game')
+      expect(u).toContain('game_id=in.(2025020001,2025020003)')
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    const res = await handleNHL(
+      makeRequest('/nhl/shots?team=TOR&season=20252026'), env, makeCtx(),
+      new URL('https://example.com/nhl/shots?team=TOR&season=20252026')
+    )
+
+    expect(res.status).toBe(200)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns an empty array without querying Supabase when the team has no completed games', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ games: [{ id: 1, gameState: 'FUT' }] }),
+    })
+
+    const res = await handleNHL(
+      makeRequest('/nhl/shots?team=SEA&season=20252026'), env, makeCtx(),
+      new URL('https://example.com/nhl/shots?team=SEA&season=20252026')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([])
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1) // schedule only, no Supabase call
+  })
+})
+
 describe('POST /push/subscribe', () => {
   it('adds a new subscription and defaults league prefix to NHL', async () => {
     const env = makeEnv()
