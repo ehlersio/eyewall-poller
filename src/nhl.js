@@ -117,6 +117,214 @@ async function sbRows(path) {
   return r.json();
 }
 
+// Combined Prediction Calibration (2026-07) — see
+// eyewall-pipeline/docs/combined_calibration_part_a_b_results.md for the
+// fit/validation this was built from, and COMBINED_CALIBRATION_IMPLEMENTATION.md
+// for the "switch, don't stack" regime design these three helpers implement.
+
+// e.g. 20252026 -> 20242025. Mirrors rapm.py's prior_season() exactly —
+// keep in sync if that ever changes.
+function priorSeason(season) {
+  const endYear = season % 10000;
+  const startYear = Math.floor(season / 10000);
+  return (startYear - 1) * 10000 + (endYear - 1);
+}
+
+// Fitted via eyewall-pipeline/fit_scorecard_calibration.py on the main
+// backtest's current-season-to-date predictions (fit: 2024-25, holdout:
+// 2025-26) — see scorecard_calibration.json for the source artifact.
+// Isotonic regression's fitted function is a monotonic step/interpolation
+// curve; these are its (x, y) breakpoints. Only ever applied to the
+// in-season branch — the true-preseason regime uses continuity dampening
+// instead (see COMBINED_CALIBRATION_IMPLEMENTATION.md's "switch, don't
+// stack" resolution). Refit periodically alongside the existing quarterly
+// RAPM validation cadence, not on every deploy (open question, not decided).
+const ISOTONIC_X = [
+  0.0, 0.045454545454545456, 0.36, 0.375, 0.5454545454545454, 0.5517241379310345,
+  0.7083333333333334, 0.7142857142857143, 0.8095238095238094, 0.8108108108108107,
+  0.8666666666666667, 0.8709677419354839, 0.8823529411764706,
+];
+const ISOTONIC_Y = [
+  0.4309623430962343, 0.5273311897106109, 0.5273311897106109, 0.562874251497006,
+  0.562874251497006, 0.6341463414634146, 0.6341463414634146, 0.6641221374045801,
+  0.6641221374045801, 0.6776315789473685, 0.6776315789473685, 0.7023809523809523,
+  0.7023809523809523,
+];
+
+// x is the raw scorecard fraction (0-1, i.e. carScore/total before
+// rounding to a percentage) — apply calibration BEFORE rounding, matching
+// exactly what was fit and validated in Python (fitting on an already-
+// rounded integer percentage would be a subtly different input).
+// Linear interpolation between breakpoints, clipped outside the fitted
+// range — verified against sklearn's actual IsotonicRegression.predict()
+// output across the full range (including boundary clips and flat/duplicate-
+// x steps) before shipping, not assumed from the algorithm's name.
+function isotonicCalibrate(x) {
+  if (x <= ISOTONIC_X[0]) return ISOTONIC_Y[0];
+  const last = ISOTONIC_X.length - 1;
+  if (x >= ISOTONIC_X[last]) return ISOTONIC_Y[last];
+  for (let i = 0; i < last; i++) {
+    if (x >= ISOTONIC_X[i] && x <= ISOTONIC_X[i + 1]) {
+      const x0 = ISOTONIC_X[i], x1 = ISOTONIC_X[i + 1];
+      const y0 = ISOTONIC_Y[i], y1 = ISOTONIC_Y[i + 1];
+      if (x1 === x0) return y0; // flat step (duplicate x-threshold)
+      return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+    }
+  }
+  return ISOTONIC_Y[last]; // unreachable safety net
+}
+
+// Fraction (0-1) of a team's prior-season total TOI attributable to
+// players still on its roster today — validated in
+// TRUE_PRESEASON_BACKTEST_EXTENSION.md/_RESULTS.md (continuity-adjusted
+// fallback: Brier -13%, log loss -63% vs. the raw fallback, no accuracy
+// cost). rosterIds: current roster player ids for the team (from
+// `players.team`, live — no historical proxy needed in production, unlike
+// the backtest reconstruction). priorSeasonRows: that team's own
+// player_seasons rows for the prior season (player_id, games_played,
+// toi_per_game).
+function continuityFraction(rosterIds, priorSeasonRows) {
+  let totalToi = 0, retainedToi = 0;
+  for (const r of priorSeasonRows) {
+    const toi = (r.toi_per_game || 0) * (r.games_played || 0);
+    totalToi += toi;
+    if (rosterIds.has(r.player_id)) retainedToi += toi;
+  }
+  return totalToi > 0 ? retainedToi / totalToi : null;
+}
+
+// Called from /prediction/analyze when standings are still pinned to last
+// season (no real current-season data yet). Prior-season scorecard +
+// roster-continuity dampening, validated in TRUE_PRESEASON_BACKTEST_RESULTS.md
+// — never combined with the in-season branch's isotonic calibration (see
+// the "switch, don't stack" resolution in COMBINED_CALIBRATION_IMPLEMENTATION.md).
+async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey) {
+  const prior = priorSeason(tc.season);
+
+  const [teamSeasonRows, playerRows, priorPlayerSeasonRows] = await Promise.all([
+    sbRows(`team_seasons?team=in.(${tc.abbr},${oppAbbr})&season=eq.${prior}&game_type=eq.2` +
+      `&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,shots_for_pg,corsi_for_pct,corsi_for_pct_5v5`),
+    sbRows(`players?team=in.(${tc.abbr},${oppAbbr})&select=id,team`),
+    sbRows(`player_seasons?team=in.(${tc.abbr},${oppAbbr})&season=eq.${prior}&game_type=eq.2` +
+      `&select=player_id,team,games_played,toi_per_game`),
+  ]);
+
+  const carRow = teamSeasonRows.find(r => r.team === tc.abbr);
+  const oppRow = teamSeasonRows.find(r => r.team === oppAbbr);
+  if (!carRow || !oppRow) {
+    return json({ error: `No prior-season (${prior}) data available for ${tc.abbr} or ${oppAbbr} — cannot generate a preseason estimate yet.` });
+  }
+
+  const carGpg = carRow.goals_for_pg ?? 0;
+  const oppGpg = oppRow.goals_for_pg ?? 0;
+  const carGag = carRow.goals_ag_pg ?? 0;
+  const oppGag = oppRow.goals_ag_pg ?? 0;
+  const carSF  = carRow.shots_for_pg ?? 0;
+  const oppSF  = oppRow.shots_for_pg ?? 0;
+
+  // Same scorecard as the in-season branch, minus the streak term — no
+  // such concept for a completed prior season's final record.
+  let carScore = 0, oppScore = 0;
+  if (!isPlayoff) {
+    const ptsDiff = (carRow.points ?? 0) - (oppRow.points ?? 0);
+    carScore += ptsDiff > 0 ? Math.min(ptsDiff / 20, 1) : 0;
+    oppScore += ptsDiff < 0 ? Math.min(-ptsDiff / 20, 1) : 0;
+  }
+  if (carGpg > oppGpg) carScore += 0.6; else oppScore += 0.6;
+  if (carGag < oppGag) carScore += 0.6; else oppScore += 0.6;
+  if ((carRow.pp_pct ?? 22) > (oppRow.pp_pct ?? 22)) carScore += 0.4; else oppScore += 0.4;
+  if (carSF > oppSF) carScore += 0.5; else oppScore += 0.5;
+  const total = carScore + oppScore || 1;
+  const rawFraction = carScore / total;
+
+  // Roster continuity — current roster from `players.team` (live, no
+  // historical proxy needed here, unlike the backtest reconstruction),
+  // prior-season TOI from that team's own player_seasons rows.
+  const carRosterIds = new Set(playerRows.filter(p => p.team === tc.abbr).map(p => p.id));
+  const oppRosterIds = new Set(playerRows.filter(p => p.team === oppAbbr).map(p => p.id));
+  const carPriorRows = priorPlayerSeasonRows.filter(r => r.team === tc.abbr);
+  const oppPriorRows = priorPlayerSeasonRows.filter(r => r.team === oppAbbr);
+  const carContinuity = continuityFraction(carRosterIds, carPriorRows);
+  const oppContinuity = continuityFraction(oppRosterIds, oppPriorRows);
+  const validContinuities = [carContinuity, oppContinuity].filter(c => c != null);
+  // No roster data at all (shouldn't happen once players.team is
+  // populated, but defensively) -- fall back to the raw, undamped
+  // fraction rather than guessing at a dampening factor.
+  const avgContinuity = validContinuities.length > 0
+    ? validContinuities.reduce((a, b) => a + b, 0) / validContinuities.length
+    : 1;
+
+  const dampenedFraction = 0.5 + (rawFraction - 0.5) * avgContinuity;
+  const carWinPct = Math.round(dampenedFraction * 100);
+
+  // Corsi: reuse team_seasons, just filtered to the prior season instead
+  // of the current one — same table the in-season branch already reads.
+  let carCF = null, oppCF = null, corsiSource = 'unavailable';
+  if (carRow.corsi_for_pct_5v5 != null && oppRow.corsi_for_pct_5v5 != null) {
+    carCF = (carRow.corsi_for_pct_5v5 * 100).toFixed(1);
+    oppCF = (oppRow.corsi_for_pct_5v5 * 100).toFixed(1);
+    corsiSource = '5v5';
+  } else if (carRow.corsi_for_pct != null && oppRow.corsi_for_pct != null) {
+    carCF = (carRow.corsi_for_pct * 100).toFixed(1);
+    oppCF = (oppRow.corsi_for_pct * 100).toFixed(1);
+    corsiSource = 'all_situations';
+  }
+  const corsiCaveat = carCF != null
+    ? `${corsiSource === '5v5' ? '5-on-5' : 'All-situations'} shot-attempt share from ${prior}, ${tc.displayName}'s last completed season — not this season's form.`
+    : `Real Corsi data unavailable for ${prior}.`;
+
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const homeAdj = isHome ? 0.12 : -0.12;
+  const expCar = clamp(Math.sqrt(Math.max(carGpg, 0.5) * Math.max(oppGag, 0.5)) + homeAdj, 1.5, 5.0).toFixed(1);
+  const expOpp = clamp(Math.sqrt(Math.max(oppGpg, 0.5) * Math.max(carGag, 0.5)) - homeAdj, 1.5, 5.0).toFixed(1);
+
+  const prompt = `You are EyeWall Analytics, a ${tc.displayName} hockey analytics assistant. Write a sharp, data-driven PRESEASON analysis for ${tc.displayName} fans — no games have been played yet this season, so this is based on last season's (${prior}) final numbers, adjusted for roster turnover. 2-3 sentences only. Be specific about the numbers and be clear this is a preseason estimate, not current form. No filler. No "In this matchup" opener.
+
+Game: ${tc.abbr} (${isHome ? 'HOME' : 'AWAY'}) vs ${oppAbbr}
+Context: Preseason estimate, based on ${prior} final standings
+
+${tc.abbr} last season (${prior}): ${carRow.points ?? '—'} pts, GF/GA per game: ${carGpg.toFixed(2)} / ${carGag.toFixed(2)}, PP%: ${(carRow.pp_pct ?? 0).toFixed(1)}%, roster continuity: ${carContinuity != null ? (carContinuity * 100).toFixed(0) + '%' : 'unknown'}
+${oppAbbr} last season (${prior}): ${oppRow.points ?? '—'} pts, GF/GA per game: ${oppGpg.toFixed(2)} / ${oppGag.toFixed(2)}, PP%: ${(oppRow.pp_pct ?? 0).toFixed(1)}%, roster continuity: ${oppContinuity != null ? (oppContinuity * 100).toFixed(0) + '%' : 'unknown'}
+
+Expected score (Pythagorean, from last season's rates): ${tc.abbr} ${expCar} - ${oppAbbr} ${expOpp}
+Model win probability (roster-continuity adjusted): ${tc.abbr} ${carWinPct}%
+
+Write the analysis now. Mention the single most decisive factor from last season, note the roster continuity level for at least one team if notably low, and a concrete expected-score range.`;
+
+  const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+    messages: [{ role: 'user', content: prompt }],
+  });
+  const narrative = aiResponse.response?.trim() || '';
+  if (!narrative) return json({ error: 'Empty response' });
+
+  const result = {
+    gameId,
+    oppAbbr,
+    isHome,
+    isPlayoff,
+    carWinPct,
+    expCar: parseFloat(expCar),
+    expOpp: parseFloat(expOpp),
+    narrative,
+    h2hRecord: 'no games played yet this season',
+    carStreak: 'N/A (preseason)',
+    oppStreak: 'N/A (preseason)',
+    carCF,
+    corsiForPct: { car: carCF != null ? parseFloat(carCF) : null, opp: oppCF != null ? parseFloat(oppCF) : null },
+    corsiCaveat,
+    generatedAt: new Date().toISOString(),
+    regime: 'preseason',
+    correction: 'continuity-dampened',
+    isFallback: true,
+    dataSeason: prior,
+    continuity: { car: carContinuity, opp: oppContinuity },
+  };
+
+  await kvPut(env, kvKey, result, 24 * 3600);
+  console.log(`Preseason prediction analysis generated for game ${gameId} (data season ${prior})`);
+  return json(result);
+}
+
 function isCompleted(game) {
   return ['OFF','FINAL','F','FINAL_OVERTIME','FINAL_SHOOTOUT'].includes(game.gameState);
 }
@@ -2445,7 +2653,11 @@ export async function handleNHL(request, env, ctx, url) {
     // seasonId isn't evidence of staleness, the real NHL API always includes it.
     const standingsSeasonId = standings[0]?.seasonId;
     if (standingsSeasonId != null && String(standingsSeasonId) !== String(tc.season)) {
-      return json({ error: "Prediction needs this season's standings — not available until games begin." });
+      // No real current-season standings yet -- this used to just error
+      // here. Route to the validated preseason fallback (prior-season
+      // scorecard + continuity dampening) instead of blocking the user,
+      // per COMBINED_CALIBRATION_IMPLEMENTATION.md's regime pipeline.
+      return buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey);
     }
 
     // Find standings for both teams
@@ -2564,7 +2776,12 @@ export async function handleNHL(request, env, ctx, url) {
     if (carTeam.streakCode === 'W') carScore += 0.3;
     if (oppTeam.streakCode === 'W') oppScore += 0.3;
     const total = carScore + oppScore || 1;
-    const carWinPct = Math.round((carScore / total) * 100);
+    // Isotonic calibration applied to the raw fraction BEFORE rounding —
+    // matches exactly what was fit/validated (Brier -23%, log loss -71%
+    // on a true 2025-26 holdout, see combined_calibration_part_a_b_results.md).
+    // Only the in-season branch gets this correction — the preseason
+    // fallback below uses continuity dampening instead, never both.
+    const carWinPct = Math.round(isotonicCalibrate(carScore / total) * 100);
 
     const prompt = `You are EyeWall Analytics, a ${tc.displayName} hockey analytics assistant. Write a sharp, data-driven pre-game analysis for ${tc.displayName} fans. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener.
 
@@ -2617,6 +2834,8 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       corsiForPct: { car: carCF != null ? parseFloat(carCF) : null, opp: oppCF != null ? parseFloat(oppCF) : null },
       corsiCaveat,
       generatedAt: new Date().toISOString(),
+      regime: 'in-season',
+      correction: 'isotonic-calibrated',
     };
 
     // Cache for 24hr (pre-game analysis refreshes daily in case of lineup changes)
