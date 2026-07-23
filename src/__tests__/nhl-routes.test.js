@@ -1135,6 +1135,50 @@ describe('GET /prediction/analyze', () => {
     expect((await res.json()).error).toMatch(/not found in schedule/i)
   })
 
+  it('returns a not-available error instead of a stale-standings prediction when the standings feed is still pinned to last season (preseason)', async () => {
+    const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
+    // resolveNHLSeason is mocked to 20252026 above; standings still carrying
+    // last season's seasonId is exactly the "NHL's /standings/now hasn't
+    // caught up yet" preseason state.
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, seasonId: 20242025, gamesPlayed: 82, points: 100 },
+      { teamAbbrev: { default: 'BOS' }, seasonId: 20242025, gamesPlayed: 82, points: 90 },
+    ]
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
+      AI: { run: vi.fn().mockResolvedValue({ response: 'should not be called' }) },
+    })
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+
+    expect((await res.json()).error).toMatch(/not available until games begin/i)
+    expect(env.AI.run).not.toHaveBeenCalled()
+  })
+
+  it('does not treat a standings feed with no seasonId as stale (e.g. a test stub)', async () => {
+    const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, gamesPlayed: 10, wins: 7, losses: 3, otLosses: 0, points: 14, goalFor: 35, goalAgainst: 25, powerPlayPct: 24, penaltyKillPct: 80, shotsForPerGame: 32, shotsAgainstPerGame: 28, streakCode: 'W', streakCount: 3 },
+      { teamAbbrev: { default: 'BOS' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 28, goalAgainst: 30, powerPlayPct: 18, penaltyKillPct: 76, shotsForPerGame: 29, shotsAgainstPerGame: 31, streakCode: 'L', streakCount: 1 },
+    ]
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
+      AI: { run: vi.fn().mockResolvedValue({ response: 'CAR should win this one comfortably.' }) },
+    })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+
+    expect(res.status).toBe(200)
+    expect((await res.json()).narrative).toBe('CAR should win this one comfortably.')
+  })
+
   it('generates and caches a prediction for a game with standings on both sides, falling back to the SOG-share proxy when team_seasons has no Corsi data', async () => {
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [

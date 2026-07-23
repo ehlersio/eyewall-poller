@@ -2435,6 +2435,19 @@ export async function handleNHL(request, env, ctx, url) {
     const oppAbbr   = isHome ? game.awayTeam?.abbrev : game.homeTeam?.abbrev;
     const isPlayoff = game.gameType === 3;
 
+    // NHL's /standings/now stays pinned to last season's final standings
+    // until real games exist for the new one (confirmed live) — the
+    // frontend already guards against this exact scenario (ScheduleView.jsx's
+    // standingsAreStale), but this route pulls straight from the 'standings'
+    // KV key with no season check, so without this it would happily generate
+    // a confident-sounding prediction off finished, stale data and label it
+    // as current form. Only reject on an EXPLICIT mismatch — an absent
+    // seasonId isn't evidence of staleness, the real NHL API always includes it.
+    const standingsSeasonId = standings[0]?.seasonId;
+    if (standingsSeasonId != null && String(standingsSeasonId) !== String(tc.season)) {
+      return json({ error: "Prediction needs this season's standings — not available until games begin." });
+    }
+
     // Find standings for both teams
     const findTeam = abbr => standings.find(s =>
       s.teamAbbrev?.default === abbr || s.teamAbbrev === abbr
