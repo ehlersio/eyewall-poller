@@ -36,13 +36,50 @@ create table if not exists public.nhl_odds (
 -- first time ever (broad credential, larger blast radius if it ever
 -- leaked), this grants the anon role narrow insert/update/select access
 -- scoped to just this one table.
+--
+-- INSERT/UPDATE are bounded to what a legitimate write from fetchOdds()
+-- actually looks like (plausible season, valid-looking team abbrevs, a
+-- near-future commence_time, American-odds-shaped moneyline values) --
+-- see docs/nhl_odds_rls_tighten.sql for why this replaced an initial
+-- `with check (true)` version (Supabase's linter correctly flagged that
+-- as unconditionally permissive). This file reflects the tightened
+-- version directly so a from-scratch table creation doesn't need the
+-- separate tighten migration replayed after it.
 alter table public.nhl_odds enable row level security;
 
-create policy "anon can upsert nhl_odds" on public.nhl_odds
-  for insert to anon with check (true);
+create policy "anon can insert plausible nhl_odds rows" on public.nhl_odds
+  for insert to anon
+  with check (
+    season between 20222023 and 20302031
+    and home_abbr ~ '^[A-Z]{2,3}$'
+    and away_abbr ~ '^[A-Z]{2,3}$'
+    and home_abbr <> away_abbr
+    and commence_time > now() - interval '1 day'
+    and commence_time < now() + interval '30 days'
+    and (moneyline_home is null or abs(moneyline_home) >= 100)
+    and (moneyline_away is null or abs(moneyline_away) >= 100)
+  );
 
-create policy "anon can update nhl_odds" on public.nhl_odds
-  for update to anon using (true) with check (true);
+create policy "anon can update plausible nhl_odds rows" on public.nhl_odds
+  for update to anon
+  using (
+    season between 20222023 and 20302031
+    and commence_time > now() - interval '1 day'
+    and commence_time < now() + interval '30 days'
+  )
+  with check (
+    season between 20222023 and 20302031
+    and home_abbr ~ '^[A-Z]{2,3}$'
+    and away_abbr ~ '^[A-Z]{2,3}$'
+    and home_abbr <> away_abbr
+    and commence_time > now() - interval '1 day'
+    and commence_time < now() + interval '30 days'
+    and (moneyline_home is null or abs(moneyline_home) >= 100)
+    and (moneyline_away is null or abs(moneyline_away) >= 100)
+  );
 
+-- SELECT USING (true) is deliberately unrestricted -- the linter excludes
+-- this from its "always true" warning category, since public-read is
+-- often intentional (it is here: odds are already public information).
 create policy "anon can read nhl_odds" on public.nhl_odds
   for select to anon using (true);
