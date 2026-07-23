@@ -1135,18 +1135,49 @@ describe('GET /prediction/analyze', () => {
     expect((await res.json()).error).toMatch(/not found in schedule/i)
   })
 
-  it('returns a not-available error instead of a stale-standings prediction when the standings feed is still pinned to last season (preseason)', async () => {
+  // ── Combined Prediction Calibration (2026-07) ──────────────────────
+  // Regime split: standings pinned to last season -> preseason fallback
+  // (prior-season scorecard + continuity dampening); real current-season
+  // standings -> existing scorecard + isotonic calibration. Never both.
+  // See COMBINED_CALIBRATION_IMPLEMENTATION.md / TRUE_PRESEASON_BACKTEST_RESULTS.md.
+
+  function mockSupabaseByTable(responses) {
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      for (const [match, rows] of Object.entries(responses)) {
+        if (u.includes(match)) return Promise.resolve({ ok: true, json: async () => rows })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+  }
+
+  it('routes to the preseason fallback (prior-season scorecard + continuity dampening) instead of erroring when standings are still pinned to last season', async () => {
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     // resolveNHLSeason is mocked to 20252026 above; standings still carrying
     // last season's seasonId is exactly the "NHL's /standings/now hasn't
-    // caught up yet" preseason state.
+    // caught up yet" preseason state -- prior season is 20242025.
     const standings = [
       { teamAbbrev: { default: 'CAR' }, seasonId: 20242025, gamesPlayed: 82, points: 100 },
       { teamAbbrev: { default: 'BOS' }, seasonId: 20242025, gamesPlayed: 82, points: 90 },
     ]
     const env = makeEnv({
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
-      AI: { run: vi.fn().mockResolvedValue({ response: 'should not be called' }) },
+      AI: { run: vi.fn().mockResolvedValue({ response: 'Preseason take.' }) },
+    })
+    mockSupabaseByTable({
+      // CAR wins points/GA/PP, BOS wins GF/SF -- a non-degenerate split
+      'team_seasons': [
+        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 24, shots_for_pg: 28 },
+        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 20, shots_for_pg: 31 },
+      ],
+      'players?': [
+        { id: 1, team: 'CAR' }, { id: 2, team: 'CAR' }, { id: 3, team: 'BOS' },
+      ],
+      'player_seasons': [
+        { player_id: 1, team: 'CAR', games_played: 82, toi_per_game: 1200 },
+        { player_id: 99, team: 'CAR', games_played: 82, toi_per_game: 900 }, // traded away, not on current roster
+        { player_id: 3, team: 'BOS', games_played: 82, toi_per_game: 1000 },
+      ],
     })
 
     const res = await handleNHL(
@@ -1154,7 +1185,46 @@ describe('GET /prediction/analyze', () => {
       new URL('https://example.com/prediction/analyze?gameId=123')
     )
 
-    expect((await res.json()).error).toMatch(/not available until games begin/i)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.regime).toBe('preseason')
+    expect(body.correction).toBe('continuity-dampened')
+    expect(body.isFallback).toBe(true)
+    expect(body.dataSeason).toBe(20242025)
+    // CAR continuity: player 1 retained (98,400 of 172,200 prior TOI) = 0.5714...
+    expect(body.continuity.car).toBeCloseTo(0.5714, 3)
+    // BOS continuity: only prior player (3) still on roster = 1.0
+    expect(body.continuity.opp).toBeCloseTo(1.0, 3)
+    // raw fraction 1.25/2.35 = 0.53191..., dampened by avg continuity 0.7857
+    // -> 0.5 + (0.53191-0.5)*0.7857 = 0.52507 -> rounds to 53
+    expect(body.carWinPct).toBe(53)
+    expect(body.h2hRecord).toMatch(/no games played yet/i)
+    expect(body.narrative).toBe('Preseason take.')
+    // No team's prediction ever hits both corrections -- the regime check
+    // above is a hard early-return in nhl.js, and this test's own
+    // correction: 'continuity-dampened' assertion together with the
+    // in-season happy-path test's correction: 'isotonic-calibrated'
+    // assertion below are mutually exclusive by construction, not just by
+    // reading the source.
+  })
+
+  it('returns an error rather than guessing when neither team has prior-season team_seasons data', async () => {
+    const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, seasonId: 20242025, gamesPlayed: 82, points: 100 },
+    ]
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
+      AI: { run: vi.fn().mockResolvedValue({ response: 'should not be called' }) },
+    })
+    mockSupabaseByTable({ 'team_seasons': [] })
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+
+    expect((await res.json()).error).toMatch(/no prior-season.*data available/i)
     expect(env.AI.run).not.toHaveBeenCalled()
   })
 
@@ -1209,6 +1279,14 @@ describe('GET /prediction/analyze', () => {
     expect(body.carCF).toBe('50.8')
     expect(body.corsiForPct).toEqual({ car: 50.8, opp: expect.any(Number) })
     expect(body.corsiCaveat).toMatch(/shots-on-goal share only/i)
+    // CAR wins every scorecard factor here -> raw fraction is exactly 1.0
+    // (would have been carWinPct: 100 pre-calibration). Isotonic clips
+    // x=1.0 to the fitted curve's top y-threshold (0.70238...), landing
+    // on 70 -- a concrete demonstration that the calibration fix is wired
+    // in, not just present in the source.
+    expect(body.carWinPct).toBe(70)
+    expect(body.regime).toBe('in-season')
+    expect(body.correction).toBe('isotonic-calibrated')
 
     const cached = JSON.parse(await env.CACHE.get('prediction:123'))
     expect(cached.narrative).toBe('CAR should win this one comfortably.')
