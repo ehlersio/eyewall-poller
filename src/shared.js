@@ -36,6 +36,28 @@ export function corsHeaders() {
   };
 }
 
+// Server-side Supabase REST upsert (insert-or-update via PostgREST's
+// on_conflict + merge-duplicates). Uses the same anon key as sbRows()
+// (nhl.js) -- deliberately not a service-role key. The Worker has only
+// ever read from Supabase before this; rather than introduce a broad
+// write credential for the first time, this relies on a narrow RLS policy
+// scoped to just the one table needing it (see
+// eyewall-poller/docs/nhl_odds_table.sql).
+export async function sbUpsert(table, rows, onConflict) {
+  if (!rows.length) return;
+  const r = await fetch(`${SB_URL}/rest/v1/${table}?on_conflict=${onConflict}`, {
+    method: 'POST',
+    headers: {
+      'apikey': SB_ANON,
+      'Authorization': `Bearer ${SB_ANON}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'resolution=merge-duplicates',
+    },
+    body: JSON.stringify(rows),
+  });
+  if (!r.ok) throw new Error(`Supabase upsert ${r.status}: ${table}`);
+}
+
 export function unauthorized() {
   return new Response('Unauthorized', { status: 401 });
 }
