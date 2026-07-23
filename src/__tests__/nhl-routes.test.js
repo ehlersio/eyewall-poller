@@ -1384,3 +1384,176 @@ describe('POST /summary/narrative', () => {
     expect(env.AI.run).toHaveBeenCalledTimes(2)
   })
 })
+
+// ── Odds Persistence Writer (2026-07) ──────────────────────────────────
+// fetchOdds() had zero test coverage before this change (see
+// ODDS_PERSISTENCE_WRITER_SCOPE.md) -- it ran off the same 60s poll tick
+// as everything else, writing to a KV key nothing read back. These cover
+// the redesigned throttle (safety-net + pregame-proximity) and the new
+// Supabase persistence, through poll()'s real execution rather than by
+// exporting fetchOdds()'s internals, matching this file's existing
+// "test through the public surface" convention.
+describe('fetchOdds() — Odds Persistence Writer', () => {
+  const HOUR = 3_600_000
+
+  beforeEach(() => {
+    // Same override as the "poll() — multi-team dual broadcast" block above
+    // -- resolveNHLSeason's file-level mock season-end is in the past by
+    // now, which would make poll() no-op immediately otherwise.
+    const nextYear = new Date().getFullYear() + 2
+    vi.mocked(resolveNHLSeason).mockResolvedValue(Number(`${nextYear - 1}${nextYear}`))
+  })
+  afterEach(() => {
+    vi.mocked(resolveNHLSeason).mockResolvedValue(20252026)
+  })
+
+  function mockFetchForOdds({ scheduleGames = [], scoreboardGames = [], oddsResponse = [], oddsStatus = 200 }) {
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('/score/now')) {
+        return Promise.resolve({ ok: true, json: async () => ({ games: scoreboardGames }) })
+      }
+      if (u.includes('club-schedule-season')) {
+        return Promise.resolve({ ok: true, json: async () => ({ games: scheduleGames }) })
+      }
+      if (u.includes('the-odds-api.com')) {
+        return Promise.resolve({ ok: oddsStatus === 200, status: oddsStatus, json: async () => oddsResponse })
+      }
+      if (u.includes('/rest/v1/nhl_odds')) {
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }
+      // boxscore, standings, team/summary, news, etc. — not under test here
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+  }
+
+  const scheduleGameIn = (days) => ({
+    id: 1, gameType: 2,
+    startTimeUTC: new Date(Date.now() + days * 24 * HOUR).toISOString(),
+    homeTeam: { abbrev: 'CAR' }, awayTeam: { abbrev: 'BOS' },
+  })
+
+  it('skips entirely when no games are within the 7-day window (unchanged gate)', async () => {
+    const env = makeEnv({ ODDS_API_KEY: 'test-odds-key' })
+    mockFetchForOdds({ scheduleGames: [], scoreboardGames: [] })
+
+    await poll(env, makeCtx())
+
+    expect(globalThis.fetch.mock.calls.some(([u]) => String(u).includes('the-odds-api.com'))).toBe(false)
+  })
+
+  it('fetches and persists odds on the safety-net path when nothing has been fetched yet', async () => {
+    const env = makeEnv({ ODDS_API_KEY: 'test-odds-key' })
+    const oddsResponse = [{
+      home_team: 'Carolina Hurricanes', away_team: 'Boston Bruins', commence_time: '2026-10-05T23:00:00Z',
+      bookmakers: [{
+        key: 'draftkings', title: 'DraftKings',
+        markets: [{ key: 'h2h', outcomes: [
+          { name: 'Carolina Hurricanes', price: -150 },
+          { name: 'Boston Bruins', price: 130 },
+        ] }],
+      }],
+    }]
+    mockFetchForOdds({ scheduleGames: [scheduleGameIn(3)], scoreboardGames: [], oddsResponse })
+
+    await poll(env, makeCtx())
+
+    const upsertCall = globalThis.fetch.mock.calls.find(([u]) => String(u).includes('/rest/v1/nhl_odds'))
+    expect(upsertCall).toBeDefined()
+    const [upsertUrl, init] = upsertCall
+    expect(String(upsertUrl)).toContain('on_conflict=season,home_abbr,away_abbr,commence_time')
+    const body = JSON.parse(init.body)
+    expect(body).toEqual([{
+      season: expect.any(Number),
+      home_abbr: 'CAR',
+      away_abbr: 'BOS',
+      commence_time: '2026-10-05T23:00:00Z',
+      moneyline_home: -150,
+      moneyline_away: 130,
+      book: 'DraftKings',
+      fetched_at: expect.any(String),
+    }])
+  })
+
+  it('does not re-fetch when recently fetched and no game is starting soon (throttled)', async () => {
+    const env = makeEnv({
+      ODDS_API_KEY: 'test-odds-key',
+      CACHE: makeFakeCache({ 'odds:lastFetchedAt': Date.now() - 1 * HOUR }), // below both the 3h and 12h thresholds
+    })
+    mockFetchForOdds({ scheduleGames: [scheduleGameIn(3)], scoreboardGames: [] })
+
+    await poll(env, makeCtx())
+
+    expect(globalThis.fetch.mock.calls.some(([u]) => String(u).includes('the-odds-api.com'))).toBe(false)
+  })
+
+  it('fetches again when a game is starting within the pregame window, even though the 12h safety net has not elapsed', async () => {
+    const soonGame = {
+      id: 2, gameState: 'FUT',
+      startTimeUTC: new Date(Date.now() + 2 * HOUR).toISOString(),
+      homeTeam: { abbrev: 'CAR' }, awayTeam: { abbrev: 'BOS' },
+    }
+    const env = makeEnv({
+      ODDS_API_KEY: 'test-odds-key',
+      // 4h ago -- past the 3h pregame threshold, well under the 12h safety net,
+      // so only the pregame-proximity path (not the safety net) explains a fetch here.
+      CACHE: makeFakeCache({ 'odds:lastFetchedAt': Date.now() - 4 * HOUR }),
+    })
+    mockFetchForOdds({ scheduleGames: [scheduleGameIn(3)], scoreboardGames: [soonGame], oddsResponse: [] })
+
+    await poll(env, makeCtx())
+
+    expect(globalThis.fetch.mock.calls.some(([u]) => String(u).includes('the-odds-api.com'))).toBe(true)
+  })
+
+  it('backs off for 6h on a 401 without persisting anything', async () => {
+    const env = makeEnv({ ODDS_API_KEY: 'test-odds-key' })
+    mockFetchForOdds({ scheduleGames: [scheduleGameIn(3)], scoreboardGames: [], oddsStatus: 401 })
+
+    await poll(env, makeCtx())
+
+    expect(JSON.parse(await env.CACHE.get('odds:backoff'))).toBe(1)
+    expect(globalThis.fetch.mock.calls.some(([u]) => String(u).includes('/rest/v1/nhl_odds'))).toBe(false)
+  })
+})
+
+describe('GET /nhl/odds', () => {
+  it('reads from the persisted nhl_odds table, already flattened by team abbr', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { home_abbr: 'CAR', away_abbr: 'BOS', commence_time: '2026-10-05T23:00:00Z', moneyline_home: -150, moneyline_away: 130, book: 'DraftKings' },
+      ],
+    })
+
+    const res = await handleNHL(makeRequest('/nhl/odds'), env, makeCtx(), new URL('https://example.com/nhl/odds'))
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toEqual([
+      { home_abbr: 'CAR', away_abbr: 'BOS', commence_time: '2026-10-05T23:00:00Z', moneyline_home: -150, moneyline_away: 130, book: 'DraftKings' },
+    ])
+  })
+
+  it('serves from the 5min edge cache without re-querying Supabase', async () => {
+    const cached = [{ home_abbr: 'CAR', away_abbr: 'BOS', commence_time: '2026-10-05T23:00:00Z', moneyline_home: -150, moneyline_away: 130, book: 'DraftKings' }]
+    const env = makeEnv({ CACHE: makeFakeCache({ 'nhl:odds:20252026': cached }) })
+    globalThis.fetch = vi.fn()
+
+    const res = await handleNHL(makeRequest('/nhl/odds'), env, makeCtx(), new URL('https://example.com/nhl/odds'))
+
+    expect(await res.json()).toEqual(cached)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('returns an empty array rather than erroring when the Supabase query fails', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await handleNHL(makeRequest('/nhl/odds'), env, makeCtx(), new URL('https://example.com/nhl/odds'))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([])
+  })
+})

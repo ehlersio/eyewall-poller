@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, parseRSS, parseESPN, parseAtom, parseReddit, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseReddit, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit } from './shared.js';
 import { resolveNHLSeason } from './seasons.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
@@ -1430,11 +1430,82 @@ async function fetchNews(env, teamAbbr = TEAM_ABBR) {
   return deduped;
 }
 
-// fetchOdds() function
-async function fetchOdds(env) {
-  if (!env.ODDS_API_KEY) return; // silently skip if key not configured
+// ── Odds Persistence Writer (2026-07) ──────────────────────────
+// See ODDS_PERSISTENCE_WRITER_SCOPE.md for the full design. Replaces the
+// old odds:nhl KV write (confirmed dead -- nothing ever read it back,
+// grepped across all three repos before removing it here) with a
+// Supabase-persisted table serving both live frontend display and future
+// backtests. Reuses fetchOdds()'s existing 7-day-window season gate and
+// 401/429 backoff unchanged -- both already did exactly what this needed.
 
-  const kvKey = 'odds:nhl';
+// Full team display name (lowercased) -> abbr, built once from
+// TEAM_CONFIGS -- needed because the Odds API identifies teams by name
+// ("Carolina Hurricanes"), not abbreviation, and this has to resolve all
+// 32 teams, not just this app's own default team.
+const TEAM_NAME_TO_ABBR = Object.fromEntries(
+  Object.values(TEAM_CONFIGS).map(t => [t.displayName.toLowerCase(), t.abbr])
+);
+
+function matchOddsToTeams(oddsEntry) {
+  const home = TEAM_NAME_TO_ABBR[oddsEntry.home_team?.toLowerCase()];
+  const away = TEAM_NAME_TO_ABBR[oddsEntry.away_team?.toLowerCase()];
+  return (home && away) ? { home, away } : null;
+}
+
+// Same bookmaker-preference order as the frontend's extractMoneyline()
+// (nhlApi.js), generalized to any team pair instead of "car vs. opponent".
+function extractMoneylineForGame(oddsEntry, homeAbbr, awayAbbr) {
+  if (!oddsEntry?.bookmakers?.length) return null;
+  const preferred = ['draftkings', 'fanduel', 'betmgm', 'williamhill'];
+  const book = oddsEntry.bookmakers.find(b => preferred.includes(b.key)) || oddsEntry.bookmakers[0];
+  const market = book.markets?.find(m => m.key === 'h2h');
+  if (!market?.outcomes?.length) return null;
+
+  const homeName = TEAM_CONFIGS[homeAbbr]?.displayName?.toLowerCase();
+  const awayName = TEAM_CONFIGS[awayAbbr]?.displayName?.toLowerCase();
+  const homeOut = market.outcomes.find(o => o.name?.toLowerCase() === homeName);
+  const awayOut = market.outcomes.find(o => o.name?.toLowerCase() === awayName);
+  if (!homeOut || !awayOut) return null;
+
+  return { moneylineHome: homeOut.price, moneylineAway: awayOut.price, book: book.title || book.key };
+}
+
+// home_abbr/away_abbr/commence_time, not game_id -- resolving a definitive
+// game_id here would need a genuinely multi-day, all-32-teams schedule
+// fetch (the /score/now scoreboard this reuses for the pregame-proximity
+// check below is today-only). Deferred to read time instead (join against
+// game_log by date + team abbrevs) -- simpler, no new multi-day fetch
+// added to the write path. See docs/nhl_odds_table.sql.
+async function persistOddsToSupabase(oddsData, season) {
+  const rows = [];
+  for (const entry of oddsData) {
+    const teams = matchOddsToTeams(entry);
+    if (!teams) continue;
+    const ml = extractMoneylineForGame(entry, teams.home, teams.away);
+    if (!ml) continue;
+    rows.push({
+      season,
+      home_abbr: teams.home,
+      away_abbr: teams.away,
+      commence_time: entry.commence_time,
+      moneyline_home: ml.moneylineHome,
+      moneyline_away: ml.moneylineAway,
+      book: ml.book,
+      fetched_at: new Date().toISOString(),
+    });
+  }
+  if (!rows.length) return 0;
+  await sbUpsert('nhl_odds', rows, 'season,home_abbr,away_abbr,commence_time');
+  return rows.length;
+}
+
+// todaysGames: the league-wide /score/now scoreboard poll() already
+// fetches every cycle (see below) -- reused here for the pregame-proximity
+// check rather than re-fetching, and deliberately NOT the single-team
+// `schedule` used for the 7-day gate below, since this needs to catch
+// ANY team's game being close, not just this app's default team.
+async function fetchOdds(env, todaysGames) {
+  if (!env.ODDS_API_KEY) return; // silently skip if key not configured
 
   // Skip entirely when there are no upcoming games within 7 days.
   // Avoids burning API quota during offseason and prevents 401 spam
@@ -1457,10 +1528,25 @@ async function fetchOdds(env) {
   const backoff = await kvGet(env, 'odds:backoff');
   if (backoff) return; // silently skip during backoff window
 
-  // Check if still fresh — KV TTL handles expiry, but avoid redundant upstream calls
-  // during the same poll cycle if KV already has data
-  const existing = await kvGet(env, kvKey);
-  if (existing) return; // still valid, nothing to do
+  // Throttle: a safety-net fetch at least once every ~12h, plus an extra
+  // fetch when any NHL game is starting within the next ~3h -- fresher
+  // lines close to puck-drop, when they're most informative. A blind
+  // "widen the TTL to 12h" would only give ~2 fetches/day at arbitrary,
+  // wall-clock-drifting times with no guarantee either one lands near an
+  // actual game -- this checks real game start times for the second one
+  // instead of just counting hours since the last fetch.
+  const SAFETY_NET_HOURS = 12;
+  const PREGAME_WINDOW_HOURS = 3;
+  const lastFetchedAt = await kvGet(env, 'odds:lastFetchedAt');
+  const hoursSinceLastFetch = lastFetchedAt ? (now - lastFetchedAt) / 3_600_000 : Infinity;
+  const pregameWindowMs = PREGAME_WINDOW_HOURS * 3_600_000;
+  const hasGameSoon = (todaysGames || []).some(g => {
+    const t = new Date(g.startTimeUTC || g.gameDate).getTime();
+    return t > now && t < now + pregameWindowMs;
+  });
+  const dueForSafetyNet   = hoursSinceLastFetch >= SAFETY_NET_HOURS;
+  const dueForPregameFetch = hasGameSoon && hoursSinceLastFetch >= PREGAME_WINDOW_HOURS;
+  if (!dueForSafetyNet && !dueForPregameFetch) return; // still fresh enough
 
   try {
     const url = `https://api.the-odds-api.com/v4/sports/icehockey_nhl/odds/` +
@@ -1477,9 +1563,9 @@ async function fetchOdds(env) {
       return;
     }
     const data = await res.json();
-    // 5 min TTL — pre-game odds don't change faster than that
-    await kvPut(env, kvKey, data, 5 * 60);
-    console.log(`Odds: cached ${data.length} games`);
+    await kvPut(env, 'odds:lastFetchedAt', now, SAFETY_NET_HOURS * 3600);
+    const persisted = await persistOddsToSupabase(data, season);
+    console.log(`Odds: persisted ${persisted} of ${data.length} games (${dueForPregameFetch ? 'pregame-proximity' : 'safety-net'} fetch)`);
   } catch (err) {
     console.warn('Odds fetch error:', err.message);
   }
@@ -1593,8 +1679,9 @@ export async function poll(env, _ctx) {
   ).catch(() => null);
   if (teamSummary) await kvPut(env, `teamstats:${TEAM_ABBR}`, teamSummary?.data?.[0] || null, 600);
 
-  // 6. Odds (5min TTL — Worker fetches once, all users read from KV)
-  await fetchOdds(env).catch(e => console.warn('Odds fetch failed:', e.message));
+  // 6. Odds — throttled safety-net (~12h) + pregame-proximity (~3h) fetch,
+  // persisted to Supabase (nhl_odds); see fetchOdds()'s own comments.
+  await fetchOdds(env, todaysGames).catch(e => console.warn('Odds fetch failed:', e.message));
 
   // 7. News (every 30min — TTL handles rate limiting)
   const newsAge = await env.CACHE.getWithMetadata(`news:${TEAM_ABBR}`);
@@ -1736,6 +1823,32 @@ export async function handleNHL(request, env, ctx, url) {
   // the frontend keeps its existing row-shaping/transform logic and just
   // fetches from here instead of Supabase directly.
   // ══════════════════════════════════════════════════════════════════════
+
+  // GET /nhl/odds — moneyline odds from the persisted nhl_odds table
+  // (Odds Persistence Writer), replacing the frontend's old direct-to-
+  // Odds-API call. Already flattened/matched by team abbr server-side
+  // (see fetchOdds()/persistOddsToSupabase() above) — no team-name fuzzy
+  // matching needed client-side anymore. Brief edge cache since the
+  // underlying data only changes on fetchOdds()'s own ~12h/~3h cadence.
+  if (url.pathname === '/nhl/odds') {
+    const season = await resolveNHLSeason(env);
+    const kvKey  = `nhl:odds:${season}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    try {
+      const rows = await sbRows(
+        `nhl_odds?season=eq.${season}&commence_time=gte.${new Date().toISOString()}` +
+        `&select=home_abbr,away_abbr,commence_time,moneyline_home,moneyline_away,book` +
+        `&order=commence_time.asc`
+      );
+      await kvPut(env, kvKey, rows, 300); // 5min — matches the old odds:nhl KV TTL this replaces
+      return json(rows);
+    } catch (e) {
+      console.error('nhl_odds fetch failed:', e);
+      return json([]);
+    }
+  }
 
   if (url.pathname === '/player-analytics') {
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
