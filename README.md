@@ -199,6 +199,7 @@ Key patterns:
 | `GET` | `/pwhl/standings?season=` | League standings + L10/streak |
 | `GET` | `/pwhl/players?teamId=&season=` | Roster, skater + goalie stats |
 | `GET` | `/pwhl/shots?teamId=&season=` | Shot events for team heat map |
+| `GET` | `/pwhl/team-season-summary?teamId=&season=` | Season-aggregate SOG/blocks/hits/penalties/faceoffs (car vs. opp) + PP%/PK% for the Shot Map's "All N" summary cards (Session 80). Counts only, aggregated server-side against `pwhl_shot_events`/`pwhl_pbp_events` for the team's own completed games — not raw rows like `/pwhl/shots` |
 | `GET` | `/pwhl/schedule?teamId=&season=` | Team schedule |
 | `GET` | `/pwhl/roster?teamId=` | Bare roster (name + jersey) |
 | `GET` | `/pwhl/game-box?gameId=` | Per-player box score (skaters + goalies) for a completed game — box-score popup (Session 50) |
