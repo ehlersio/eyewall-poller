@@ -137,18 +137,28 @@ function priorSeason(season) {
 // curve; these are its (x, y) breakpoints. Only ever applied to the
 // in-season branch — the true-preseason regime uses continuity dampening
 // instead (see COMBINED_CALIBRATION_IMPLEMENTATION.md's "switch, don't
-// stack" resolution). Refit periodically alongside the existing quarterly
-// RAPM validation cadence, not on every deploy (open question, not decided).
+// stack" resolution). Refit cadence tied to the quarterly RAPM validation
+// review (see ISOTONIC_RECALIBRATION_CADENCE.md) — a validated check each
+// review, not an automatic refit.
+//
+// Refit 2026-07-24: the original fit (2026-07-23) predates the pp_goals/
+// pp_opps situationCode-misindexing fix (PP_GOALS_FULL_FIX.md, pipeline
+// PR #53) by ~8 hours. backtest_predictions.py's standings_inputs_asof()
+// sums those same game_log columns into pp_pct, one of the scorecard's
+// five inputs — so the original curve was fit on a raw score distorted by
+// that bug (home teams' pp_pct forced toward 0 in nearly every game, a
+// directional bias, not noise) across both the 2024-25 fit set and the
+// 2025-26 holdout. Re-fit against the now-corrected game_log; see
+// eyewall-pipeline/docs/isotonic_recalibration_recheck_results.md.
 const ISOTONIC_X = [
-  0.0, 0.045454545454545456, 0.36, 0.375, 0.5454545454545454, 0.5517241379310345,
-  0.7083333333333334, 0.7142857142857143, 0.8095238095238094, 0.8108108108108107,
-  0.8666666666666667, 0.8709677419354839, 0.8823529411764706,
+  0.0, 0.045454545454545456, 0.08333333333333334, 0.08571428571428572, 0.16, 0.16666666666666669,
+  0.48387096774193555, 0.5, 0.7307692307692308, 0.7391304347826086, 0.76, 0.7666666666666666,
+  0.896551724137931, 0.9, 1.0,
 ];
 const ISOTONIC_Y = [
-  0.4309623430962343, 0.5273311897106109, 0.5273311897106109, 0.562874251497006,
-  0.562874251497006, 0.6341463414634146, 0.6341463414634146, 0.6641221374045801,
-  0.6641221374045801, 0.6776315789473685, 0.6776315789473685, 0.7023809523809523,
-  0.7023809523809523,
+  0.41420118343195267, 0.4375, 0.4375, 0.5034965034965035, 0.5034965034965035, 0.5236220472440944,
+  0.5236220472440944, 0.5967741935483871, 0.5967741935483871, 0.625, 0.625, 0.6644295302013423,
+  0.6644295302013423, 0.6888888888888889, 0.6888888888888889,
 ];
 
 // x is the raw scorecard fraction (0-1, i.e. carScore/total before
