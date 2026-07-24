@@ -1281,10 +1281,12 @@ describe('GET /prediction/analyze', () => {
     expect(body.corsiCaveat).toMatch(/shots-on-goal share only/i)
     // CAR wins every scorecard factor here -> raw fraction is exactly 1.0
     // (would have been carWinPct: 100 pre-calibration). Isotonic clips
-    // x=1.0 to the fitted curve's top y-threshold (0.70238...), landing
-    // on 70 -- a concrete demonstration that the calibration fix is wired
-    // in, not just present in the source.
-    expect(body.carWinPct).toBe(70)
+    // x=1.0 to the fitted curve's top y-threshold (0.68888..., refit
+    // 2026-07-24 against corrected game_log pp_goals/pp_opps -- see
+    // ISOTONIC_RECALIBRATION_CADENCE.md), landing on 69 -- a concrete
+    // demonstration that the calibration fix is wired in, not just
+    // present in the source.
+    expect(body.carWinPct).toBe(69)
     expect(body.regime).toBe('in-season')
     expect(body.correction).toBe('isotonic-calibrated')
 
