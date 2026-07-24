@@ -92,6 +92,122 @@ describe('GET /pwhl/standings', () => {
   })
 })
 
+describe('GET /pwhl/team-season-summary', () => {
+  it('400s when teamId is missing', async () => {
+    const env = makeEnv()
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-season-summary?season=8'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-season-summary?season=8')
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('serves from KV cache without hitting Supabase', async () => {
+    const cached = { teamId: 1, season: 8, gamesPlayed: 1, sog: { car: 1, opp: 0 } }
+    const env = makeEnv({ CACHE: { async get() { return JSON.stringify(cached) }, async put() {} } })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-season-summary?teamId=1&season=8'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-season-summary?teamId=1&season=8')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cached)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('returns a zeroed response when the team has no completed games this season', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-season-summary?teamId=1&season=8'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-season-summary?teamId=1&season=8')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({ teamId: 1, season: 8, gamesPlayed: 0, sog: { car: 0, opp: 0 } })
+  })
+
+  // team_id=1 is "car" throughout this test; team_id=2 is "opp".
+  it('aggregates SOG/blocks/hits/penalties/faceoffs by team_id across the team\'s own games, plus season PP%/PK%', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      if (u.includes('pwhl_game_log')) {
+        return Promise.resolve({ ok: true, json: async () => [{ game_id: 100 }, { game_id: 101 }] })
+      }
+      if (u.includes('pwhl_shot_events')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            { team_id: 1, event_type: 'shot' },       // car SOG
+            { team_id: 1, event_type: 'goal' },        // car SOG
+            { team_id: 2, event_type: 'shot' },        // opp SOG
+            { team_id: 1, event_type: 'blocked_shot' }, // car's own shot blocked
+            { team_id: 2, event_type: 'blocked_shot' }, // opp's own shot blocked
+            { team_id: 2, event_type: 'blocked_shot' }, // opp's own shot blocked
+          ],
+        })
+      }
+      if (u.includes('pwhl_pbp_events')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            { team_id: 1, event_type: 'hit' },
+            { team_id: 1, event_type: 'hit' },
+            { team_id: 2, event_type: 'hit' },
+            { team_id: 2, event_type: 'penalty' },
+            { team_id: 1, event_type: 'faceoff' }, // car won
+            { team_id: 1, event_type: 'faceoff' }, // car won
+            { team_id: 2, event_type: 'faceoff' }, // opp won
+          ],
+        })
+      }
+      if (u.includes('pwhl_team_seasons')) {
+        return Promise.resolve({ ok: true, json: async () => [{ pp_pct: 21.5, pk_pct: 81.2 }] })
+      }
+      return Promise.resolve({ ok: false, status: 500 })
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-season-summary?teamId=1&season=8'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-season-summary?teamId=1&season=8')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toEqual({
+      teamId: 1, season: 8, gamesPlayed: 2,
+      sog: { car: 2, opp: 1 },
+      blocked: { car: 1, opp: 2 },
+      hits: { car: 2, opp: 1 },
+      penalties: { car: 0, opp: 1 },
+      faceoff: { car: 2, opp: 1, pct: (2 / 3) * 100 },
+      ppPct: 21.5, pkPct: 81.2,
+    })
+  })
+
+  it('502s when the shot_events fetch fails', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      if (u.includes('pwhl_game_log')) {
+        return Promise.resolve({ ok: true, json: async () => [{ game_id: 100 }] })
+      }
+      return Promise.resolve({ ok: false, status: 503 })
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-season-summary?teamId=1&season=8'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-season-summary?teamId=1&season=8')
+    )
+
+    expect(res.status).toBe(502)
+  })
+})
+
 describe('GET /pwhl/team-seasons/compare', () => {
   it('400s when teamId or seasons is missing', async () => {
     const env = makeEnv()

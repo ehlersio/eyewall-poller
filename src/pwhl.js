@@ -648,6 +648,129 @@ export async function handlePWHL(request, env, ctx, url) {
     return json(allRows);
   }
 
+  // GET /pwhl/team-season-summary?teamId=1&season=8
+  // Season-aggregate SOG/Blocks/Hits/Penalties/FO% for the Shot Map's
+  // "All N" summary cards -- counts only (aggregated here, not raw rows),
+  // since the frontend only needs totals for this view, not per-shot
+  // coordinates the way /pwhl/shots's rink-dot consumers do.
+  //
+  // /pwhl/shots (above) only ever returns the requested team's own shot
+  // rows (team_id=eq.), which is enough for that route's existing rink-dot
+  // consumers but can't answer "how many shots did opponents take against
+  // this team all season" -- there's no single "the opponent" for a whole
+  // season, only "whichever team we played in each specific game." Same
+  // problem NHL's /nhl/shots solves by resolving the team's own completed
+  // game_ids first, then querying by game_id IN (...) instead of by team
+  // -- that pulls both sides' rows for exactly the games this team played,
+  // letting team_id on each row split "us" from "them" per game. Mirrored
+  // here against pwhl_shot_events and pwhl_pbp_events.
+  //
+  // pwhl_pbp_events' faceoff rows store the WINNING team's id (see
+  // pwhl_pbp_events.py) -- car/opp faceoff counts below are win counts,
+  // not attempts, same convention ShotMapView.jsx's per-game faceoff card
+  // already uses.
+  if (url.pathname === '/pwhl/team-season-summary') {
+    const season = await seasonParam(url, env);
+    const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+    if (!teamId) return new Response(JSON.stringify({ error: 'teamId param required' }), { status: 400, headers: corsHeaders() });
+    const kvKey  = `pwhl:team-season-summary:${teamId}:${season}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+
+    const gameRes = await fetch(
+      `${SB_URL}/rest/v1/pwhl_game_log?season_id=eq.${season}&game_state=eq.Final&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&select=game_id`,
+      { headers: sbH }
+    );
+    if (!gameRes.ok) return new Response(JSON.stringify({ error: `Supabase ${gameRes.status}` }), { status: 502, headers: corsHeaders() });
+    const gameIds = (await gameRes.json()).map(g => g.game_id);
+
+    const empty = {
+      teamId, season, gamesPlayed: gameIds.length,
+      sog: { car: 0, opp: 0 }, blocked: { car: 0, opp: 0 },
+      hits: { car: 0, opp: 0 }, penalties: { car: 0, opp: 0 },
+      faceoff: { car: 0, opp: 0, pct: null },
+      ppPct: null, pkPct: null,
+    };
+    if (!gameIds.length) {
+      await kvPut(env, kvKey, empty, 3600);
+      return json(empty);
+    }
+
+    // Paginated fetch — aggregated into counters below rather than
+    // returned as raw rows (a full season can be 2000+ shot/pbp rows).
+    async function fetchAndCount(table, select, tally) {
+      const PAGE = 1000;
+      let offset = 0;
+      while (true) {
+        const r = await fetch(
+          `${SB_URL}/rest/v1/${table}?game_id=in.(${gameIds.join(',')})&select=${select}`,
+          {
+            headers: {
+              ...sbH,
+              'Range':      `${offset}-${offset + PAGE - 1}`,
+              'Range-Unit': 'items',
+              'Prefer':     'count=none',
+            },
+          }
+        );
+        if (!r.ok) throw new Error(`Supabase ${r.status} (${table})`);
+        const rows = await r.json();
+        rows.forEach(tally);
+        if (rows.length < PAGE) break;
+        offset += PAGE;
+      }
+    }
+
+    let sogCar = 0, sogOpp = 0, blkCar = 0, blkOpp = 0;
+    let hitCar = 0, hitOpp = 0, penCar = 0, penOpp = 0, foCar = 0, foOpp = 0;
+    try {
+      await fetchAndCount('pwhl_shot_events', 'team_id,event_type', row => {
+        const isCar = row.team_id === teamId;
+        if (row.event_type === 'shot' || row.event_type === 'goal') { isCar ? sogCar++ : sogOpp++; }
+        // team_id on a blocked_shot row is the shooter's team (same as every
+        // other event_type here) -- "car" blocks = car's OWN shots that got
+        // blocked, matching PWHLShotMapView.jsx's existing per-game
+        // shotStats.blocks (ourShotEvents.filter('blocked-shot'), taken at
+        // face value, no shooter/blocker inversion). Do not "fix" this to
+        // NHL's inverted blocker-credit convention -- it would flip car/opp
+        // relative to what the per-game view already shows for the same team.
+        else if (row.event_type === 'blocked_shot') { isCar ? blkCar++ : blkOpp++; }
+      });
+      await fetchAndCount('pwhl_pbp_events', 'team_id,event_type', row => {
+        const isCar = row.team_id === teamId;
+        if (row.event_type === 'hit') { isCar ? hitCar++ : hitOpp++; }
+        else if (row.event_type === 'penalty') { isCar ? penCar++ : penOpp++; }
+        else if (row.event_type === 'faceoff') { isCar ? foCar++ : foOpp++; } // team_id = winner
+      });
+    } catch (e) {
+      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    // Season PP%/PK% — already computed and stored, same source /pwhl/standings reads.
+    const tsRes = await fetch(
+      `${SB_URL}/rest/v1/pwhl_team_seasons?team_id=eq.${teamId}&season_id=eq.${season}&select=pp_pct,pk_pct`,
+      { headers: sbH }
+    );
+    const tsRow = tsRes.ok ? (await tsRes.json())[0] : null;
+
+    const totalFO = foCar + foOpp;
+    const data = {
+      teamId, season, gamesPlayed: gameIds.length,
+      sog: { car: sogCar, opp: sogOpp },
+      blocked: { car: blkCar, opp: blkOpp },
+      hits: { car: hitCar, opp: hitOpp },
+      penalties: { car: penCar, opp: penOpp },
+      faceoff: { car: foCar, opp: foOpp, pct: totalFO > 0 ? (foCar / totalFO * 100) : null },
+      ppPct: tsRow?.pp_pct ?? null,
+      pkPct: tsRow?.pk_pct ?? null,
+    };
+    await kvPut(env, kvKey, data, 3600);
+    console.log(`PWHL team-season-summary: teamId=${teamId} season=${season} games=${gameIds.length}`);
+    return json(data);
+  }
+
   // GET /pwhl/schedule?teamId=1&season=8
   // game_log has home_team_id / away_team_id — filter both sides with OR
   if (url.pathname === '/pwhl/schedule') {
