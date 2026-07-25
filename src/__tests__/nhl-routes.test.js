@@ -344,6 +344,29 @@ describe('GET /team-seasons', () => {
     expect(fetchedUrl).not.toContain('clinch_indicator')
   })
 
+  it('selects hits/penalties season totals (Session 82 — Shot Map "All N" cards)', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { team: 'CAR', xgf_pct: 0.52, roster_war_score: 12.3, games_played: 60, magic_number: 4, tragic_number: 40, clinched: false, eliminated: false, hits: 1450, penalties: 210 },
+      ],
+    })
+
+    const res = await handleNHL(
+      makeRequest('/team-seasons?season=20252026'), env, makeCtx(),
+      new URL('https://example.com/team-seasons?season=20252026')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body[0]).toMatchObject({ team: 'CAR', hits: 1450, penalties: 210 })
+
+    const fetchedUrl = String(globalThis.fetch.mock.calls[0][0])
+    expect(fetchedUrl).toContain('hits')
+    expect(fetchedUrl).toContain('penalties')
+  })
+
   it('serves from KV cache without hitting Supabase', async () => {
     const cachedRows = [{ team: 'CAR', magic_number: 2 }]
     const env = makeEnv({

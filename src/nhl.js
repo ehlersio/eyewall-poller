@@ -2172,12 +2172,20 @@ export async function handleNHL(request, env, ctx, url) {
     // live indicator is populated for a team it wins outright; these
     // computed numbers are a pre-clinch/pre-elimination estimate only, and
     // that precedence is a frontend-merge concern, not this route's.
+    // hits/penalties (Session 82) -- season totals from nhl_stats.py's
+    // game_log rollup (PR #56), for the Shot Map "All N" cards. Selected
+    // team's own season total only, no opponent aggregate -- matches how
+    // ShotMapView.jsx's FO%/PP%/PK% cards already drop the opponent
+    // comparison in All-N mode (see that PR/eyewallanalytics#64). An
+    // opponent-side total would need a game_id join against every team this
+    // one played, same as /pwhl/team-season-summary does -- deliberately
+    // out of scope here.
     let rows;
     try {
       rows = await sbRows(
         `team_seasons?season=eq.${season}&game_type=eq.2` +
         `&select=team,xgf_pct,roster_war_score,games_played,` +
-        `magic_number,tragic_number,clinched,eliminated&limit=32`
+        `magic_number,tragic_number,clinched,eliminated,hits,penalties&limit=32`
       );
     } catch (e) {
       return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
