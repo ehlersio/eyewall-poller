@@ -1874,7 +1874,32 @@ export async function handleNHL(request, env, ctx, url) {
       // Session 56 -- both null below eyewall-pipeline's moneypuck.py
       // RESULTS_VS_PROCESS_MIN_GP (25 GP) guardrail; the frontend should
       // treat "null" as "not enough games yet," not re-derive a GP number.
-      'on_ice_gf_pct,results_vs_process_diff';
+      'on_ice_gf_pct,results_vs_process_diff,' +
+      // PLAYER_CARD_PERCENTILE_DISPLAY_BRIEF -- 11 new PR #56 league-wide
+      // percentile categories (raw box-score stats, ranked directly rather
+      // than a per-60 rate) plus conference/division-scoped variants for
+      // all 16 tile-facing categories: pp/goals/a1/penalties/finishing
+      // (already selected above, tile-mapped via STAT_PCT_MAP) plus these
+      // 11 new ones. pct_ev_off/pct_ev_def/pct_pk/pct_competition/
+      // pct_teammates are radar-only (no backing tile) -- deliberately no
+      // conf/div added for those, nothing would consume it.
+      'pct_games_played,pct_plus_minus,pct_sh_goals,pct_gw_goals,pct_shots,' +
+      'pct_toi_per_game,pct_faceoff_win_pct,pct_hits,pct_blocked_shots,' +
+      'pct_takeaways,pct_giveaways,' +
+      'pct_goals_conf,pct_goals_div,pct_a1_conf,pct_a1_div,' +
+      'pct_pp_conf,pct_pp_div,pct_penalties_conf,pct_penalties_div,' +
+      'pct_finishing_conf,pct_finishing_div,' +
+      'pct_games_played_conf,pct_games_played_div,' +
+      'pct_plus_minus_conf,pct_plus_minus_div,' +
+      'pct_sh_goals_conf,pct_sh_goals_div,' +
+      'pct_gw_goals_conf,pct_gw_goals_div,' +
+      'pct_shots_conf,pct_shots_div,' +
+      'pct_toi_per_game_conf,pct_toi_per_game_div,' +
+      'pct_faceoff_win_pct_conf,pct_faceoff_win_pct_div,' +
+      'pct_hits_conf,pct_hits_div,' +
+      'pct_blocked_shots_conf,pct_blocked_shots_div,' +
+      'pct_takeaways_conf,pct_takeaways_div,' +
+      'pct_giveaways_conf,pct_giveaways_div';
     const DEF_COLS = 'player_id,hits,blocked_shots,takeaways,giveaways';
 
     async function fetchAnalytics(forSeason) {
