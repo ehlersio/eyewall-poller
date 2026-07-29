@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -569,6 +569,51 @@ export async function handlePWHL(request, env, ctx, url) {
 
     await kvPut(env, kvKey, rows, 3600);
     return json(rows);
+  }
+
+  // All-time head-to-head between two teams, across every season on record
+  // (Session 88, Team vs Team Mode 2) -- PWHL analog of NHL's
+  // /team-seasons/head-to-head. Unlike NHL's game_log (one row per team per
+  // game), pwhl_game_log is one row per game with both teams in columns, so
+  // this needs the OR-of-AND home/away filter already established for
+  // single-season PWHL head-to-head elsewhere in this file, just without a
+  // season_id filter so it spans every season. game_state=eq.Final excludes
+  // in-progress/future games, matching this file's other game_log reads.
+  if (url.pathname === '/pwhl/team-seasons/head-to-head') {
+    const teamIds = (url.searchParams.get('teamIds') || '').split(',').map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10));
+    if (teamIds.length !== 2 || teamIds.some(id => !id)) {
+      return new Response(JSON.stringify({ error: 'teamIds (exactly two, comma-separated) are required' }), { status: 400, headers: corsHeaders() });
+    }
+    const [teamA, teamB] = teamIds;
+
+    const kvKey  = `pwhl:team-seasons:head-to-head:${teamIds.slice().sort((a, b) => a - b).join(',')}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+    const res = await fetch(
+      `${SB_URL}/rest/v1/pwhl_game_log?game_state=eq.Final` +
+      `&or=(and(home_team_id.eq.${teamA},away_team_id.eq.${teamB}),and(home_team_id.eq.${teamB},away_team_id.eq.${teamA}))` +
+      `&select=game_id,season_id,game_date,home_team_id,away_team_id,home_score,away_score` +
+      `&order=season_id.asc,game_id.asc`,
+      { headers: sbH }
+    );
+    if (!res.ok) return new Response(JSON.stringify({ error: `Supabase ${res.status}` }), { status: 502, headers: corsHeaders() });
+    const rows = await res.json();
+
+    const payload = buildHeadToHeadPayload(teamA, teamB, rows.map(g => {
+      const aIsHome = g.home_team_id === teamA;
+      const teamAScore = aIsHome ? g.home_score : g.away_score;
+      const teamBScore = aIsHome ? g.away_score : g.home_score;
+      return {
+        gameId: g.game_id, season: g.season_id, gameDate: g.game_date,
+        teamAWon: teamAScore > teamBScore,
+        teamAScore, teamBScore, homeTeam: aIsHome ? teamA : teamB,
+      };
+    }));
+
+    await kvPut(env, kvKey, payload, 3600);
+    return json(payload);
   }
 
   // GET /pwhl/players?teamId=1&season=8

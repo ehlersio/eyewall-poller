@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseReddit, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseReddit, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload } from './shared.js';
 import { resolveNHLSeason } from './seasons.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
@@ -2290,6 +2290,56 @@ export async function handleNHL(request, env, ctx, url) {
 
     await kvPut(env, kvKey, rows, 3600);
     return json(rows);
+  }
+
+  // All-time head-to-head between two teams, across every season on record
+  // (Session 88, Team vs Team Mode 2). game_log is one row per team per
+  // game with an `opponent` column already on it (see nhl_stats.py) --
+  // filtering team=A&opponent=B directly returns every A-vs-B meeting from
+  // A's own perspective, no need to also fetch B's mirrored rows. No
+  // season/game_type filter, deliberately unlike /team-seasons/compare* --
+  // "all meetings across all seasons" includes playoff meetings, and
+  // there's no team_seasons-style uniqueness-key reason to exclude them
+  // here the way Mode 1's box-score comparison did.
+  //
+  // Derived insights are computed here, not left to the frontend, so
+  // there's exactly one definition of "recent window"/"current streak" --
+  // recentWindow deliberately isn't a hardcoded "last 14"; it's
+  // min(10, totalMeetings), reusing this app's existing L10 convention
+  // (Trends tab) rather than inventing a new magic number, and it
+  // naturally collapses to the full history for a pair with few meetings
+  // (e.g. a 2026-27 expansion matchup) instead of claiming a "last 10"
+  // sample that doesn't exist.
+  if (url.pathname === '/team-seasons/head-to-head') {
+    const teams = (url.searchParams.get('teams') || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (teams.length !== 2) {
+      return badRequest('teams (exactly two, comma-separated) are required');
+    }
+    const [teamA, teamB] = teams;
+
+    const kvKey  = `nhl:team-seasons:head-to-head:${teams.slice().sort().join(',')}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let games;
+    try {
+      games = await sbRows(
+        `game_log?team=eq.${teamA}&opponent=eq.${teamB}` +
+        `&select=game_id,season,game_date,team_score,opp_score,home_team` +
+        `&order=season.asc,game_id.asc`
+      );
+    } catch (e) {
+      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    const payload = buildHeadToHeadPayload(teamA, teamB, games.map(g => ({
+      gameId: g.game_id, season: g.season, gameDate: g.game_date,
+      teamAWon: g.team_score > g.opp_score,
+      teamAScore: g.team_score, teamBScore: g.opp_score, homeTeam: g.home_team ? teamA : teamB,
+    })));
+
+    await kvPut(env, kvKey, payload, 3600);
+    return json(payload);
   }
 
   // Serves both getPowerRankingsNarrative (limit=1) and getPowerRankingsHistory

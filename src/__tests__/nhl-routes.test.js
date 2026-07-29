@@ -506,6 +506,92 @@ describe('GET /team-seasons/compare-teams', () => {
   })
 })
 
+describe('GET /team-seasons/head-to-head', () => {
+  it('400s unless exactly two teams are given', async () => {
+    const env = makeEnv()
+    const oneTeam = await handleNHL(
+      makeRequest('/team-seasons/head-to-head?teams=CAR'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/head-to-head?teams=CAR')
+    )
+    expect(oneTeam.status).toBe(400)
+
+    const threeTeams = await handleNHL(
+      makeRequest('/team-seasons/head-to-head?teams=CAR,NYR,BOS'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/head-to-head?teams=CAR,NYR,BOS')
+    )
+    expect(threeTeams.status).toBe(400)
+  })
+
+  it('computes all-time record, recent window, and current streak from team A\'s perspective', async () => {
+    const env = makeEnv()
+    // 5 meetings, chronological -- CAR won games 1,2, lost 3, won 4,5.
+    // Current streak: 2 straight CAR wins (games 4,5). Window is
+    // min(10,5)=5, so recentWindow equals the all-time record here.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { game_id: 1, season: 20232024, game_date: '2023-11-01', team_score: 4, opp_score: 2, home_team: true },
+        { game_id: 2, season: 20232024, game_date: '2024-01-10', team_score: 3, opp_score: 1, home_team: false },
+        { game_id: 3, season: 20242025, game_date: '2024-11-05', team_score: 1, opp_score: 5, home_team: true },
+        { game_id: 4, season: 20252026, game_date: '2025-11-01', team_score: 2, opp_score: 0, home_team: false },
+        { game_id: 5, season: 20252026, game_date: '2026-01-15', team_score: 6, opp_score: 3, home_team: true },
+      ],
+    })
+
+    const res = await handleNHL(
+      makeRequest('/team-seasons/head-to-head?teams=CAR,NYR'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/head-to-head?teams=CAR,NYR')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.teamA).toBe('CAR')
+    expect(body.teamB).toBe('NYR')
+    expect(body.totalMeetings).toBe(5)
+    expect(body.allTimeRecord).toEqual({ teamAWins: 4, teamBWins: 1 })
+    expect(body.recentWindow).toEqual({ size: 5, teamAWins: 4, teamBWins: 1 })
+    expect(body.currentStreak).toEqual({ holder: 'A', count: 2 })
+    expect(body.isThinSample).toBe(false)
+    expect(body.games).toHaveLength(5)
+
+    const fetchedUrl = String(globalThis.fetch.mock.calls[0][0])
+    expect(fetchedUrl).toContain('team=eq.CAR')
+    expect(fetchedUrl).toContain('opponent=eq.NYR')
+    expect(fetchedUrl).not.toContain('game_type=')
+    expect(fetchedUrl).not.toContain('season=eq.')
+  })
+
+  it('flags a thin sample and reports zero meetings without erroring', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    const res = await handleNHL(
+      makeRequest('/team-seasons/head-to-head?teams=DET,SEA'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/head-to-head?teams=DET,SEA')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.totalMeetings).toBe(0)
+    expect(body.currentStreak).toBeNull()
+    expect(body.isThinSample).toBe(false)
+  })
+
+  it('serves from KV cache without hitting Supabase', async () => {
+    const cachedPayload = { teamA: 'CAR', teamB: 'NYR', totalMeetings: 5 }
+    const env = makeEnv({ CACHE: { async get() { return JSON.stringify(cachedPayload) }, async put() {} } })
+
+    const res = await handleNHL(
+      makeRequest('/team-seasons/head-to-head?teams=CAR,NYR'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/head-to-head?teams=CAR,NYR')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cachedPayload)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-shots', () => {
   it('400s when playerId is missing', async () => {
     const env = makeEnv()
