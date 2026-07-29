@@ -336,6 +336,64 @@ describe('GET /pwhl/team-seasons/compare-teams', () => {
   })
 })
 
+describe('GET /pwhl/team-seasons/head-to-head', () => {
+  it('400s unless exactly two teamIds are given', async () => {
+    const env = makeEnv()
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-seasons/head-to-head?teamIds=2'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-seasons/head-to-head?teamIds=2')
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('computes record/streak/window from either home or away perspective', async () => {
+    const env = makeEnv()
+    // team 2 is home in game 1, away in game 2 and 3 -- both orderings
+    // must resolve to team 2's perspective correctly.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { game_id: 101, season_id: 5, game_date: '2024-01-01', home_team_id: 2, away_team_id: 3, home_score: 4, away_score: 2 },
+        { game_id: 102, season_id: 6, game_date: '2025-01-01', home_team_id: 3, away_team_id: 2, home_score: 1, away_score: 3 },
+        { game_id: 103, season_id: 8, game_date: '2026-01-01', home_team_id: 3, away_team_id: 2, home_score: 5, away_score: 2 },
+      ],
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-seasons/head-to-head?teamIds=2,3'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-seasons/head-to-head?teamIds=2,3')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.teamA).toBe(2)
+    expect(body.teamB).toBe(3)
+    expect(body.totalMeetings).toBe(3)
+    expect(body.allTimeRecord).toEqual({ teamAWins: 2, teamBWins: 1 })
+    expect(body.currentStreak).toEqual({ holder: 'B', count: 1 })
+    expect(body.isThinSample).toBe(true)
+
+    const fetchedUrl = String(globalThis.fetch.mock.calls[0][0])
+    expect(fetchedUrl).toContain('game_state=eq.Final')
+    expect(fetchedUrl).toContain('home_team_id.eq.2,away_team_id.eq.3')
+    expect(fetchedUrl).toContain('home_team_id.eq.3,away_team_id.eq.2')
+  })
+
+  it('serves from KV cache without hitting Supabase', async () => {
+    const cachedPayload = { teamA: 2, teamB: 3, totalMeetings: 3 }
+    const env = makeEnv({ CACHE: { async get() { return JSON.stringify(cachedPayload) }, async put() {} } })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-seasons/head-to-head?teamIds=2,3'), env, makeCtx(),
+      new URL('https://example.com/pwhl/team-seasons/head-to-head?teamIds=2,3')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cachedPayload)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /pwhl/game-box', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const cached = { skaters: [{ game_id: 210, player_id: 1, team_id: 1 }], goalies: [] }

@@ -556,3 +556,51 @@ export async function sendPush(sub, payload, env) {
     return 'error';
   }
 }
+
+// Head-to-head derived insights (Session 88, Team vs Team Mode 2) -- shared
+// by nhl.js's /team-seasons/head-to-head and pwhl.js's
+// /pwhl/team-seasons/head-to-head. Each route queries its own league's
+// game_log-shaped table (NHL: one row per team per game; PWHL: one row per
+// game with both teams in columns -- see those routes' own comments) and
+// normalizes to this common per-game shape before calling this function,
+// so the actual record/streak/window math has exactly one definition
+// instead of being duplicated per league.
+//
+// `games` must already be sorted chronologically ascending (oldest first):
+// [{ gameId, season, gameDate, teamAWon, teamAScore, teamBScore, homeTeam }]
+export function buildHeadToHeadPayload(teamA, teamB, games) {
+  const totalMeetings = games.length;
+  const teamAWins = games.filter(g => g.teamAWon).length;
+  const teamBWins = totalMeetings - teamAWins;
+
+  // Recent-window size is deliberately not a fixed "last 14" -- it's
+  // min(10, totalMeetings), reusing this app's existing L10 convention and
+  // naturally collapsing to the pair's full history when they haven't met
+  // many times yet, rather than claiming a "last 10" sample that doesn't exist.
+  const windowSize = Math.min(10, totalMeetings);
+  const recentGames = games.slice(-windowSize);
+  const recentTeamAWins = recentGames.filter(g => g.teamAWon).length;
+  const recentTeamBWins = windowSize - recentTeamAWins;
+
+  // Walk backward from the most recent meeting until the winner changes.
+  let streakHolder = null, streakCount = 0;
+  for (let i = games.length - 1; i >= 0; i--) {
+    const holder = games[i].teamAWon ? 'A' : 'B';
+    if (streakHolder === null) { streakHolder = holder; streakCount = 1; }
+    else if (holder === streakHolder) { streakCount++; }
+    else break;
+  }
+
+  return {
+    teamA, teamB, totalMeetings,
+    allTimeRecord: { teamAWins, teamBWins },
+    recentWindow: { size: windowSize, teamAWins: recentTeamAWins, teamBWins: recentTeamBWins },
+    currentStreak: totalMeetings > 0 ? { holder: streakHolder, count: streakCount } : null,
+    // Session 86 v1 brief's guardrail: don't present a 2-4 game sample as
+    // an established trend. Frontend uses this to qualify its language
+    // rather than stating the record/streak as if it were statistically
+    // meaningful.
+    isThinSample: totalMeetings > 0 && totalMeetings <= 4,
+    games,
+  };
+}
