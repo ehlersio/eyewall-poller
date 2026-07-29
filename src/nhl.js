@@ -2260,6 +2260,38 @@ export async function handleNHL(request, env, ctx, url) {
     return json(rows);
   }
 
+  // Two-team, same-season comparison (Session 86, Team vs Team Mode 1) --
+  // same box-score fields as /team-seasons/compare, keyed by team instead
+  // of season. A missing team's row for the requested season (e.g. an
+  // expansion team, or a season before a team existed) is simply absent
+  // from the response array -- same "gap is the frontend's job to render"
+  // convention as /team-seasons/compare above, not this route's job to
+  // guess at.
+  if (url.pathname === '/team-seasons/compare-teams') {
+    const teams  = (url.searchParams.get('teams') || '').split(',').map(s => s.trim()).filter(Boolean);
+    const season = url.searchParams.get('season');
+    if (teams.length !== 2 || !season) {
+      return badRequest('teams (exactly two, comma-separated) and season are required');
+    }
+
+    const kvKey  = `nhl:team-seasons:compare-teams:${teams.slice().sort().join(',')}:${season}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let rows;
+    try {
+      rows = await sbRows(
+        `team_seasons?team=in.(${teams.join(',')})&season=eq.${season}&game_type=eq.2` +
+        `&select=team,season,games_played,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct`
+      );
+    } catch (e) {
+      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    await kvPut(env, kvKey, rows, 3600);
+    return json(rows);
+  }
+
   // Serves both getPowerRankingsNarrative (limit=1) and getPowerRankingsHistory
   // (limit=28) on the frontend — same table/filter/order, different limit.
   if (url.pathname === '/power-rankings') {

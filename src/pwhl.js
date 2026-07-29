@@ -544,6 +544,33 @@ export async function handlePWHL(request, env, ctx, url) {
     return json(rows);
   }
 
+  // Two-team, same-season comparison (Session 86, Team vs Team Mode 1) --
+  // mirrors NHL's /team-seasons/compare-teams. Same "missing row is the
+  // frontend's gap to render" convention as /pwhl/team-seasons/compare.
+  if (url.pathname === '/pwhl/team-seasons/compare-teams') {
+    const teamIds = (url.searchParams.get('teamIds') || '').split(',').map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10));
+    const season  = url.searchParams.get('season');
+    if (teamIds.length !== 2 || teamIds.some(id => !id) || !season) {
+      return new Response(JSON.stringify({ error: 'teamIds (exactly two, comma-separated) and season are required' }), { status: 400, headers: corsHeaders() });
+    }
+
+    const kvKey  = `pwhl:team-seasons:compare-teams:${teamIds.slice().sort((a, b) => a - b).join(',')}:${season}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+    const res = await fetch(
+      `${SB_URL}/rest/v1/pwhl_team_seasons?team_id=in.(${teamIds.join(',')})&season_id=eq.${season}` +
+      `&select=team_id,season_id,season_type,gp,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct`,
+      { headers: sbH }
+    );
+    if (!res.ok) return new Response(JSON.stringify({ error: `Supabase ${res.status}` }), { status: 502, headers: corsHeaders() });
+    const rows = await res.json();
+
+    await kvPut(env, kvKey, rows, 3600);
+    return json(rows);
+  }
+
   // GET /pwhl/players?teamId=1&season=8
   if (url.pathname === '/pwhl/players') {
     const season = await seasonParam(url, env);

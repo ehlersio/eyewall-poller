@@ -443,6 +443,69 @@ describe('GET /team-seasons/compare', () => {
   })
 })
 
+describe('GET /team-seasons/compare-teams', () => {
+  it('400s unless exactly two teams and a season are given', async () => {
+    const env = makeEnv()
+    const noSeason = await handleNHL(
+      makeRequest('/team-seasons/compare-teams?teams=CAR,NYR'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/compare-teams?teams=CAR,NYR')
+    )
+    expect(noSeason.status).toBe(400)
+
+    const oneTeam = await handleNHL(
+      makeRequest('/team-seasons/compare-teams?teams=CAR&season=20252026'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/compare-teams?teams=CAR&season=20252026')
+    )
+    expect(oneTeam.status).toBe(400)
+
+    const threeTeams = await handleNHL(
+      makeRequest('/team-seasons/compare-teams?teams=CAR,NYR,BOS&season=20252026'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/compare-teams?teams=CAR,NYR,BOS&season=20252026')
+    )
+    expect(threeTeams.status).toBe(400)
+  })
+
+  it('queries both teams for one season, box-score columns only', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { team: 'CAR', season: 20252026, games_played: 82, wins: 45, losses: 30, ot_losses: 7, points: 97, goals_for: 260, goals_against: 230, pp_pct: 22.5, pk_pct: 78.3 },
+        { team: 'NYR', season: 20252026, games_played: 82, wins: 40, losses: 35, ot_losses: 7, points: 87, goals_for: 240, goals_against: 235, pp_pct: 20.1, pk_pct: 79.0 },
+      ],
+    })
+
+    const res = await handleNHL(
+      makeRequest('/team-seasons/compare-teams?teams=CAR,NYR&season=20252026'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/compare-teams?teams=CAR,NYR&season=20252026')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toHaveLength(2)
+    expect(body.map(r => r.team)).toEqual(['CAR', 'NYR'])
+
+    const fetchedUrl = String(globalThis.fetch.mock.calls[0][0])
+    expect(fetchedUrl).toContain('team=in.(CAR,NYR)')
+    expect(fetchedUrl).toContain('season=eq.20252026')
+    expect(fetchedUrl).toContain('game_type=eq.2')
+  })
+
+  it('serves from KV cache without hitting Supabase', async () => {
+    const cachedRows = [{ team: 'CAR', season: 20252026, wins: 45 }]
+    const env = makeEnv({ CACHE: { async get() { return JSON.stringify(cachedRows) }, async put() {} } })
+
+    const res = await handleNHL(
+      makeRequest('/team-seasons/compare-teams?teams=CAR,NYR&season=20252026'), env, makeCtx(),
+      new URL('https://example.com/team-seasons/compare-teams?teams=CAR,NYR&season=20252026')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cachedRows)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-shots', () => {
   it('400s when playerId is missing', async () => {
     const env = makeEnv()
