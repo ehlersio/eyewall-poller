@@ -394,6 +394,69 @@ describe('GET /pwhl/team-seasons/head-to-head', () => {
   })
 })
 
+describe('POST /pwhl/team-seasons/head-to-head/narrative', () => {
+  const basePayload = {
+    teamA: 2, teamB: 3, teamADisplay: 'Minnesota Frost', teamBDisplay: 'Montreal Victoire',
+    totalMeetings: 3,
+    allTimeRecord: { teamAWins: 2, teamBWins: 1 },
+    recentWindow: { size: 3, teamAWins: 2, teamBWins: 1 },
+    currentStreak: { holder: 'B', count: 1 },
+    isThinSample: true,
+  }
+
+  it('returns a null narrative without calling the AI model when there are zero meetings', async () => {
+    const env = makeEnv({ AI: { run: vi.fn() } })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-seasons/head-to-head/narrative', { method: 'POST', body: { ...basePayload, totalMeetings: 0 } }),
+      env, makeCtx(), new URL('https://example.com/pwhl/team-seasons/head-to-head/narrative')
+    )
+    expect(res.status).toBe(200)
+    expect((await res.json()).narrative).toBeNull()
+    expect(env.AI.run).not.toHaveBeenCalled()
+  })
+
+  it('returns an error on invalid JSON body', async () => {
+    const env = makeEnv()
+    const req = new Request('https://example.com/pwhl/team-seasons/head-to-head/narrative', { method: 'POST', body: 'not json', headers: { 'Content-Type': 'application/json' } })
+    const res = await handlePWHL(req, env, makeCtx(), new URL('https://example.com/pwhl/team-seasons/head-to-head/narrative'))
+    expect((await res.json()).error).toMatch(/invalid json/i)
+  })
+
+  it('serves from cache without calling the AI model', async () => {
+    const cached = { narrative: 'cached narrative' }
+    const env = makeEnv({ CACHE: { async get(key) { return key === 'pwhl:h2h-narrative:2,3' ? JSON.stringify(cached) : null }, async put() {} }, AI: { run: vi.fn() } })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-seasons/head-to-head/narrative', { method: 'POST', body: basePayload }),
+      env, makeCtx(), new URL('https://example.com/pwhl/team-seasons/head-to-head/narrative')
+    )
+    expect(await res.json()).toEqual(cached)
+    expect(env.AI.run).not.toHaveBeenCalled()
+  })
+
+  it('generates and caches a narrative, sorting the numeric cache key regardless of team order', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Too early to call a rivalry.' }) } })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/team-seasons/head-to-head/narrative', { method: 'POST', body: { ...basePayload, teamA: 3, teamB: 2 } }),
+      env, makeCtx(), new URL('https://example.com/pwhl/team-seasons/head-to-head/narrative')
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.narrative).toBe('Too early to call a rivalry.')
+    expect(env.AI.run).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(await env.CACHE.get('pwhl:h2h-narrative:2,3')).narrative).toBe('Too early to call a rivalry.')
+  })
+
+  it('includes a thin-sample guardrail note in the prompt when isThinSample is true', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Not much history yet.' }) } })
+    await handlePWHL(
+      makeRequest('/pwhl/team-seasons/head-to-head/narrative', { method: 'POST', body: basePayload }),
+      env, makeCtx(), new URL('https://example.com/pwhl/team-seasons/head-to-head/narrative')
+    )
+    const prompt = env.AI.run.mock.calls[0][1].messages[0].content
+    expect(prompt).toMatch(/too small a sample/i)
+  })
+})
+
 describe('GET /pwhl/game-box', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const cached = { skaters: [{ game_id: 210, player_id: 1, team_id: 1 }], goalies: [] }
