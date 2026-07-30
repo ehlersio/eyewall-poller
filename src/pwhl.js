@@ -616,6 +616,73 @@ export async function handlePWHL(request, env, ctx, url) {
     return json(payload);
   }
 
+  // AI narrative layer on top of the head-to-head stats above (Session 90
+  // fast-follow to Session 88's templated record/window/streak) -- PWHL
+  // analog of nhl.js's /team-seasons/head-to-head/narrative. Client posts
+  // the payload it already fetched from /pwhl/team-seasons/head-to-head
+  // plus display names (this Worker has no PWHL team-name map of its own --
+  // pwhlConfig.js on the frontend does -- same reason /pwhl/summary/narrative
+  // above takes carName/oppName from the client instead of resolving them
+  // server-side). Prompt is hand-rolled here, not shared with nhl.js's
+  // version -- see that route's comment for why.
+  if (url.pathname === '/pwhl/team-seasons/head-to-head/narrative' && request.method === 'POST') {
+    const limited = await checkAiRateLimit(env, request, 'pwhl-h2h-narrative');
+    if (limited) return limited;
+
+    let body;
+    try { body = await request.json(); } catch {
+      return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: corsHeaders() });
+    }
+    const {
+      teamA, teamB, teamADisplay, teamBDisplay,
+      totalMeetings, allTimeRecord, recentWindow, currentStreak, isThinSample,
+    } = body || {};
+    if (!teamA || !teamB || !totalMeetings || !allTimeRecord || !recentWindow) {
+      return json({ narrative: null });
+    }
+
+    const kvKey  = `pwhl:h2h-narrative:${[teamA, teamB].slice().sort((a, b) => a - b).join(',')}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const aDisplay = teamADisplay || String(teamA);
+    const bDisplay = teamBDisplay || String(teamB);
+    const streakLine = currentStreak
+      ? `Current streak: ${currentStreak.holder === 'A' ? aDisplay : bDisplay} has won ${currentStreak.count} straight.`
+      : 'No active streak.';
+    // Thin-sample guardrail -- common for PWHL given expansion teams have
+    // only played a handful of games against some opponents. Same
+    // discipline the templated UI already applies (isThinSample), so the
+    // AI narrative doesn't undo it with confident-sounding prose.
+    const thinSampleNote = isThinSample
+      ? `\nIMPORTANT: Only ${totalMeetings} meeting${totalMeetings === 1 ? '' : 's'} exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.`
+      : '';
+
+    const prompt = `You are Sticks, EyeWall's hockey analyst. Write a punchy 2-3 sentence head-to-head summary for ${aDisplay} vs ${bDisplay}.
+
+All-time record (since 2023-24): ${aDisplay} ${allTimeRecord.teamAWins}-${allTimeRecord.teamBWins} ${bDisplay}, across ${totalMeetings} meeting${totalMeetings === 1 ? '' : 's'}.
+Last ${recentWindow.size}: ${aDisplay} ${recentWindow.teamAWins}-${recentWindow.teamBWins} ${bDisplay}.
+${streakLine}
+${thinSampleNote}
+Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.`;
+
+    try {
+      const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+        messages:   [{ role: 'user', content: prompt }],
+        max_tokens: 100,
+      });
+      const narrative = (aiResponse.response || '').trim();
+      if (!narrative) return json({ narrative: null });
+
+      const result = { narrative };
+      await kvPut(env, kvKey, result, 24 * 3600);
+      return json(result);
+    } catch (e) {
+      console.error('[PWHL] head-to-head narrative AI error:', e);
+      return new Response(JSON.stringify({ error: 'AI generation failed' }), { status: 502, headers: corsHeaders() });
+    }
+  }
+
   // GET /pwhl/players?teamId=1&season=8
   if (url.pathname === '/pwhl/players') {
     const season = await seasonParam(url, env);

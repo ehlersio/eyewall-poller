@@ -74,8 +74,8 @@ npm run test    # or: npx vitest run
 Test files:
 - `src/__tests__/seasons.test.js` — `seasons.js`'s own resolution logic. Covers: the manual override, KV cache hits, the "reject a zero-games-played candidate" fallback, the "reject a hidden `current_season_id`" fallback, and — the two tests that actually matter most — a regression test asserting `feed=statviewfeed` (not `feed=modulekit`) gets called, and a fixture built from the real 2026-07-05 production bootstrap payload confirming resolution picks season 8 (regular) over season 9 (playoffs) even though 9 is more recent by date. Both of those fixtures exist because they're exactly the two real bugs that shipped to production before being caught.
 - `src/__tests__/worker-routes.test.js` — the dispatcher (`/config/seasons`, `/config/seasons/pwhl-types`, `/pwhl/*` vs. everything-else routing).
-- `src/__tests__/nhl-routes.test.js` — `handleNHL`'s routes: a representative slice of read-proxy routes, all `POLL_SECRET`-gated mutating/ingest routes (asserting actual KV mutations/merge logic, not just status codes), and the AI-calling routes (`/prediction/analyze`, `/summary/narrative`). Writing these tests found and fixed a real bug in `/reddit/ingest` (`getNewsSources()` was called with the team config object instead of the abbr string, throwing on every real ingest call).
-- `src/__tests__/pwhl-routes.test.js` — `handlePWHL`'s equivalent: `/pwhl/standings`'s enrichment logic, the `POLL_SECRET`-gated cache-bust/ingest routes, the AI-calling routes (`/pwhl/scout`, `/pwhl/summary/narrative`, `/pwhl/prediction`), and `/pwhl/preview`'s gameCenterPreview normalization.
+- `src/__tests__/nhl-routes.test.js` — `handleNHL`'s routes: a representative slice of read-proxy routes, all `POLL_SECRET`-gated mutating/ingest routes (asserting actual KV mutations/merge logic, not just status codes), and the AI-calling routes (`/prediction/analyze`, `/summary/narrative`, `/team-seasons/head-to-head/narrative`). Writing these tests found and fixed a real bug in `/reddit/ingest` (`getNewsSources()` was called with the team config object instead of the abbr string, throwing on every real ingest call).
+- `src/__tests__/pwhl-routes.test.js` — `handlePWHL`'s equivalent: `/pwhl/standings`'s enrichment logic, the `POLL_SECRET`-gated cache-bust/ingest routes, the AI-calling routes (`/pwhl/scout`, `/pwhl/summary/narrative`, `/pwhl/prediction`, `/pwhl/team-seasons/head-to-head/narrative`), and `/pwhl/preview`'s gameCenterPreview normalization.
 
 The remaining ~35 plain read-proxy routes (parse params → cache check → `sbRows()`/fetch → cache write → JSON) all follow the same shape already covered here and are mechanical to extend if ever needed.
 
@@ -107,8 +107,8 @@ Set via `wrangler secret put <NAME>`. Never commit values.
 | Binding | Type | Description |
 |---------|------|-------------|
 | `CACHE` | KV Namespace | All KV read/write operations |
-| `AI` | Workers AI | Required for `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/prediction/analyze`, `/draft/analyze`, `/pwhl/prediction` |
-| `AI_ROUTE_LIMITER` | Rate Limit | Per-IP, per-route limit (10 req/60s) on the AI-calling routes with no secret check — `/prediction/analyze`, `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/pwhl/prediction`. Provisioned automatically from `wrangler.toml` at deploy time, no dashboard setup needed. |
+| `AI` | Workers AI | Required for `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/prediction/analyze`, `/draft/analyze`, `/pwhl/prediction`, `/team-seasons/head-to-head/narrative`, `/pwhl/team-seasons/head-to-head/narrative` |
+| `AI_ROUTE_LIMITER` | Rate Limit | Per-IP, per-route limit (10 req/60s) on the AI-calling routes with no secret check — `/prediction/analyze`, `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/pwhl/prediction`, `/team-seasons/head-to-head/narrative`, `/pwhl/team-seasons/head-to-head/narrative`. Provisioned automatically from `wrangler.toml` at deploy time, no dashboard setup needed. |
 
 View current secrets:
 ```powershell
@@ -193,6 +193,7 @@ Key patterns:
 | `GET` | `/team-seasons/compare?team=&seasons=` | Box-score fields only (wins/losses/OTL/points/goals-for-against/PP%/PK%) for one team across a comma-separated season list. Backs the season-over-season team comparison feature (Session 64). Missing seasons for that team are simply absent from the response — no placeholder rows. |
 | `GET` | `/team-seasons/compare-teams?teams=,&season=` | Box-score fields only, for exactly two teams at one shared season. Backs Team vs Team comparison Mode 1 (Session 86) — the two-team analog of `/team-seasons/compare`'s two-season shape. A team missing a row for that season (e.g. didn't exist yet) is simply absent from the response. |
 | `GET` | `/team-seasons/head-to-head?teams=,` | All-time head-to-head between two teams across every season on record — Team vs Team Mode 2 (Session 88). Filters `game_log` for one team's own rows against the named opponent (no season/game_type filter — includes playoff meetings), then computes `allTimeRecord`/`recentWindow`/`currentStreak`/`isThinSample` server-side via `buildHeadToHeadPayload` (shared.js), so there's one definition of the derived insights instead of duplicating the math per league. |
+| `POST` | `/team-seasons/head-to-head/narrative` | AI narrative layer on top of the head-to-head stats above (Session 90). Client posts the payload it already fetched from `/team-seasons/head-to-head` plus display names — this route doesn't refetch/recompute anything. Cached in KV per team pair. Returns `{ narrative: null }` without calling the model for zero-meeting pairs; flags a thin-sample guardrail in the prompt when `isThinSample` is true so the model doesn't overstate a 2-4 game sample as a trend. |
 
 ## PWHL Endpoints
 
@@ -227,6 +228,7 @@ Key patterns:
 | `GET` | `/pwhl/team-seasons/compare?teamId=&seasons=` | Box-score fields only (gp/wins/losses/OTL/points/goals-for-against/PP%/PK%) for one team across a comma-separated `season_id` list. PWHL analog of `/team-seasons/compare` (Session 64). Missing seasons for that team are simply absent from the response — no placeholder rows. |
 | `GET` | `/pwhl/team-seasons/compare-teams?teamIds=,&season=` | Box-score fields only, for exactly two `team_id`s at one shared `season_id`. PWHL analog of `/team-seasons/compare-teams` (Session 86). A team missing a row for that season (e.g. a 2026-27 expansion team with no prior season) is simply absent from the response. |
 | `GET` | `/pwhl/team-seasons/head-to-head?teamIds=,` | All-time head-to-head between two teams across every season on record — PWHL analog of `/team-seasons/head-to-head` (Session 88). `pwhl_game_log` is one row per game with both teams in columns, so this uses an OR-of-AND home/away filter (no `season_id` filter) instead of NHL's simple two-sided filter, then shares the same `buildHeadToHeadPayload` derived-insight computation. |
+| `POST` | `/pwhl/team-seasons/head-to-head/narrative` | AI narrative layer on top of the head-to-head stats above (Session 90) — PWHL analog of `/team-seasons/head-to-head/narrative`. This Worker has no PWHL team-name map of its own, so display names come from the client (same reason `/pwhl/summary/narrative` above takes `carName`/`oppName` instead of resolving them server-side). |
 
 ## October Season Prep
 

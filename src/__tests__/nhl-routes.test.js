@@ -592,6 +592,69 @@ describe('GET /team-seasons/head-to-head', () => {
   })
 })
 
+describe('POST /team-seasons/head-to-head/narrative', () => {
+  const basePayload = {
+    teamA: 'CAR', teamB: 'NYR', teamADisplay: 'Carolina Hurricanes', teamBDisplay: 'New York Rangers',
+    totalMeetings: 5,
+    allTimeRecord: { teamAWins: 4, teamBWins: 1 },
+    recentWindow: { size: 5, teamAWins: 4, teamBWins: 1 },
+    currentStreak: { holder: 'A', count: 2 },
+    isThinSample: false,
+  }
+
+  it('returns a null narrative without calling the AI model when there are zero meetings', async () => {
+    const env = makeEnv({ AI: { run: vi.fn() } })
+    const res = await handleNHL(
+      makeRequest('/team-seasons/head-to-head/narrative', { method: 'POST', body: { ...basePayload, totalMeetings: 0 } }),
+      env, makeCtx(), new URL('https://example.com/team-seasons/head-to-head/narrative')
+    )
+    expect(res.status).toBe(200)
+    expect((await res.json()).narrative).toBeNull()
+    expect(env.AI.run).not.toHaveBeenCalled()
+  })
+
+  it('returns an error on invalid JSON body', async () => {
+    const env = makeEnv()
+    const req = new Request('https://example.com/team-seasons/head-to-head/narrative', { method: 'POST', body: 'not json', headers: { 'Content-Type': 'application/json' } })
+    const res = await handleNHL(req, env, makeCtx(), new URL('https://example.com/team-seasons/head-to-head/narrative'))
+    expect((await res.json()).error).toMatch(/invalid json/i)
+  })
+
+  it('serves from cache without calling the AI model', async () => {
+    const cached = { narrative: 'cached narrative' }
+    const env = makeEnv({ CACHE: { async get(key) { return key === 'nhl:h2h-narrative:CAR,NYR' ? JSON.stringify(cached) : null }, async put() {} }, AI: { run: vi.fn() } })
+    const res = await handleNHL(
+      makeRequest('/team-seasons/head-to-head/narrative', { method: 'POST', body: basePayload }),
+      env, makeCtx(), new URL('https://example.com/team-seasons/head-to-head/narrative')
+    )
+    expect(await res.json()).toEqual(cached)
+    expect(env.AI.run).not.toHaveBeenCalled()
+  })
+
+  it('generates and caches a narrative, sorting the cache key regardless of team order', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Carolina leads this series.' }) } })
+    const res = await handleNHL(
+      makeRequest('/team-seasons/head-to-head/narrative', { method: 'POST', body: basePayload }),
+      env, makeCtx(), new URL('https://example.com/team-seasons/head-to-head/narrative')
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.narrative).toBe('Carolina leads this series.')
+    expect(env.AI.run).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(await env.CACHE.get('nhl:h2h-narrative:CAR,NYR')).narrative).toBe('Carolina leads this series.')
+  })
+
+  it('includes a thin-sample guardrail note in the prompt when isThinSample is true', async () => {
+    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Too early to say much.' }) } })
+    await handleNHL(
+      makeRequest('/team-seasons/head-to-head/narrative', { method: 'POST', body: { ...basePayload, totalMeetings: 2, isThinSample: true } }),
+      env, makeCtx(), new URL('https://example.com/team-seasons/head-to-head/narrative')
+    )
+    const prompt = env.AI.run.mock.calls[0][1].messages[0].content
+    expect(prompt).toMatch(/too small a sample/i)
+  })
+})
+
 describe('GET /player-shots', () => {
   it('400s when playerId is missing', async () => {
     const env = makeEnv()

@@ -2342,6 +2342,75 @@ export async function handleNHL(request, env, ctx, url) {
     return json(payload);
   }
 
+  // AI narrative layer on top of the head-to-head stats above (Session 90
+  // fast-follow to Session 88's templated record/window/streak). Client
+  // posts the payload it already fetched from /team-seasons/head-to-head
+  // plus display names -- this route doesn't refetch/recompute anything,
+  // same pattern as /summary/narrative's client-supplied stats payload
+  // below. Prompt is hand-rolled here rather than shared with pwhl.js's
+  // version of this route -- there's no existing precedent for sharing AI
+  // prompt text across the two leagues in this file (see /summary/narrative
+  // vs pwhl.js's /pwhl/summary/narrative, which have stayed independent
+  // despite being structurally close), and each league's narrative voice
+  // has already diverged (this file has no "Sticks" persona; pwhl.js does).
+  if (url.pathname === '/team-seasons/head-to-head/narrative' && request.method === 'POST') {
+    const limited = await checkAiRateLimit(env, request, 'h2h-narrative');
+    if (limited) return limited;
+
+    let body;
+    try { body = await request.json(); } catch {
+      return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: corsHeaders() });
+    }
+    const {
+      teamA, teamB, teamADisplay, teamBDisplay,
+      totalMeetings, allTimeRecord, recentWindow, currentStreak, isThinSample,
+    } = body || {};
+    if (!teamA || !teamB || !totalMeetings || !allTimeRecord || !recentWindow) {
+      return json({ narrative: null });
+    }
+
+    const kvKey  = `nhl:h2h-narrative:${[teamA, teamB].slice().sort().join(',')}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const aDisplay = teamADisplay || teamA;
+    const bDisplay = teamBDisplay || teamB;
+    const streakLine = currentStreak
+      ? `Current streak: ${currentStreak.holder === 'A' ? aDisplay : bDisplay} has won ${currentStreak.count} straight.`
+      : 'No active streak.';
+    // Thin-sample guardrail: buildHeadToHeadPayload already flags <=4
+    // meetings as isThinSample -- the templated UI qualifies its language
+    // for this case (see TeamComparisonPopup.jsx), so the AI narrative
+    // needs the same discipline or it undoes that work with confident prose.
+    const thinSampleNote = isThinSample
+      ? `\nIMPORTANT: Only ${totalMeetings} meeting${totalMeetings === 1 ? '' : 's'} exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.`
+      : '';
+
+    const prompt = `You are EyeWall, a neutral hockey analytics assistant. Write a punchy 2-3 sentence head-to-head summary for ${aDisplay} vs ${bDisplay}.
+
+All-time record (since 2023-24): ${aDisplay} ${allTimeRecord.teamAWins}-${allTimeRecord.teamBWins} ${bDisplay}, across ${totalMeetings} meeting${totalMeetings === 1 ? '' : 's'}.
+Last ${recentWindow.size}: ${aDisplay} ${recentWindow.teamAWins}-${recentWindow.teamBWins} ${bDisplay}.
+${streakLine}
+${thinSampleNote}
+Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.`;
+
+    try {
+      const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+        messages:   [{ role: 'user', content: prompt }],
+        max_tokens: 100,
+      });
+      const narrative = (aiResponse.response || '').trim();
+      if (!narrative) return json({ narrative: null });
+
+      const result = { narrative };
+      await kvPut(env, kvKey, result, 24 * 3600);
+      return json(result);
+    } catch (e) {
+      console.error('[NHL] head-to-head narrative AI error:', e);
+      return new Response(JSON.stringify({ error: 'AI generation failed' }), { status: 502, headers: corsHeaders() });
+    }
+  }
+
   // Serves both getPowerRankingsNarrative (limit=1) and getPowerRankingsHistory
   // (limit=28) on the frontend — same table/filter/order, different limit.
   if (url.pathname === '/power-rankings') {
