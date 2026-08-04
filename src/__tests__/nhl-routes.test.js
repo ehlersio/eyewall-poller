@@ -1463,6 +1463,60 @@ describe('GET /prediction/analyze', () => {
     expect(env.AI.run).not.toHaveBeenCalled()
   })
 
+  it('defaults a missing prior-season pp_pct to league-average (22%) identically in scoring and the AI prompt text', async () => {
+    // Regression for a real bug: scoring used to default a missing pp_pct
+    // to 22 (`?? 22`) while the prompt text separately defaulted to 0
+    // (`?? 0`) -- same missing-data case, two different silent defaults,
+    // so the model scored a team as league-average while telling the AI
+    // narrative generator it was shut out on the power play. Both paths
+    // now resolve the default once (PP_PCT_DEFAULT) and share it.
+    const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, seasonId: 20242025, gamesPlayed: 82, points: 100 },
+      { teamAbbrev: { default: 'BOS' }, seasonId: 20242025, gamesPlayed: 82, points: 90 },
+    ]
+    const aiRun = vi.fn().mockResolvedValue({ response: 'Preseason take.' })
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
+      AI: { run: aiRun },
+    })
+    mockSupabaseByTable({
+      // CAR's pp_pct is missing entirely -- the UTA-shaped gap
+      // (backfill_uta_2025_team_stats.py) this test is modeled on.
+      'team_seasons': [
+        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: null, shots_for_pg: 28 },
+        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 21, shots_for_pg: 31 },
+      ],
+      'players?': [
+        { id: 1, team: 'CAR' }, { id: 2, team: 'CAR' }, { id: 3, team: 'BOS' },
+      ],
+      'player_seasons': [
+        { player_id: 1, team: 'CAR', games_played: 82, toi_per_game: 1200 },
+        { player_id: 99, team: 'CAR', games_played: 82, toi_per_game: 900 },
+        { player_id: 3, team: 'BOS', games_played: 82, toi_per_game: 1000 },
+      ],
+    })
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    // Scoring: carPP (defaulted to 22) > oppPP (21) -- CAR gets the PP%
+    // point, same as if a real pp_pct > 21 had been stored. ptsDiff(+0.25)
+    // + GA(+0.6) + PP(+0.4) = 1.25 for CAR vs. GF(+0.6) + SF(+0.5) = 1.1
+    // for BOS; total 2.35, raw fraction 0.531914..., dampened by the same
+    // 0.785714 avg continuity as the sibling preseason test -> 53.
+    expect(body.carWinPct).toBe(53)
+    // Prompt text: both teams' PP% lines use the same 22.0% default CAR's
+    // missing value resolved to -- not a separate, disagreeing 0.0%.
+    const promptSent = aiRun.mock.calls[0][1].messages[0].content
+    expect(promptSent).toMatch(/CAR last season \(\d+\): 100 pts, GF\/GA per game: 3\.00 \/ 2\.80, PP%: 22\.0%/)
+    expect(promptSent).not.toMatch(/CAR.*PP%: 0\.0%/)
+  })
+
   it('does not treat a standings feed with no seasonId as stale (e.g. a test stub)', async () => {
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [
