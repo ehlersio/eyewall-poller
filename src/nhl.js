@@ -122,6 +122,11 @@ async function sbRows(path) {
 // fit/validation this was built from, and COMBINED_CALIBRATION_IMPLEMENTATION.md
 // for the "switch, don't stack" regime design these three helpers implement.
 
+// League-average PP% -- the one shared fallback value for a missing
+// team_seasons.pp_pct in buildPreseasonFallback (used identically by both
+// the scorecard and the AI prompt text; see PP_PCT_BACKFILL_GAP_INVESTIGATION.md).
+const PP_PCT_DEFAULT = 22;
+
 // e.g. 20252026 -> 20242025. Mirrors rapm.py's prior_season() exactly —
 // keep in sync if that ever changes.
 function priorSeason(season) {
@@ -242,7 +247,19 @@ async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameI
   }
   if (carGpg > oppGpg) carScore += 0.6; else oppScore += 0.6;
   if (carGag < oppGag) carScore += 0.6; else oppScore += 0.6;
-  if ((carRow.pp_pct ?? 22) > (oppRow.pp_pct ?? 22)) carScore += 0.4; else oppScore += 0.4;
+  // League-average default (22%) when a team's prior-season pp_pct is
+  // missing from team_seasons -- resolved once and reused below in the
+  // prompt text too, so scoring and the AI narrative never disagree on
+  // what value stood in for the missing data (they used to: scoring
+  // defaulted to 22, the prompt separately defaulted to 0, silently).
+  // Logged, not silent -- this shouldn't happen once a season's
+  // team_seasons row is fully populated (see backfill_uta_2025_team_stats.py
+  // for the one confirmed real-world case, a teamId-mapping gap).
+  if (carRow.pp_pct == null) console.error(`buildPreseasonFallback: ${tc.abbr} ${prior} pp_pct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
+  if (oppRow.pp_pct == null) console.error(`buildPreseasonFallback: ${oppAbbr} ${prior} pp_pct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
+  const carPP = carRow.pp_pct ?? PP_PCT_DEFAULT;
+  const oppPP = oppRow.pp_pct ?? PP_PCT_DEFAULT;
+  if (carPP > oppPP) carScore += 0.4; else oppScore += 0.4;
   if (carSF > oppSF) carScore += 0.5; else oppScore += 0.5;
   const total = carScore + oppScore || 1;
   const rawFraction = carScore / total;
@@ -293,8 +310,8 @@ async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameI
 Game: ${tc.abbr} (${isHome ? 'HOME' : 'AWAY'}) vs ${oppAbbr}
 Context: Preseason estimate, based on ${prior} final standings
 
-${tc.abbr} last season (${prior}): ${carRow.points ?? '—'} pts, GF/GA per game: ${carGpg.toFixed(2)} / ${carGag.toFixed(2)}, PP%: ${(carRow.pp_pct ?? 0).toFixed(1)}%, roster continuity: ${carContinuity != null ? (carContinuity * 100).toFixed(0) + '%' : 'unknown'}
-${oppAbbr} last season (${prior}): ${oppRow.points ?? '—'} pts, GF/GA per game: ${oppGpg.toFixed(2)} / ${oppGag.toFixed(2)}, PP%: ${(oppRow.pp_pct ?? 0).toFixed(1)}%, roster continuity: ${oppContinuity != null ? (oppContinuity * 100).toFixed(0) + '%' : 'unknown'}
+${tc.abbr} last season (${prior}): ${carRow.points ?? '—'} pts, GF/GA per game: ${carGpg.toFixed(2)} / ${carGag.toFixed(2)}, PP%: ${carPP.toFixed(1)}%, roster continuity: ${carContinuity != null ? (carContinuity * 100).toFixed(0) + '%' : 'unknown'}
+${oppAbbr} last season (${prior}): ${oppRow.points ?? '—'} pts, GF/GA per game: ${oppGpg.toFixed(2)} / ${oppGag.toFixed(2)}, PP%: ${oppPP.toFixed(1)}%, roster continuity: ${oppContinuity != null ? (oppContinuity * 100).toFixed(0) + '%' : 'unknown'}
 
 Expected score (Pythagorean, from last season's rates): ${tc.abbr} ${expCar} - ${oppAbbr} ${expOpp}
 Model win probability (roster-continuity adjusted): ${tc.abbr} ${carWinPct}%
