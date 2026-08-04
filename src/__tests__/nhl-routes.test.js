@@ -1583,6 +1583,47 @@ describe('GET /prediction/analyze', () => {
     expect(cached.narrative).toBe('CAR should win this one comfortably.')
   })
 
+  it('defaults a missing in-season powerPlayPct to league-average (22%) identically in scoring and the AI prompt text', async () => {
+    // Same disagreement bug as buildPreseasonFallback's pp_pct default
+    // (see the sibling test above), fixed the same way in this branch:
+    // scoring already defaulted a missing powerPlayPct to 22, but the
+    // prompt text separately defaulted to 0. Both now share PP_PCT_DEFAULT.
+    const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
+    const standings = [
+      // Every other scorecard factor tied (points, GF/GA, SOG, no streak)
+      // so PP% is the only thing that can move carScore off 0 -- isolates
+      // the default's effect precisely.
+      { teamAbbrev: { default: 'CAR' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 30, goalAgainst: 30, powerPlayPct: null, penaltyKillPct: 80, shotsForPerGame: 30, shotsAgainstPerGame: 30 },
+      { teamAbbrev: { default: 'BOS' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 30, goalAgainst: 30, powerPlayPct: 21, penaltyKillPct: 76, shotsForPerGame: 30, shotsAgainstPerGame: 30 },
+    ]
+    const aiRun = vi.fn().mockResolvedValue({ response: 'In-season take.' })
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
+      AI: { run: aiRun },
+    })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    // carPP defaults to 22 > oppPP 21 -- CAR gets the sole 0.4 scoring
+    // point (every other factor tied to oppScore per the strict >/< ties
+    // going to else). carScore=0.4, oppScore=1.7 (GF tie 0.6 + GA tie 0.6
+    // + SOG tie 0.5), raw fraction 0.4/2.1=0.190476 -- lands in the fitted
+    // isotonic curve's flat plateau (0.166667-0.483871, both endpoints
+    // 0.523622), so carWinPct = round(52.3622) = 52 regardless of small
+    // float drift within that plateau.
+    expect(body.carWinPct).toBe(52)
+    expect(body.regime).toBe('in-season')
+    const promptSent = aiRun.mock.calls[0][1].messages[0].content
+    expect(promptSent).toMatch(/CAR stats:[\s\S]*PP%: 22\.0%/)
+    expect(promptSent).not.toMatch(/CAR stats:[\s\S]{0,120}PP%: 0\.0%/)
+  })
+
   it('uses real 5v5 Corsi from team_seasons when both teams have it, instead of the SOG-share proxy', async () => {
     const schedule = [{ id: 124, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [

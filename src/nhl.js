@@ -3094,7 +3094,17 @@ Only reference the two teams named above and the numbers given -- no player name
     }
     if (carGpg > oppGpg) carScore += 0.6; else oppScore += 0.6;
     if (carGag < oppGag) carScore += 0.6; else oppScore += 0.6;
-    if ((carTeam.powerPlayPct ?? 22) > (oppTeam.powerPlayPct ?? 22)) carScore += 0.4;
+    // Same "resolve the default once, share it with the prompt text" fix
+    // as buildPreseasonFallback's carPP/oppPP (see PP_PCT_DEFAULT) — this
+    // branch's powerPlayPct comes from the live standings API response
+    // instead of team_seasons, so a null here should be rarer in practice,
+    // but the same disagreement bug (scoring defaulting to 22, the prompt
+    // separately defaulting to 0) applied here too before this fix.
+    if (carTeam.powerPlayPct == null) console.error(`prediction/analyze in-season: ${tc.abbr} powerPlayPct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
+    if (oppTeam.powerPlayPct == null) console.error(`prediction/analyze in-season: ${oppAbbr} powerPlayPct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
+    const carPP = carTeam.powerPlayPct ?? PP_PCT_DEFAULT;
+    const oppPP = oppTeam.powerPlayPct ?? PP_PCT_DEFAULT;
+    if (carPP > oppPP) carScore += 0.4;
     else oppScore += 0.4;
     if (carSF > oppSF) carScore += 0.5; else oppScore += 0.5; // possession
     if (carTeam.streakCode === 'W') carScore += 0.3;
@@ -3115,7 +3125,7 @@ Context: ${isPlayoff ? 'PLAYOFFS' : 'Regular Season'}
 ${tc.abbr} stats:
 - Record: ${carTeam.wins}-${carTeam.losses}-${carTeam.otLosses} (${carTeam.points} pts)
 - GF/GA per game: ${carGpg.toFixed(2)} / ${carGag.toFixed(2)}
-- PP%: ${(carTeam.powerPlayPct ?? 0).toFixed(1)}% · PK%: ${(carTeam.penaltyKillPct ?? 0).toFixed(1)}%
+- PP%: ${carPP.toFixed(1)}% · PK%: ${(carTeam.penaltyKillPct ?? 0).toFixed(1)}%
 - SOG/GP: ${carSF.toFixed(1)} for / ${carSA.toFixed(1)} against
 - ${corsiLabel}: ${carCF ?? '—'}%
 - Current streak: ${carStreak}
@@ -3123,7 +3133,7 @@ ${tc.abbr} stats:
 ${oppAbbr} stats:
 - Record: ${oppTeam.wins}-${oppTeam.losses}-${oppTeam.otLosses} (${oppTeam.points} pts)
 - GF/GA per game: ${oppGpg.toFixed(2)} / ${oppGag.toFixed(2)}
-- PP%: ${(oppTeam.powerPlayPct ?? 0).toFixed(1)}% · PK%: ${(oppTeam.penaltyKillPct ?? 0).toFixed(1)}%
+- PP%: ${oppPP.toFixed(1)}% · PK%: ${(oppTeam.penaltyKillPct ?? 0).toFixed(1)}%
 - SOG/GP: ${oppSF.toFixed(1)} for / ${oppSA.toFixed(1)} against
 - ${corsiLabel}: ${oppCF ?? '—'}%
 - Current streak: ${oppStreak}
