@@ -17,9 +17,9 @@
  * KV namespace binding: CACHE
  */
 
-import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS } from './nhl.js';
-import { handlePWHL, pollPWHL, PWHL_TEAM_CODES } from './pwhl.js';
-import { corsHeaders, json, kvGet, kvPut, sbError, SB_URL, SB_ANON } from './shared.js';
+import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.js';
+import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
+import { corsHeaders, json, kvGet, kvPut, sbError, badRequest, sbHeaders, SB_URL, SB_ANON } from './shared.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, resolveNHLSeason } from './seasons.js';
 
 async function handleRequest(request, env, ctx) {
@@ -257,6 +257,118 @@ async function handleRequest(request, env, ctx) {
     const index = [...nhlIndex, ...pwhlIndex];
     await kvPut(env, kvKey, index, 21600); // 6hr
     return json(index);
+  }
+
+  // GET /trivia/today?sport=nhl&team=CAR (team optional — omit for the
+  // easy/hard tiers only, pass it to also get that team's medium-tier
+  // question). Phase 2 (daily trivia). One request returns all three tiers
+  // at once since the frontend always renders all three cards together —
+  // three small Supabase reads inside one Worker round-trip rather than
+  // three separate frontend fetches.
+  //
+  // trivia_questions has no owner/RLS-per-user concern (anon-readable,
+  // same posture as /milestones' table) — the correct_index/explanation
+  // are included in this response rather than split into a second
+  // post-answer endpoint. A user could open devtools and see the answer
+  // early; accepted for a low-stakes trivia feature, not worth the extra
+  // round-trip/complexity of a server-tracked reveal step.
+  if (url.pathname === '/trivia/today') {
+    const sport = url.searchParams.get('sport')?.toLowerCase();
+    if (!sport || !['nhl', 'pwhl'].includes(sport)) {
+      return badRequest('sport must be nhl or pwhl');
+    }
+    const team = url.searchParams.get('team')?.toUpperCase() || null;
+
+    const today  = new Date().toISOString().slice(0, 10);
+    const kvKey  = `trivia:${today}:${sport}:${team || 'ALL'}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    async function fetchTier(tier, teamFilter) {
+      const filter = `?question_date=eq.${today}&tier=eq.${tier}&sport=eq.${sport}&team=eq.${teamFilter}&limit=1`;
+      const r = await fetch(`${SB_URL}/rest/v1/trivia_questions${filter}`, { headers: sbHeaders() });
+      if (!r.ok) return null;
+      const rows = await r.json();
+      return rows[0] || null;
+    }
+
+    const [easy, medium, hard] = await Promise.all([
+      fetchTier('easy', 'ALL'),
+      team ? fetchTier('medium', team) : Promise.resolve(null),
+      fetchTier('hard', 'ALL'),
+    ]);
+
+    const result = { easy, medium, hard };
+    // Short TTL when nothing (or only some tiers) came back — don't pin an
+    // incomplete pre-publish snapshot in KV for a full day (same guard
+    // /draft/picks uses for its own "has the nightly pipeline actually
+    // finished publishing yet" gap).
+    const ttl = (easy || medium || hard) ? 24 * 3600 : 60;
+    await kvPut(env, kvKey, result, ttl);
+    return json(result);
+  }
+
+  // GET /news/latest?sport=nhl&team=CAR | ?sport=pwhl — cheap "is there
+  // anything new" check for the News tab's read-state badge (Session 92).
+  // Deliberately reuses the exact KV entry /news and /pwhl/news already
+  // populate (news:${team} / pwhl:news) instead of a second parallel
+  // fetch — if that cache is warm, this is a pure KV read, no Supabase/RSS
+  // call at all. If cold, triggers the same background warm those routes
+  // use and returns null for now (identical "empty now, real data next
+  // request" shape as /news itself) rather than duplicating fetch logic.
+  if (url.pathname === '/news/latest') {
+    const sport = url.searchParams.get('sport')?.toLowerCase();
+    if (!sport || !['nhl', 'pwhl'].includes(sport)) {
+      return badRequest('sport must be nhl or pwhl');
+    }
+
+    if (sport === 'pwhl') {
+      const cached = await kvGet(env, 'pwhl:news');
+      if (!cached) {
+        ctx.waitUntil(fetchPWHLNews(env).catch(e => console.warn('PWHL news bg fetch:', e.message)));
+        return json({ latestId: null, publishedAt: null });
+      }
+      const latest = cached[0] || null;
+      return json({ latestId: latest?.link || latest?.title || null, publishedAt: latest?.publishedAt || null });
+    }
+
+    const team = url.searchParams.get('team')?.toUpperCase();
+    if (!team) return badRequest('team is required for sport=nhl');
+    const cached = await kvGet(env, `news:${team}`);
+    if (!cached) {
+      ctx.waitUntil(fetchNews(env, team).catch(e => console.warn(`News bg fetch ${team}:`, e.message)));
+      return json({ latestId: null, publishedAt: null });
+    }
+    const latest = cached[0] || null;
+    return json({ latestId: latest?.link || latest?.title || null, publishedAt: latest?.publishedAt || null });
+  }
+
+  // GET /milestones/latest?sport=nhl|pwhl — same badge purpose as
+  // /news/latest, but milestones has no existing "all teams, unfiltered"
+  // KV entry to reuse (the real /milestones route's KV key always
+  // includes team+limit), so this does its own minimal limit=1 query
+  // instead. milestones.game_date is a date, not a timestamp — day
+  // granularity is what's available (no insertion timestamp on this
+  // table), accepted as good enough for a boolean "seen/unseen" badge.
+  if (url.pathname === '/milestones/latest') {
+    const sport = url.searchParams.get('sport')?.toLowerCase();
+    if (!sport || !['nhl', 'pwhl'].includes(sport)) {
+      return badRequest('sport must be nhl or pwhl');
+    }
+    const isPwhl = sport === 'pwhl';
+    const kvKey  = `milestones:latest:${sport}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const r = await fetch(
+      `${SB_URL}/rest/v1/milestones?select=id,game_date&order=game_date.desc,id.desc&limit=1&is_pwhl=eq.${isPwhl}`,
+      { headers: sbHeaders() }
+    );
+    if (!r.ok) return sbError(r.status);
+    const rows = await r.json();
+    const result = { latestId: rows[0]?.id ?? null, gameDate: rows[0]?.game_date ?? null };
+    await kvPut(env, kvKey, result, 3600); // 1hr — matches /milestones' own TTL
+    return json(result);
   }
 
   // Route PWHL endpoints

@@ -1381,7 +1381,7 @@ function getNewsSources(teamAbbr) {
 // Parse standard RSS <item> feeds
 // ── News fetching ───────────────────────────────────────────
 
-async function fetchNews(env, teamAbbr = TEAM_ABBR) {
+export async function fetchNews(env, teamAbbr = TEAM_ABBR) {
   const allItems = [];
   const sources  = getNewsSources(teamAbbr);
 
