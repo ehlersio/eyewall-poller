@@ -117,7 +117,7 @@ const PWHL_NEWS_SOURCES = [
   },
 ];
 
-async function fetchPWHLNews(env) {
+export async function fetchPWHLNews(env) {
   const allItems = [];
   for (const source of PWHL_NEWS_SOURCES) {
     // atom types require GH Actions (CF IPs blocked) — skip for now
