@@ -4,3 +4,6 @@ node_modules/
 *.env
 .env.local
 dist/
+
+# Claude Code agent worktrees -- local scratch copies, not source
+.claude/worktrees/
