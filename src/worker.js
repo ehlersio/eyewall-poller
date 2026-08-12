@@ -284,8 +284,21 @@ async function handleRequest(request, env, ctx) {
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
-    async function fetchTier(tier, teamFilter) {
-      const filter = `?question_date=eq.${today}&tier=eq.${tier}&sport=eq.${sport}&team=eq.${teamFilter}&limit=1`;
+    // fallback=true swaps the exact-date match for "most recent row on or
+    // before today" — used for the hard tier only. Easy/medium are
+    // AI-generated fresh every night for both leagues, so an exact-date
+    // miss there means "not published yet" and should show the empty
+    // state. Hard is hand-curated with no admin UI (see
+    // trivia_questions.py's docstring) — Matt adds rows in batches, not
+    // nightly, so an exact-date match would go silent on every day between
+    // batches. Falling back to the latest past row means the tier only
+    // goes empty if literally zero hard rows exist yet for that sport, not
+    // every day content hasn't been added since the last batch.
+    async function fetchTier(tier, teamFilter, { fallback = false } = {}) {
+      const dateFilter = fallback
+        ? `question_date=lte.${today}&order=question_date.desc`
+        : `question_date=eq.${today}`;
+      const filter = `?${dateFilter}&tier=eq.${tier}&sport=eq.${sport}&team=eq.${teamFilter}&limit=1`;
       const r = await fetch(`${SB_URL}/rest/v1/trivia_questions${filter}`, { headers: sbHeaders() });
       if (!r.ok) return null;
       const rows = await r.json();
@@ -295,7 +308,7 @@ async function handleRequest(request, env, ctx) {
     const [easy, medium, hard] = await Promise.all([
       fetchTier('easy', 'ALL'),
       team ? fetchTier('medium', team) : Promise.resolve(null),
-      fetchTier('hard', 'ALL'),
+      fetchTier('hard', 'ALL', { fallback: true }),
     ]);
 
     const result = { easy, medium, hard };

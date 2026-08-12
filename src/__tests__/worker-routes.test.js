@@ -11,7 +11,7 @@
 // to confirm worker.js calls the right function and shapes the response
 // correctly, not re-verify season resolution itself.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 vi.mock('../seasons.js', () => ({
   getSeasonsConfig: vi.fn(),
@@ -176,6 +176,63 @@ describe('GET /config/seasons/comparison', () => {
     const body = await res.json()
     expect(body.nhl.seasons).toEqual([])
     expect(body.pwhl.seasons).toHaveLength(1)
+  })
+})
+
+describe('GET /trivia/today', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-12T12:00:00Z'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function mockSupabaseFetch(handler) {
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      if (u.includes('/rest/v1/trivia_questions')) return handler(u)
+      throw new Error(`unexpected fetch: ${u}`)
+    })
+  }
+
+  it('queries easy/medium with an exact question_date match and hard with a lte/order-desc fallback', async () => {
+    const seen = []
+    mockSupabaseFetch((u) => {
+      seen.push(u)
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    await worker.fetch(makeRequest('/trivia/today?sport=nhl&team=CAR'), makeEnv(), makeCtx())
+
+    const easyCall = seen.find((u) => u.includes('tier=eq.easy'))
+    const mediumCall = seen.find((u) => u.includes('tier=eq.medium'))
+    const hardCall = seen.find((u) => u.includes('tier=eq.hard'))
+
+    expect(easyCall).toContain('question_date=eq.2026-08-12')
+    expect(mediumCall).toContain('question_date=eq.2026-08-12')
+    expect(hardCall).toContain('question_date=lte.2026-08-12')
+    expect(hardCall).toContain('order=question_date.desc')
+  })
+
+  it('falls back to the most recent past hard-tier row when none matches today exactly', async () => {
+    const staleHard = {
+      id: 28, question_date: '2026-08-05', tier: 'hard', sport: 'nhl', team: 'ALL',
+      question_text: 'True or False: The NHL was founded in 1917.', options: ['True', 'False'],
+      correct_index: 0, explanation: 'Founded 1917.', source: 'curated',
+    }
+    mockSupabaseFetch((u) => {
+      if (u.includes('tier=eq.hard')) return Promise.resolve({ ok: true, json: async () => [staleHard] })
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    const res = await worker.fetch(makeRequest('/trivia/today?sport=nhl&team=CAR'), makeEnv(), makeCtx())
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.easy).toBeNull()
+    expect(body.hard).toEqual(staleHard)
   })
 })
 
