@@ -816,60 +816,6 @@ describe('GET /news (cold cache background-fetch pattern)', () => {
 // Each of these asserts the actual KV mutation/merge logic per the Session
 // 48 decision, not just the response status code.
 
-describe('POST /reddit/ingest', () => {
-  const REDDIT_BUNDLE = {
-    CAR: {
-      data: {
-        children: [{
-          data: {
-            id: 'abc123', title: 'Canes sign new deal', permalink: '/r/canes/comments/abc123/x/',
-            selftext: '', score: 42, num_comments: 7, created_utc: 1751932800,
-            stickied: false, removed: false, url: 'https://www.reddit.com/r/canes/comments/abc123/x/', is_self: true,
-          },
-        }],
-      },
-    },
-  }
-
-  it('401s without a matching secret', async () => {
-    const env = makeEnv()
-    const res = await handleNHL(
-      makeRequest('/reddit/ingest', { method: 'POST', body: REDDIT_BUNDLE }),
-      env, makeCtx(), new URL('https://example.com/reddit/ingest')
-    )
-    expect(res.status).toBe(401)
-  })
-
-  it('merges reddit posts into news:ABBR, preserving existing non-reddit items', async () => {
-    const existing = [{ id: 'canescountry-xyz', source: 'canescountry', title: 'Old article', publishedAt: '2020-01-01T00:00:00Z' }]
-    const env = makeEnv({ CACHE: makeFakeCache({ 'news:CAR': existing }) })
-
-    const res = await handleNHL(
-      makeRequest('/reddit/ingest?secret=test-poll-secret', { method: 'POST', body: REDDIT_BUNDLE }),
-      env, makeCtx(), new URL('https://example.com/reddit/ingest?secret=test-poll-secret')
-    )
-
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.processed).toBe(1)
-    expect(body.results.CAR).toBe(1)
-
-    const merged = JSON.parse(await env.CACHE.get('news:CAR'))
-    expect(merged).toHaveLength(2)
-    expect(merged.some(i => i.id === 'reddit-abc123')).toBe(true)
-    expect(merged.some(i => i.id === 'canescountry-xyz')).toBe(true)
-  })
-
-  it('accepts the ingest secret via x-ingest-secret header too', async () => {
-    const env = makeEnv()
-    const res = await handleNHL(
-      makeRequest('/reddit/ingest', { method: 'POST', body: REDDIT_BUNDLE, headers: { 'x-ingest-secret': 'test-poll-secret' } }),
-      env, makeCtx(), new URL('https://example.com/reddit/ingest')
-    )
-    expect(res.status).toBe(200)
-  })
-})
-
 describe('POST /atom/ingest', () => {
   const ATOM_XML = '<?xml version="1.0"?><feed><entry><title>Canes win big</title><link href="https://example.com/article1"/><summary>Great game recap</summary><published>2026-07-08T00:00:00Z</published></entry></feed>'
 
@@ -883,7 +829,7 @@ describe('POST /atom/ingest', () => {
   })
 
   it('merges parsed atom articles into news:ABBR, preserving items from other sources', async () => {
-    const existing = [{ id: 'reddit-old1', source: 'reddit-car', title: 'Old reddit post', publishedAt: '2020-01-01T00:00:00Z' }]
+    const existing = [{ id: 'other-old1', source: 'other-source', title: 'Old article from elsewhere', publishedAt: '2020-01-01T00:00:00Z' }]
     const env = makeEnv({ CACHE: makeFakeCache({ 'news:CAR': existing }) })
 
     const res = await handleNHL(
@@ -897,7 +843,28 @@ describe('POST /atom/ingest', () => {
 
     const merged = JSON.parse(await env.CACHE.get('news:CAR'))
     expect(merged).toHaveLength(2)
-    expect(merged.some(i => i.source === 'reddit-car')).toBe(true)
+    expect(merged.some(i => i.source === 'other-source')).toBe(true)
+  })
+
+  it('auto-detects plain RSS 2.0 (not just true Atom) — the newer /feed/-path blogs use RSS, not Atom', async () => {
+    // wingingitinmotown etc. -- confirmed live (Session: news ingestion
+    // investigation) to return <rss>/<item>, not <feed>/<entry>. This
+    // route must parse both without needing per-source configuration.
+    const RSS_XML = '<?xml version="1.0"?><rss version="2.0"><channel><item><title>Wings sign a d-man</title><link>https://example.com/wings-article</link><description>Depth move</description><pubDate>Tue, 08 Jul 2026 00:00:00 GMT</pubDate></item></channel></rss>'
+    const env = makeEnv({ CACHE: makeFakeCache({}) })
+    // wingingitinmotown must exist as a real atom-type TEAM_NEWS_SOURCES
+    // entry for DET for the reverse lookup to resolve it -- this asserts
+    // against the real config, not a stub, so it breaks loudly if that
+    // entry's id or type ever changes.
+    const res = await handleNHL(
+      makeRequest('/atom/ingest?secret=test-poll-secret', { method: 'POST', body: { wingingitinmotown: RSS_XML } }),
+      env, makeCtx(), new URL('https://example.com/atom/ingest?secret=test-poll-secret')
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.results.wingingitinmotown).toBe(1)
+    const merged = JSON.parse(await env.CACHE.get('news:DET'))
+    expect(merged[0].title).toBe('Wings sign a d-man')
   })
 
   it('ignores an unrecognized source id', async () => {

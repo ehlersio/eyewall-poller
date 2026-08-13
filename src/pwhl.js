@@ -76,13 +76,17 @@ export const PWHL_TEAM_CODES = {
 
 const PWHL_NEWS_SOURCES = [
   {
-    // ESPN women's hockey RSS — works from Cloudflare IPs
-    id:     'espn-pwhl',
-    name:   'ESPN',
+    // The Hockey News — general site feed, filtered for PWHL. Replaces
+    // the old espn-pwhl entry (Session: news ingestion investigation --
+    // https://www.espn.com/espn/rss/hockey/news 503s; there is no real
+    // ESPN "hockey" or "womenshockey" RSS category at all, confirmed by
+    // probing several candidate paths, all 503).
+    id:     'hockeynews-pwhl',
+    name:   'The Hockey News',
     color:  '#FFFFFF',
-    bg:     '#cc0000',
-    url:    'https://www.espn.com/espn/rss/hockey/news',
-    type:   'espn',
+    bg:     '#0a0a0a',
+    url:    'https://thehockeynews.com/feed',
+    type:   'rss',
     filter: ['pwhl', "women's hockey", 'women', 'walter cup', 'frost', 'fleet', 'sceptres', 'victoire', 'sirens', 'charge', 'torrent', 'goldeneyes'],
   },
   {
@@ -96,14 +100,20 @@ const PWHL_NEWS_SOURCES = [
     filter: ['pwhl', 'walter cup', 'women'],
   },
   {
-    // The Athletic hockey via NYT — works from Cloudflare IPs
+    // The Athletic's dedicated women's hockey feed (confirmed live,
+    // Session: news ingestion investigation -- 100 PWHL-dense items).
+    // The previous URL (theathletic.com/rss/feed/?sport_name=nhl) was the
+    // pre-NYT-migration domain -- 301s and dead-ends, plus it was never
+    // actually PWHL-scoped in the first place (sport_name=nhl). This one
+    // is genuinely women's-hockey-specific, so the filter mostly just
+    // guards against stray non-hockey "women's sports" crossover pieces.
     id:     'athletic-pwhl',
     name:   'The Athletic',
     color:  '#FFFFFF',
     bg:     '#222222',
-    url:    'https://theathletic.com/rss/feed/?sport_name=nhl',
+    url:    'https://www.nytimes.com/athletic/rss/womens-hockey/',
     type:   'rss',
-    filter: ['pwhl', "women's hockey", 'walter cup', 'women'],
+    filter: ['pwhl', "women's hockey", 'walter cup', 'women', 'hockey'],
   },
   {
     // Sportsnet — Canadian outlet with strong PWHL coverage
@@ -148,8 +158,29 @@ export async function fetchPWHLNews(env) {
   const deduped = allItems
     .filter(item => { if (seenIds.has(item.id)) return false; seenIds.add(item.id); return true; })
     .sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
-  if (deduped.length > 0) await kvPut(env, 'pwhl:news', deduped, 1800);
-  return deduped;
+  // Merge with whatever's already cached instead of overwriting it
+  // (Session: news ingestion investigation) -- this function runs
+  // on-demand (a user's cold /pwhl/news request), but /pwhl/news/ingest
+  // (eyewall-pipeline's pwhl_news.py, once nightly, a wider and more
+  // PWHL-dedicated source list) also writes to this same key. Blindly
+  // overwriting meant a user-triggered fetch that found only 1-2 items
+  // could wipe out the nightly job's real articles for the rest of the
+  // day. Same id-based dedupe/merge pattern as /pwhl/news/ingest itself.
+  const existing = (await kvGet(env, 'pwhl:news')) || [];
+  const merged = [
+    ...deduped,
+    ...existing.filter(item => !deduped.find(d => d.id === item.id)),
+  ].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
+    .slice(0, 60);
+  // Always write, even when empty (previously this only wrote on a
+  // non-empty result, so an all-source outage left the KV key entirely
+  // missing rather than holding a cached empty result -- every request
+  // during an outage re-triggered all 4 live fetches instead of being
+  // absorbed by cache). Short TTL when truly empty so a real recovery is
+  // picked up quickly; normal TTL once populated (merged, not just this
+  // call's own contribution, since existing nightly content still counts).
+  await kvPut(env, 'pwhl:news', merged, merged.length > 0 ? 1800 : 300);
+  return merged;
 }
 
 
@@ -1392,7 +1423,8 @@ Only reference the two teams named above and the numbers given -- no player name
   }
 
   // POST /pwhl/news/ingest — accepts PWHL articles from GitHub Actions
-  // GH Actions runner IPs are not blocked by RSS sources; Worker IPs are.
+  // (eyewall-pipeline's pwhl_news.py, run once nightly via pwhl-nightly.yml).
+  // GH Actions runner IPs are not blocked by these RSS sources; Worker IPs are.
   if (url.pathname === '/pwhl/news/ingest' && request.method === 'POST') {
     const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
     if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
@@ -1410,7 +1442,15 @@ Only reference the two teams named above and the numbers given -- no player name
       ...existing.filter(a => !articles.find(n => n.id === a.id)),
     ].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
       .slice(0, 60);
-    await kvPut(env, 'pwhl:news', merged, 1800); // 30min cache
+    // 25hr, not 30min (Session: news ingestion investigation) -- this is
+    // fed by a once-nightly cron job, not a per-request fetch. The old
+    // 30min TTL meant these real articles were only ever visible for the
+    // 30 minutes right after the nightly run, then vanished until either
+    // the next night or fetchPWHLNews()'s own (separately fixed) merge
+    // kept something alive -- in practice `pwhl:news` sat empty most of
+    // each day even though this route was successfully finding real
+    // PWHL articles every night.
+    await kvPut(env, 'pwhl:news', merged, 25 * 3600);
     console.log(`PWHL news ingest: ${articles.length} new → ${merged.length} total`);
     return json({ ok: true, received: articles.length, total: merged.length });
   }

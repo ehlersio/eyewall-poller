@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseReddit, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload } from './shared.js';
 import { resolveNHLSeason } from './seasons.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
@@ -1245,111 +1245,123 @@ const NHL_NEWS_SOURCES = [
   },
 ];
 
-// Team-specific news sources — keyed by team abbrev.
-// Each team: one beat/fan-blog + one Reddit. UTA Reddit only (no blog yet).
+// Team-specific news sources — keyed by team abbrev. One beat/fan-blog per
+// team where a real, working feed exists. Reddit was removed entirely
+// (Session: news ingestion investigation) -- it blocks both Cloudflare
+// Workers *and* GitHub Actions runner IPs (confirmed live against a real
+// GH Actions runner: HTTP 403 bot-block page), so every reddit-type source
+// that used to live here was permanently unfetched dead weight, not a
+// working source with an occasional gap.
+//
+// Two delivery mechanisms:
+//   type: 'rss'  — fetched directly by this Worker. Used for "Nation
+//                  Network" blogs (flamesnation.ca, oilersnation.com,
+//                  canucksarmy.com, theleafsnation.com, jetsnation.ca) --
+//                  confirmed reachable from Cloudflare IPs.
+//   type: 'atom' — NOT fetched by this Worker at all (see the `continue`
+//                  in fetchNews() below); relies on GitHub Actions to fetch
+//                  and POST to /atom/ingest instead. Used for every
+//                  SBNation/Vox Media blog -- confirmed those block
+//                  Cloudflare datacenter IPs but not GH-hosted runners.
+//                  Despite the name, `type: 'atom'` sources can be either
+//                  true Atom XML (the five original current.xml-path
+//                  feeds) or plain RSS 2.0 (the newer /feed/-path ones) --
+//                  /atom/ingest auto-detects which per source, see below.
+//
+// MIN, STL, SEA, and UTA have no working blog source (MIN's Hockey
+// Wilderness site exists but its RSS path 404s; STL's St. Louis Game Time
+// failed to connect from both a live GH Actions runner and local testing;
+// SEA and UTA are too new for an established independent fan-blog
+// network) -- these four fall back to the generic league-wide sources
+// only, same as every team does for its non-blog news.
 const TEAM_NEWS_SOURCES = {
   ANA: [
-    { id: 'reddit-ana',        name: 'r/AnaheimDucks',         color: '#f47a38', url: 'https://www.reddit.com/r/AnaheimDucks/new.json',         type: 'reddit' },
+    { id: 'anaheimcalling',    name: 'Anaheim Calling',        color: '#f47a38', url: 'https://www.anaheimcalling.com/feed/',                  type: 'atom'   },
   ],
   BOS: [
-    { id: 'reddit-bos',        name: 'r/BostonBruins',         color: '#fcb514', url: 'https://www.reddit.com/r/BostonBruins/new.json',         type: 'reddit' },
+    { id: 'stanleycupofchowder', name: 'Stanley Cup of Chowder', color: '#fcb514', url: 'https://www.stanleycupofchowder.com/rss/index.xml',   type: 'atom'   },
   ],
   BUF: [
-    { id: 'reddit-buf',        name: 'r/sabres',               color: '#003e7e', url: 'https://www.reddit.com/r/sabres/new.json',               type: 'reddit' },
+    { id: 'diebytheblade',     name: 'Die by the Blade',       color: '#003e7e', url: 'https://www.diebytheblade.com/feed/',                   type: 'atom'   },
   ],
   CGY: [
     { id: 'flamesnation',      name: 'Flames Nation',          color: '#d2122e', url: 'https://flamesnation.ca/feed/',                         type: 'rss'    },
-    { id: 'reddit-cgy',        name: 'r/calgaryflames',        color: '#d2122e', url: 'https://www.reddit.com/r/calgaryflames/new.json',        type: 'reddit' },
   ],
   CAR: [
     { id: 'canescountry',      name: 'Canes Country',          color: '#cc2200', url: 'https://www.canescountry.com/rss/current.xml',          type: 'atom'   },
-    { id: 'reddit-car',        name: 'r/canes',                color: '#cc2200', url: 'https://www.reddit.com/r/canes/new.json',                type: 'reddit' },
   ],
   CHI: [
-    { id: 'reddit-chi',        name: 'r/hawks',                color: '#cf0a2c', url: 'https://www.reddit.com/r/hawks/new.json',                type: 'reddit' },
+    { id: 'secondcityhockey',  name: 'Second City Hockey',     color: '#cf0a2c', url: 'https://www.secondcityhockey.com/feed/',                type: 'atom'   },
   ],
   COL: [
     { id: 'milehighhockey',    name: 'Mile High Hockey',       color: '#6f263d', url: 'https://www.milehighhockey.com/rss/current.xml',        type: 'atom'   },
-    { id: 'reddit-col',        name: 'r/coloradoavalanche',    color: '#6f263d', url: 'https://www.reddit.com/r/coloradoavalanche/new.json',    type: 'reddit' },
   ],
   CBJ: [
-    { id: 'reddit-cbj',        name: 'r/BlueJackets',          color: '#002654', url: 'https://www.reddit.com/r/BlueJackets/new.json',          type: 'reddit' },
+    { id: 'jacketscannon',     name: 'The Cannon',             color: '#002654', url: 'https://www.jacketscannon.com/feed/',                   type: 'atom'   },
   ],
   DAL: [
-    { id: 'reddit-dal',        name: 'r/DallasStars',          color: '#006847', url: 'https://www.reddit.com/r/DallasStars/new.json',          type: 'reddit' },
+    { id: 'defendingbigd',     name: 'Defending Big D',        color: '#006847', url: 'https://www.defendingbigd.com/feed/',                   type: 'atom'   },
   ],
   DET: [
-    { id: 'reddit-det',        name: 'r/DetroitRedWings',      color: '#ce1126', url: 'https://www.reddit.com/r/DetroitRedWings/new.json',      type: 'reddit' },
+    { id: 'wingingitinmotown', name: 'Winging It In Motown',   color: '#ce1126', url: 'https://www.wingingitinmotown.com/feed/',               type: 'atom'   },
   ],
   EDM: [
     { id: 'oilersnation',      name: 'Oilers Nation',          color: '#fc4c02', url: 'https://oilersnation.com/feed/',                        type: 'rss'    },
-    { id: 'reddit-edm',        name: 'r/EdmontonOilers',       color: '#fc4c02', url: 'https://www.reddit.com/r/EdmontonOilers/new.json',       type: 'reddit' },
   ],
   FLA: [
-    { id: 'reddit-fla',        name: 'r/FloridaPanthers',      color: '#c8102e', url: 'https://www.reddit.com/r/FloridaPanthers/new.json',      type: 'reddit' },
+    { id: 'litterboxcats',     name: 'Litter Box Cats',        color: '#c8102e', url: 'https://www.litterboxcats.com/feed/',                   type: 'atom'   },
   ],
   LAK: [
-    { id: 'reddit-lak',        name: 'r/losangeleskings',      color: '#111111', url: 'https://www.reddit.com/r/losangeleskings/new.json',      type: 'reddit' },
+    { id: 'jewelsfromthecrown', name: 'Jewels From The Crown', color: '#111111', url: 'https://www.jewelsfromthecrown.com/feed/',              type: 'atom'   },
   ],
-  MIN: [
-    { id: 'reddit-min',        name: 'r/wildhockey',           color: '#154734', url: 'https://www.reddit.com/r/wildhockey/new.json',           type: 'reddit' },
-  ],
+  MIN: [],
   MTL: [
-    { id: 'reddit-mtl',        name: 'r/Habs',                 color: '#af1e2d', url: 'https://www.reddit.com/r/Habs/new.json',                 type: 'reddit' },
+    { id: 'eyesontheprize',    name: 'Eyes On The Prize',      color: '#af1e2d', url: 'https://www.eyesontheprize.com/rss/current.xml',        type: 'atom'   },
   ],
   NSH: [
-    { id: 'reddit-nsh',        name: 'r/predators',            color: '#ffb81c', url: 'https://www.reddit.com/r/predators/new.json',            type: 'reddit' },
+    { id: 'ontheforecheck',    name: 'On the Forecheck',       color: '#ffb81c', url: 'https://www.ontheforecheck.com/feed/',                  type: 'atom'   },
   ],
   NJD: [
     { id: 'allaboutthejersey', name: 'All About The Jersey',   color: '#ce1126', url: 'https://www.allaboutthejersey.com/rss/current.xml',     type: 'atom'   },
-    { id: 'reddit-njd',        name: 'r/devils',               color: '#ce1126', url: 'https://www.reddit.com/r/devils/new.json',               type: 'reddit' },
   ],
   NYI: [
     { id: 'lighthousehockey',  name: 'Lighthouse Hockey',      color: '#00539b', url: 'https://www.lighthousehockey.com/rss/current.xml',      type: 'atom'   },
-    { id: 'reddit-nyi',        name: 'r/NewYorkIslanders',     color: '#00539b', url: 'https://www.reddit.com/r/NewYorkIslanders/new.json',     type: 'reddit' },
   ],
   NYR: [
-    { id: 'reddit-nyr',        name: 'r/rangers',              color: '#0038a8', url: 'https://www.reddit.com/r/rangers/new.json',              type: 'reddit' },
+    { id: 'blueshirtbanter',   name: 'Blueshirt Banter',       color: '#0038a8', url: 'https://www.blueshirtbanter.com/rss/',                  type: 'atom'   },
   ],
   OTT: [
-    { id: 'reddit-ott',        name: 'r/OttawaSenators',       color: '#c52128', url: 'https://www.reddit.com/r/OttawaSenators/new.json',       type: 'reddit' },
+    { id: 'silversevensens',   name: 'Silver Seven',           color: '#c52128', url: 'https://www.silversevensens.com/rss/',                  type: 'atom'   },
   ],
   PHI: [
-    { id: 'reddit-phi',        name: 'r/flyers',               color: '#f74902', url: 'https://www.reddit.com/r/flyers/new.json',               type: 'reddit' },
+    { id: 'broadstreethockey', name: 'Broad Street Hockey',    color: '#f74902', url: 'https://www.broadstreethockey.com/feed/',               type: 'atom'   },
   ],
   PIT: [
     { id: 'pensburgh',         name: 'PensBurgh',              color: '#fcb514', url: 'https://www.pensburgh.com/rss/current.xml',             type: 'atom'   },
-    { id: 'reddit-pit',        name: 'r/penguins',             color: '#fcb514', url: 'https://www.reddit.com/r/penguins/new.json',             type: 'reddit' },
   ],
-  SEA: [
-    { id: 'reddit-sea',        name: 'r/SeattleKraken',        color: '#001628', url: 'https://www.reddit.com/r/SeattleKraken/new.json',        type: 'reddit' },
-  ],
+  SEA: [],
   SJS: [
-    { id: 'reddit-sjs',        name: 'r/SanJoseSharks',        color: '#006d75', url: 'https://www.reddit.com/r/SanJoseSharks/new.json',        type: 'reddit' },
+    { id: 'fearthefin',        name: 'Fear The Fin',           color: '#006d75', url: 'https://www.fearthefin.com/feed/',                      type: 'atom'   },
   ],
-  STL: [
-    { id: 'reddit-stl',        name: 'r/stlouisblues',         color: '#003087', url: 'https://www.reddit.com/r/stlouisblues/new.json',         type: 'reddit' },
-  ],
+  STL: [],
   TBL: [
-    { id: 'reddit-tbl',        name: 'r/TampaBayLightning',    color: '#002868', url: 'https://www.reddit.com/r/TampaBayLightning/new.json',    type: 'reddit' },
+    { id: 'rawcharge',         name: 'Raw Charge',             color: '#002868', url: 'https://www.rawcharge.com/feed/',                       type: 'atom'   },
   ],
   TOR: [
-    { id: 'reddit-tor',        name: 'r/leafs',                color: '#003e7e', url: 'https://www.reddit.com/r/leafs/new.json',                type: 'reddit' },
+    { id: 'theleafsnation',    name: 'The Leafs Nation',       color: '#003e7e', url: 'https://theleafsnation.com/feed',                       type: 'rss'    },
   ],
-  UTA: [
-    { id: 'reddit-uta',        name: 'r/UtahMammoth',          color: '#69b3e7', url: 'https://www.reddit.com/r/UtahMammoth/new.json',          type: 'reddit' },
-  ],
+  UTA: [],
   VAN: [
-    { id: 'reddit-van',        name: 'r/canucks',              color: '#00843d', url: 'https://www.reddit.com/r/canucks/new.json',              type: 'reddit' },
+    { id: 'canucksarmy',       name: 'Canucks Army',           color: '#00843d', url: 'https://canucksarmy.com/feed',                          type: 'rss'    },
   ],
   VGK: [
-    { id: 'reddit-vgk',        name: 'r/goldenknights',        color: '#b4975a', url: 'https://www.reddit.com/r/goldenknights/new.json',        type: 'reddit' },
+    { id: 'knightsonice',      name: 'Knights On Ice',         color: '#b4975a', url: 'https://www.knightsonice.com/feed/',                    type: 'atom'   },
   ],
   WSH: [
-    { id: 'reddit-wsh',        name: 'r/caps',                 color: '#041e42', url: 'https://www.reddit.com/r/caps/new.json',                 type: 'reddit' },
+    { id: 'japersrink',        name: "Japers' Rink",           color: '#041e42', url: 'https://www.japersrink.com/feed/',                      type: 'atom'   },
   ],
   WPG: [
-    { id: 'reddit-wpg',        name: 'r/winnipegjets',         color: '#041e42', url: 'https://www.reddit.com/r/winnipegjets/new.json',         type: 'reddit' },
+    { id: 'jetsnation',        name: 'Jets Nation',            color: '#041e42', url: 'https://jetsnation.ca/feed',                            type: 'rss'    },
   ],
 };
 
@@ -1386,10 +1398,9 @@ export async function fetchNews(env, teamAbbr = TEAM_ABBR) {
   const sources  = getNewsSources(teamAbbr);
 
   for (const source of sources) {
-    // Reddit and SBNation atom feeds are fetched by GitHub Actions
-    // (CF Workers IPs are blocked). GH Actions POSTs to /reddit/ingest
-    // and /atom/ingest every 30 minutes.
-    if (source.type === 'reddit' || source.type === 'atom') continue;
+    // SBNation atom feeds are fetched by GitHub Actions (CF Workers IPs
+    // are blocked there). GH Actions POSTs to /atom/ingest periodically.
+    if (source.type === 'atom') continue;
     try {
       console.log(`News: fetching ${source.id} from ${source.url}`);
       const res = await fetch(source.url, {
@@ -1415,10 +1426,6 @@ export async function fetchNews(env, teamAbbr = TEAM_ABBR) {
         const xml = await res.text();
         console.log(`News: ${source.id} atom length=${xml.length}`);
         parsed = parseAtom(xml, source);
-      } else if (source.type === 'reddit') {
-        const data = await res.json();
-        console.log(`News: ${source.id} posts=${data?.data?.children?.length}`);
-        parsed = parseReddit(data, source);
       } else if (source.type === 'sportsnet') {
         const xml = await res.text();
         parsed = parseSportsnet(xml, source);
@@ -2754,54 +2761,18 @@ Only reference the two teams named above and the numbers given -- no player name
     return json({ ok: true, teams, status: 'refreshing all 32 teams — check logs in ~60s' });
   }
 
-  // POST /reddit/ingest — accepts bundled Reddit JSON from GitHub Actions runner.
-  // Reddit blocks Cloudflare Workers IPs; GH-hosted runners are not blocked.
-  // Workflow runs every 30 minutes, fetches all 32 subreddits, POSTs bundle here.
-  // Body: JSON object { abbr: redditApiResponse, ... } for all 32 teams.
-  // Merges parsed posts into existing news:abbr KV entries alongside RSS/Athletic/BR.
-  if (url.pathname === '/reddit/ingest' && request.method === 'POST') {
-    const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
-    let bundle;
-    try {
-      bundle = await request.json();
-      if (!bundle || typeof bundle !== 'object') throw new Error('Expected JSON object');
-    } catch (e) {
-      return new Response(`Bad request: ${e.message}`, { status: 400 });
-    }
-    const TTL = 35 * 60; // 35 min — slightly longer than the 30min run interval
-    let processed = 0;
-    const results = {};
-    for (const [abbr, redditData] of Object.entries(bundle)) {
-      const cfg = TEAM_CONFIGS[abbr.toUpperCase()];
-      if (!cfg) continue;
-      // Find the reddit source config for this team to get id/name/color
-      // getNewsSources() takes the abbr string, not the config object — passing
-      // cfg here threw (TEAM_CONFIGS[cfg] is undefined, then cfg.toLowerCase()
-      // inside teamFilterKeywords isn't a function), crashing this route on
-      // every real ingest call (found via Session 48's route-test coverage).
-      const sources = getNewsSources(abbr.toUpperCase());
-      const redditSrc = sources.find(s => s.type === 'reddit');
-      if (!redditSrc) continue;
-      const posts = parseReddit(redditData, redditSrc);
-      // Merge with existing non-reddit news items so we don't overwrite RSS/Athletic/BR
-      const existing = (await kvGet(env, `news:${abbr.toUpperCase()}`)) || [];
-      const nonReddit = existing.filter(item => !item.id.startsWith('reddit-'));
-      const merged = [...posts, ...nonReddit]
-        .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
-        .slice(0, 30);
-      await kvPut(env, `news:${abbr.toUpperCase()}`, merged, TTL);
-      results[abbr] = posts.length;
-      processed++;
-    }
-    console.log(`Reddit ingest: ${processed} teams processed`);
-    return json({ ok: true, processed, results });
-  }
-
-  // POST /atom/ingest — accepts bundled SBNation/atom feed XML from GitHub Actions.
-  // SBNation blogs block Cloudflare datacenter IPs; GH-hosted runners are not blocked.
-  // Body: JSON object { sourceId: xmlText, ... } for all atom feeds.
-  // Merges parsed articles into existing news:ABBR KV alongside Reddit posts.
+  // POST /atom/ingest — accepts bundled SBNation/Vox blog feed XML from
+  // GitHub Actions (those sites block Cloudflare datacenter IPs but not
+  // GH-hosted runners). Body: JSON object { sourceId: xmlText, ... }.
+  //
+  // Despite the route name, the bundled XML is a mix of two real formats
+  // depending on which era of the Vox platform a given blog is on: true
+  // Atom (<feed>/<entry>, the five original current.xml-path feeds) and
+  // plain RSS 2.0 (<rss>/<item>, every /feed/-path blog added since --
+  // Session: news ingestion investigation). Auto-detect per source rather
+  // than assuming Atom for everything, which silently produced 0 parsed
+  // items for every RSS-format feed when this route unconditionally
+  // called parseAtom() on all of them.
   if (url.pathname === '/atom/ingest' && request.method === 'POST') {
     const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
     if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
@@ -2827,7 +2798,8 @@ Only reference the two teams named above and the numbers given -- no player name
       if (!entry) continue;
       const { abbr, src } = entry;
       try {
-        const parsed = parseAtom(xml, src);
+        const isTrueAtom = /<feed[\s>]/.test(xml.slice(0, 500));
+        const parsed = isTrueAtom ? parseAtom(xml, src) : parseRSS(xml, src);
         if (!parsed.length) continue;
         // Merge with existing news — keep non-atom items intact
         const existing = (await kvGet(env, `news:${abbr}`)) || [];
