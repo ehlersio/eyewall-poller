@@ -6,7 +6,7 @@
  */
 
 import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload } from './shared.js';
-import { resolveNHLSeason } from './seasons.js';
+import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
 const STATS_BASE = 'https://api.nhle.com/stats/rest/en';
@@ -3366,17 +3366,29 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   // writing into the same shared `milestones` table distinguished by is_pwhl.
   // Defaults to NHL (is_pwhl=false) for backwards compat with the existing
   // frontend — sport=pwhl must be passed explicitly.
+  //
+  // Scoped to the live-resolved current season (added after a stale
+  // 2025-26 CAR shutout sat as the ONLY NHL row in the table all
+  // offseason -- with no newer rows to push it off, an unfiltered
+  // "order by game_date desc, limit N" query shows it forever, and for a
+  // team-filtered query specifically it could persist for weeks/months
+  // into the next season too, not just during the gap before one starts.
+  // milestones.py/pwhl_milestones.py already write a `season` column on
+  // every row (NHL: resolveNHLSeason()'s string, e.g. "20262027"; PWHL:
+  // resolvePWHLSeason()'s numeric seasonId, e.g. 8) -- it was just never
+  // queried on here.
   if (url.pathname === '/milestones') {
     const team  = url.searchParams.get('team')?.toUpperCase();
     const sport = url.searchParams.get('sport')?.toLowerCase();
     const isPwhl = sport === 'pwhl';
     const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10) || 50, 100);
+    const season = isPwhl ? (await resolvePWHLSeason(env)).seasonId : await resolveNHLSeason(env);
 
-    const kvKey  = `milestones:${sport || 'nhl'}:${team || 'all'}:${limit}`;
+    const kvKey  = `milestones:${sport || 'nhl'}:${team || 'all'}:${limit}:${season}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
-    let filter = `?order=game_date.desc,id.desc&limit=${limit}&is_pwhl=eq.${isPwhl}`;
+    let filter = `?order=game_date.desc,id.desc&limit=${limit}&is_pwhl=eq.${isPwhl}&season=eq.${season}`;
     if (team) filter += `&team=eq.${team}`;
 
     const r = await fetch(`${SB_URL}/rest/v1/milestones${filter}`, {

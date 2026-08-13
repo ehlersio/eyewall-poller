@@ -19,6 +19,7 @@ vi.mock('../seasons.js', () => ({
   getAllPWHLSeasonTypes: vi.fn(),
   getAllPWHLSeasons: vi.fn(),
   resolveNHLSeason: vi.fn().mockResolvedValue(20252026),
+  resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
 }))
 vi.mock('../nhl.js', async () => {
   const actual = await vi.importActual('../nhl.js')
@@ -233,6 +234,29 @@ describe('GET /trivia/today', () => {
     const body = await res.json()
     expect(body.easy).toBeNull()
     expect(body.hard).toEqual(staleHard)
+  })
+})
+
+describe('GET /milestones/latest', () => {
+  // Regression: this badge-only route must stay season-scoped in lockstep
+  // with /milestones itself (nhl.js) -- otherwise it can flag "unseen
+  // milestone!" for an id that no longer appears anywhere in the
+  // now-season-scoped list.
+  it('scopes the Supabase query to the live-resolved current season, per sport', async () => {
+    const seen = []
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      seen.push(u)
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    await worker.fetch(makeRequest('/milestones/latest?sport=nhl'), makeEnv(), makeCtx())
+    await worker.fetch(makeRequest('/milestones/latest?sport=pwhl'), makeEnv(), makeCtx())
+
+    const nhlCall  = seen.find((u) => u.includes('is_pwhl=eq.false'))
+    const pwhlCall = seen.find((u) => u.includes('is_pwhl=eq.true'))
+    expect(nhlCall).toContain('season=eq.20252026')
+    expect(pwhlCall).toContain('season=eq.8')
   })
 })
 

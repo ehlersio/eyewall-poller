@@ -20,7 +20,7 @@
 import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.js';
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { corsHeaders, json, kvGet, kvPut, sbError, badRequest, sbHeaders, SB_URL, SB_ANON } from './shared.js';
-import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, resolveNHLSeason } from './seasons.js';
+import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
 async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
@@ -363,18 +363,24 @@ async function handleRequest(request, env, ctx) {
   // instead. milestones.game_date is a date, not a timestamp — day
   // granularity is what's available (no insertion timestamp on this
   // table), accepted as good enough for a boolean "seen/unseen" badge.
+  //
+  // Season-scoped, matching /milestones' own filter (added same session) —
+  // otherwise this could flag "unseen milestone!" for an id that no
+  // longer appears anywhere in the now-season-scoped list, which would
+  // be a strictly worse experience than no badge at all.
   if (url.pathname === '/milestones/latest') {
     const sport = url.searchParams.get('sport')?.toLowerCase();
     if (!sport || !['nhl', 'pwhl'].includes(sport)) {
       return badRequest('sport must be nhl or pwhl');
     }
     const isPwhl = sport === 'pwhl';
-    const kvKey  = `milestones:latest:${sport}`;
+    const season = isPwhl ? (await resolvePWHLSeason(env)).seasonId : await resolveNHLSeason(env);
+    const kvKey  = `milestones:latest:${sport}:${season}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
     const r = await fetch(
-      `${SB_URL}/rest/v1/milestones?select=id,game_date&order=game_date.desc,id.desc&limit=1&is_pwhl=eq.${isPwhl}`,
+      `${SB_URL}/rest/v1/milestones?select=id,game_date&order=game_date.desc,id.desc&limit=1&is_pwhl=eq.${isPwhl}&season=eq.${season}`,
       { headers: sbHeaders() }
     );
     if (!r.ok) return sbError(r.status);
