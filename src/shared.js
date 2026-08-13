@@ -142,7 +142,12 @@ export function safeId(sourceId, link) {
 export function parseRSS(xml, source) {
   const items = [];
   const chunks = xml.split('<item');
-  for (const chunk of chunks.slice(1, 12)) {
+  // 30, not 11 -- team-filtered league-wide sources (Athletic, Bleacher
+  // Report) need a wider window before filtering or a specific team's
+  // news is rarely in the raw feed's first 11 items at all (Session:
+  // news ingestion investigation, most sources otherwise near-zero yield
+  // per team most cycles).
+  for (const chunk of chunks.slice(1, 31)) {
     const title   = stripHtml(extractTag(chunk, 'title'));
     // Try <link> plain, then <guid>, then link href attr
     const linkM   = chunk.match(/<link>([^<]+)<\/link>/) ||
@@ -175,48 +180,6 @@ export function parseRSS(xml, source) {
 }
 
 // Parse ESPN RSS — uses <guid> as the canonical URL
-// Parse Reddit JSON API response
-export function parseReddit(data, source) {
-  const posts = data?.data?.children || [];
-  return posts
-    .filter(p => {
-      const d = p.data;
-      // Skip stickied mod posts, removed posts, and pure image/video posts with no discussion
-      return d && !d.stickied && !d.removed && d.title && d.permalink;
-    })
-    .slice(0, 10)
-    .map(p => {
-      const d = p.data;
-      // Use external URL if it's a link post, otherwise use Reddit thread
-      const isLinkPost = d.url && !d.url.includes('reddit.com') && !d.is_self;
-      const url        = isLinkPost ? d.url : `https://www.reddit.com${d.permalink}`;
-      const excerpt    = d.selftext
-        ? d.selftext.replace(/\n+/g, ' ').trim().slice(0, 180)
-        : `${d.score} upvotes · ${d.num_comments} comments`;
-      return {
-        id:          `reddit-${d.id}`,
-        source:      source.id,
-        sourceName:  source.name,
-        sourceColor: source.color,
-        title:       d.title,
-        excerpt,
-        url,
-        publishedAt: new Date(d.created_utc * 1000).toISOString(),
-        imageUrl:    (() => {
-          // preview.images has higher quality images than thumbnail
-          const previews = d.preview?.images?.[0]?.resolutions;
-          if (previews?.length) {
-            const img = previews.find(r => r.width >= 320) || previews[previews.length - 1];
-            return img?.url?.replace(/&amp;/g, '&') || null;
-          }
-          // Fall back to thumbnail only if it's a real URL
-          return (d.thumbnail && d.thumbnail.startsWith('http')) ? d.thumbnail : null;
-        })(),
-        score:       d.score,
-        comments:    d.num_comments,
-      };
-    });
-}
 
 // Parse Sportsnet RSS — uses <headline> for title and CDATA <link>
 export function parseSportsnet(xml, source) {
@@ -301,7 +264,7 @@ export function parseESPN(xml, source) {
   // ESPN: <link> appears right after <item> opening before <title>
   // Split on '<item>' (with closing >) to capture the link at start of chunk
   const chunks = xml.split('<item>');
-  for (const chunk of chunks.slice(1, 12)) {
+  for (const chunk of chunks.slice(1, 31)) {
     const title   = stripHtml(extractTag(chunk, 'title'));
     // ESPN link is the first URL in the chunk — appears before <title>
     // Clean a URL by removing RSS CDATA artifacts
@@ -336,7 +299,7 @@ export function parseESPN(xml, source) {
 export function parseAtom(xml, source) {
   const items = [];
   const chunks = xml.split(/<entry[\s>]/);
-  for (const chunk of chunks.slice(1, 12)) {
+  for (const chunk of chunks.slice(1, 31)) {
     const title   = stripHtml(extractTag(chunk, 'title'));
     const linkM   = chunk.match(/<link[^>]+href="([^"]+)"[^>]*\/>/i) ||
                     chunk.match(/<link[^>]+href="([^"]+)"/i);
