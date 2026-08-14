@@ -177,9 +177,30 @@ export async function fetchPWHLNews(env) {
   // missing rather than holding a cached empty result -- every request
   // during an outage re-triggered all 4 live fetches instead of being
   // absorbed by cache). Short TTL when truly empty so a real recovery is
-  // picked up quickly; normal TTL once populated (merged, not just this
-  // call's own contribution, since existing nightly content still counts).
-  await kvPut(env, 'pwhl:news', merged, merged.length > 0 ? 1800 : 300);
+  // picked up quickly.
+  //
+  // 25hr when populated, matching /pwhl/news/ingest's own TTL (fixed
+  // 2026-08-14) -- this used to be 1800s (30min), a leftover from before
+  // that route's TTL was separately bumped to 25hr in an earlier session.
+  // The merge above only protects THIS call's own write from clobbering
+  // good content already in the cache; it doesn't stop the write's own
+  // short TTL from expiring faster than the nightly job's ~24hr cadence.
+  // In practice: /pwhl/news/ingest writes with a 25hr TTL once nightly: for
+  // the ~23hr before the next run, every /pwhl/news request is a pure KV
+  // read and this function never executes at all. Only in the roughly 1hr
+  // buffer window right before the next nightly run -- when that 25hr
+  // entry has just expired -- does a request go cold and call this
+  // function. With the old 1800s TTL, that FIRST cold request would merge
+  // against an already-empty `existing` (the rich entry just expired) and
+  // re-write with only its own narrower 3-source, RSS-only result (atom
+  // sources are skipped above) -- silently replacing the nightly job's
+  // fuller article list with a much thinner one for the rest of that
+  // buffer window, re-triggering the same narrow refetch every 30 minutes
+  // until the next nightly run finally overwrote it properly. Matching the
+  // TTL means the first cold request during that window holds until the
+  // nightly job's own write naturally supersedes it, instead of repeatedly
+  // degrading the cache in the meantime.
+  await kvPut(env, 'pwhl:news', merged, merged.length > 0 ? 25 * 3600 : 300);
   return merged;
 }
 
