@@ -19,7 +19,7 @@ vi.mock('../seasons.js', () => ({
 
 import { getAllPWHLSeasonTypes } from '../seasons.js'
 
-import { handlePWHL } from '../pwhl.js'
+import { handlePWHL, fetchPWHLNews } from '../pwhl.js'
 
 beforeEach(() => {
   globalThis.fetch = vi.fn()
@@ -757,6 +757,60 @@ describe('POST /pwhl/news/ingest', () => {
     expect(merged).toHaveLength(2)
     // Incoming's copy of 'old-1' wins over the stale existing one (articles spread first, existing filtered to exclude any id already in articles)
     expect(merged.find(a => a.id === 'old-1').publishedAt).toBe('2026-01-01T00:00:00Z')
+  })
+})
+
+describe('fetchPWHLNews() TTL', () => {
+  // Regression: fetchPWHLNews() (the on-demand path, called when
+  // GET /pwhl/news or /news/latest?sport=pwhl finds pwhl:news cold) used to
+  // write with a 1800s/300s TTL while /pwhl/news/ingest (the nightly
+  // pipeline path) writes the same key with 25hr. Since /pwhl/news/ingest's
+  // 25hr entry naturally expires shortly before its own next ~24hr-cadence
+  // run, the FIRST cold request in that gap would call fetchPWHLNews(),
+  // merge against an already-empty `existing` (the rich entry just
+  // expired), and re-write with only its own narrower 3-source result --
+  // at the old 30min TTL, silently degrading to that narrower content on a
+  // recurring 30-min cycle until the next nightly run. Fixed to match
+  // /pwhl/news/ingest's own 25hr TTL once populated.
+  //
+  // Called directly here (not via the GET /pwhl/news route) since that
+  // route only ever calls fetchPWHLNews() when pwhl:news is ALREADY cold --
+  // which would make `existing` empty inside fetchPWHLNews() too, making
+  // the "existing had real content" case impossible to exercise through
+  // that entry point.
+  function makeSpyCache(initial) {
+    const cache = makeFakeCache(initial)
+    const puts = []
+    const realPut = cache.put.bind(cache)
+    cache.put = async (key, value, opts) => {
+      puts.push({ key, ttl: opts?.expirationTtl })
+      return realPut(key, value)
+    }
+    return { cache, puts }
+  }
+
+  it('writes a 25hr TTL when merged with real existing content, even if the live fetch itself finds nothing new', async () => {
+    const { cache, puts } = makeSpyCache({ 'pwhl:news': [{ id: 'existing-1', publishedAt: '2026-01-01T00:00:00Z' }] })
+    const env = makeEnv({ CACHE: cache })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 })
+
+    const merged = await fetchPWHLNews(env)
+
+    expect(merged).toHaveLength(1)
+    const newsPut = puts.find(p => p.key === 'pwhl:news')
+    expect(newsPut?.ttl).toBe(25 * 3600)
+  })
+
+  it('writes a 300s TTL when the merged result is genuinely empty', async () => {
+    const { cache, puts } = makeSpyCache({})
+    const env = makeEnv({ CACHE: cache })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 })
+
+    const merged = await fetchPWHLNews(env)
+
+    expect(merged).toHaveLength(0)
+    const newsPut = puts.find(p => p.key === 'pwhl:news')
+    expect(newsPut?.ttl).toBe(300)
   })
 })
 

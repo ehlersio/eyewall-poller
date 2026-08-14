@@ -144,7 +144,7 @@ Key patterns:
 | `pwhl:players:{teamId}:{season}` | 1hr | PWHL roster + stats |
 | `pwhl:shots:{teamId}:{season}` | 6hr | PWHL shot events |
 | `pwhl:schedule:{teamId}:{season}` | 30min | PWHL team schedule |
-| `pwhl:news` | 30min | PWHL news feed |
+| `pwhl:news` | 25hr populated / 5min empty | PWHL news feed. Written by both `/pwhl/news/ingest` (nightly pipeline) and `fetchPWHLNews()` (on-demand cold-cache path) — both now use the same TTL (fixed 2026-08-14, was a 30min/5min mismatch that let the nightly job's fuller article set get silently replaced by the on-demand path's narrower 3-source result once a day). |
 | `pwhl:today:{season}` | 60s | Today's PWHL games + status |
 | `pwhl:live:{gameId}` | 30s live / 1hr final | PWHL live PBP |
 | `pwhl:summary:{gameId}` | 1hr | PWHL game summary (goals, MVPs, team stats) |
