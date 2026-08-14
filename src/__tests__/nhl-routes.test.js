@@ -21,6 +21,7 @@ import { makeEnv, makeCtx, makeRequest, flushWaitUntil, makeFakeCache } from './
 
 vi.mock('../seasons.js', () => ({
   resolveNHLSeason: vi.fn().mockResolvedValue(20252026),
+  resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
 }))
 
 // sendPush does real VAPID JWT signing + RFC8291 payload encryption via
@@ -741,6 +742,42 @@ describe('GET /nhl/shots', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual([])
     expect(globalThis.fetch).toHaveBeenCalledTimes(1) // schedule only, no Supabase call
+  })
+})
+
+describe('GET /milestones', () => {
+  // Regression: an unfiltered "order by game_date desc, limit N" query has
+  // no way to age out an old row once the table stops getting new ones
+  // (e.g. NHL offseason) -- a single leftover milestone from last season
+  // sat as the ONLY NHL row for over a month with nothing newer to push it
+  // off. Assert the live-resolved current season is applied as a real
+  // filter, for both NHL and PWHL.
+  it('scopes the Supabase query to the live-resolved current NHL season', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    await handleNHL(
+      makeRequest('/milestones'), env, makeCtx(),
+      new URL('https://example.com/milestones')
+    )
+
+    const fetchedUrl = String(globalThis.fetch.mock.calls[0][0])
+    expect(fetchedUrl).toContain('is_pwhl=eq.false')
+    expect(fetchedUrl).toContain('season=eq.20252026')
+  })
+
+  it('scopes the Supabase query to the live-resolved current PWHL season', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    await handleNHL(
+      makeRequest('/milestones?sport=pwhl'), env, makeCtx(),
+      new URL('https://example.com/milestones?sport=pwhl')
+    )
+
+    const fetchedUrl = String(globalThis.fetch.mock.calls[0][0])
+    expect(fetchedUrl).toContain('is_pwhl=eq.true')
+    expect(fetchedUrl).toContain('season=eq.8')
   })
 })
 
