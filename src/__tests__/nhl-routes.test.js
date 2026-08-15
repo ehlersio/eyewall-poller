@@ -253,6 +253,103 @@ describe('GET /player-analytics', () => {
   })
 })
 
+describe('GET /goalie-analytics', () => {
+  it('serves from KV cache without hitting Supabase', async () => {
+    const env = makeEnv({
+      CACHE: { async get() { return JSON.stringify({ rows: ['cached'], statsStale: false, statsSeason: null }) }, async put() {} },
+    })
+    const res = await handleNHL(
+      makeRequest('/goalie-analytics?season=20252026'), env, makeCtx(),
+      new URL('https://example.com/goalie-analytics?season=20252026')
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ rows: ['cached'], statsStale: false, statsSeason: null })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('fetches from Supabase on a cache miss and caches the result', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ player_id: 1, gsax: 4.2 }],
+    })
+
+    const res = await handleNHL(
+      makeRequest('/goalie-analytics?season=20252026'), env, makeCtx(),
+      new URL('https://example.com/goalie-analytics?season=20252026')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.rows).toEqual([{ player_id: 1, gsax: 4.2 }])
+    const cached = await env.CACHE.get('nhl:goalie-analytics:20252026')
+    expect(JSON.parse(cached).rows).toEqual([{ player_id: 1, gsax: 4.2 }])
+  })
+
+  it('returns 502 when the Supabase fetch fails', async () => {
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await handleNHL(
+      makeRequest('/goalie-analytics?season=20252026'), env, makeCtx(),
+      new URL('https://example.com/goalie-analytics?season=20252026')
+    )
+
+    expect(res.status).toBe(502)
+  })
+
+  // Regression: this route previously had no whole-season-empty fallback at
+  // all (unlike /player-analytics's Session 66 fix) -- every goalie showed
+  // "analytics not yet available" for the entire gap between a live season
+  // flip and that season's first real games, not just goalies genuinely
+  // below the GP/gsax-not-null floor. Found while wiring a header radar
+  // chart for goalies (2026-08) that reused this exact route.
+  describe('the live season has zero rows (season flipped ahead of real data)', () => {
+    function mockFetchWithPriorSeason(priorRows) {
+      globalThis.fetch = vi.fn((url) => {
+        const u = String(url)
+        if (u.includes('season=eq.20262027')) {
+          return Promise.resolve({ ok: true, json: async () => [] }) // live season: nothing yet
+        }
+        if (u.includes('season=eq.20252026')) {
+          return Promise.resolve({ ok: true, json: async () => priorRows })
+        }
+        throw new Error(`unexpected fetch: ${u}`)
+      })
+    }
+
+    it('falls back one season back and flags the result as stale with the specific season', async () => {
+      mockFetchWithPriorSeason([{ player_id: 8479979, gsax: 12.4, pct_gsax: 88 }])
+
+      const res = await handleNHL(
+        makeRequest('/goalie-analytics?season=20262027'), makeEnv(), makeCtx(),
+        new URL('https://example.com/goalie-analytics?season=20262027')
+      )
+
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body).toEqual({
+        rows: [{ player_id: 8479979, gsax: 12.4, pct_gsax: 88 }],
+        statsStale: true,
+        statsSeason: '20252026',
+      })
+    })
+
+    it('degrades to an explicit empty, non-stale result when the prior season has no rows either', async () => {
+      mockFetchWithPriorSeason([])
+
+      const res = await handleNHL(
+        makeRequest('/goalie-analytics?season=20262027'), makeEnv(), makeCtx(),
+        new URL('https://example.com/goalie-analytics?season=20262027')
+      )
+
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body).toEqual({ rows: [], statsStale: false, statsSeason: null })
+    })
+  })
+})
+
 describe('GET /player-results-vs-process', () => {
   it('400s when playerId is missing', async () => {
     const env = makeEnv()
