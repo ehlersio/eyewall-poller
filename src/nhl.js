@@ -2099,21 +2099,52 @@ export async function handleNHL(request, env, ctx, url) {
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
+    const GOALIE_COLS = 'player_id,team,games_played,gsax,gsax_per60,qs_pct,qs,' +
+      'ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,' +
+      'pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv';
+
+    async function fetchGoalieAnalytics(forSeason) {
+      return sbRows(
+        `goalie_seasons?season=eq.${forSeason}&game_type=eq.2&gsax=not.is.null&select=${GOALIE_COLS}`
+      );
+    }
+
     let rows;
     try {
-      rows = await sbRows(
-        `goalie_seasons?season=eq.${season}&game_type=eq.2` +
-        `&gsax=not.is.null` +
-        `&select=player_id,team,games_played,gsax,gsax_per60,qs_pct,qs,` +
-        `ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,` +
-        `pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv`
-      );
+      rows = await fetchGoalieAnalytics(season);
     } catch (e) {
       return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
     }
 
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+    // Whole-season-empty fallback (mirrors /player-analytics's Session 66
+    // fix, ported here 2026-08 -- this route never had it, which meant
+    // EVERY goalie showed "analytics not yet available" for the entire
+    // gap between a live season flip and that season's first real games,
+    // not just goalies genuinely below the GP floor). Same reasoning: the
+    // live season can resolve ahead of any real games (schedule released
+    // before puck drop), leaving `gsax=not.is.null` match nothing for it --
+    // not a per-goalie gap, so falling back to a whole prior season's rows
+    // is correct. Flagged via statsStale/statsSeason, not silent.
+    let statsStale = false;
+    let statsSeason = null;
+    if (rows.length === 0) {
+      const priorSeason = String(Number(season) - 10001); // 20262027 -> 20252026
+      try {
+        const fallback = await fetchGoalieAnalytics(priorSeason);
+        if (fallback.length > 0) {
+          rows = fallback;
+          statsStale = true;
+          statsSeason = priorSeason;
+        }
+      } catch {
+        // Fallback query itself failed -- degrade to the empty live-season
+        // result rather than failing the whole request over it.
+      }
+    }
+
+    const result = { rows, statsStale, statsSeason };
+    await kvPut(env, kvKey, result, 3600);
+    return json(result);
   }
 
   if (url.pathname === '/team-lines') {
