@@ -1185,6 +1185,79 @@ Only reference the two teams named above and the numbers given -- no player name
     return json(data);
   }
 
+  // GET /pwhl/goalie/percentiles?id=222&season=8&seasonType=regular
+  // Goalie-side analog of /pwhl/player/percentiles just above -- same
+  // single player/season/season_type lookup shape, same reasoning for why
+  // (eyewall-pipeline's pwhl_goalie_percentiles.py precomputes everything
+  // league-wide and stores it directly on pwhl_goalie_seasons, so there's
+  // nothing to compute here either). Separate route rather than folding
+  // into /pwhl/player/percentiles because the data lives on a different
+  // table (pwhl_goalie_seasons, not pwhl_player_seasons) with a disjoint
+  // column set -- same "different table, parallel route" split NHL's own
+  // /player-analytics vs /goalie-analytics already uses.
+  //
+  // Until eyewall-pipeline's DDL lands (see that PR's description for the
+  // exact ALTER TABLE -- gsax/gsax_percentile already existed as
+  // never-populated placeholders, renamed + extended), this select 502s on
+  // an unknown column rather than returning nulls. Once the columns exist,
+  // an unqualified/pre-pipeline row (or a goalie who hasn't cleared
+  // pwhl_goalie_percentiles.py's MIN_GP) still resolves cleanly: no row
+  // found, or found with pct_* all null, both return 200 with null
+  // percentile fields -- same "not enough data yet" convention as every
+  // other percentile route in this codebase.
+  if (url.pathname === '/pwhl/goalie/percentiles') {
+    const playerId    = url.searchParams.get('id');
+    const seasonQuery = url.searchParams.get('season');
+    const seasonType  = url.searchParams.get('seasonType') || 'regular';
+    if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey  = `pwhl:goalie:percentiles:${playerId}:${seasonQuery || 'latest'}:${seasonType}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+    const cols = 'player_id,team_id,season_id,season_type,gsax,gsax_per60,' +
+      'ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,' +
+      'pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv';
+    const statsQuery = seasonQuery
+      ? `player_id=eq.${playerId}&season_id=eq.${seasonQuery}&season_type=eq.${seasonType}&limit=1&select=${cols}`
+      : `player_id=eq.${playerId}&season_type=eq.${seasonType}&order=season_id.desc&limit=1&select=${cols}`;
+
+    let rows;
+    try {
+      const r = await fetch(`${SB_URL}/rest/v1/pwhl_goalie_seasons?${statsQuery}`, { headers: sbH });
+      if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
+      rows = await r.json();
+    } catch (e) {
+      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    const row = rows[0] || {};
+    const data = {
+      player_id:   parseInt(playerId, 10),
+      team_id:     row.team_id ?? null,
+      season_id:   row.season_id ?? (seasonQuery ? parseInt(seasonQuery, 10) : null),
+      season_type: row.season_type ?? seasonType,
+      gsax:   row.gsax        ?? null,
+      gsax60: row.gsax_per60  ?? null,
+      evSvPct: row.ev_sv_pct != null ? Math.round(row.ev_sv_pct * 1000) / 10 : null,
+      hdSvPct: row.hd_sv_pct != null ? Math.round(row.hd_sv_pct * 1000) / 10 : null,
+      mdSvPct: row.md_sv_pct != null ? Math.round(row.md_sv_pct * 1000) / 10 : null,
+      pkSvPct: row.pk_sv_pct != null ? Math.round(row.pk_sv_pct * 1000) / 10 : null,
+      percentiles: {
+        gsax:   { pct: row.pct_gsax   ?? null, label: 'GSAX',            note: 'Percentile rank vs PWHL goalies, goals saved above expected (danger-zone xG proxy)' },
+        gsax60: { pct: row.pct_gsax60 ?? null, label: 'GSAX/60',         note: 'Percentile rank vs PWHL goalies, GSAX per 60 minutes' },
+        evSv:   { pct: row.pct_ev_sv  ?? null, label: '5-on-5 SV%',      note: 'Percentile rank vs PWHL goalies, even-strength save percentage' },
+        hdSv:   { pct: row.pct_hd_sv  ?? null, label: 'High Danger SV%', note: 'Percentile rank vs PWHL goalies, high-danger save percentage' },
+        mdSv:   { pct: row.pct_md_sv  ?? null, label: 'Med Danger SV%',  note: 'Percentile rank vs PWHL goalies, medium-danger save percentage' },
+        pkSv:   { pct: row.pct_pk_sv  ?? null, label: 'PK SV%',          note: 'Percentile rank vs PWHL goalies, penalty-kill save percentage' },
+      },
+    };
+
+    await kvPut(env, kvKey, data, 3600); // 1hr -- matches /pwhl/player/percentiles' TTL
+    return json(data);
+  }
+
   // GET /pwhl/player/career?id=198
   // Live proxy for HockeyTech's view=player careerStats Total rows -- the
   // server already computes correctly-weighted career totals server-side
