@@ -1392,6 +1392,147 @@ describe('GET /pwhl/player/percentiles', () => {
   })
 })
 
+describe('GET /pwhl/goalie/percentiles', () => {
+  it('returns 400 when id is missing', async () => {
+    const res = await handlePWHL(
+      makeRequest('/pwhl/goalie/percentiles'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/goalie/percentiles')
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('serves from KV cache, keyed per season+seasonType, without hitting Supabase', async () => {
+    const env = makeEnv({
+      CACHE: { async get(key) {
+        return key === 'pwhl:goalie:percentiles:222:8:regular' ? JSON.stringify({ player_id: 222, gsax: 65.99 }) : null
+      }, async put() {} },
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/goalie/percentiles?id=222&season=8'), env, makeCtx(),
+      new URL('https://example.com/pwhl/goalie/percentiles?id=222&season=8')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ player_id: 222, gsax: 65.99 })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('returns a clean null-percentiles response (not an error) when no row exists yet', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/goalie/percentiles?id=999&season=8'), makeEnv(), makeCtx(),
+      new URL('https://example.com/pwhl/goalie/percentiles?id=999&season=8')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({
+      player_id: 999, season_id: 8, season_type: 'regular',
+      gsax: null, gsax60: null, evSvPct: null, hdSvPct: null, mdSvPct: null, pkSvPct: null,
+    })
+    expect(body.percentiles).toEqual({
+      gsax:   { pct: null, label: 'GSAX',            note: expect.any(String) },
+      gsax60: { pct: null, label: 'GSAX/60',         note: expect.any(String) },
+      evSv:   { pct: null, label: '5-on-5 SV%',      note: expect.any(String) },
+      hdSv:   { pct: null, label: 'High Danger SV%', note: expect.any(String) },
+      mdSv:   { pct: null, label: 'Med Danger SV%',  note: expect.any(String) },
+      pkSv:   { pct: null, label: 'PK SV%',          note: expect.any(String) },
+    })
+  })
+
+  it('returns null percentile fields (not an error) when the row exists but pct_* columns are still null', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{
+        player_id: 222, team_id: 5, season_id: 8, season_type: 'regular',
+        gsax: null, gsax_per60: null, ev_sv_pct: null, hd_sv_pct: null, md_sv_pct: null, pk_sv_pct: null,
+        pct_gsax: null, pct_gsax60: null, pct_ev_sv: null, pct_hd_sv: null, pct_md_sv: null, pct_pk_sv: null,
+      }],
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/goalie/percentiles?id=222&season=8'), makeEnv(), makeCtx(),
+      new URL('https://example.com/pwhl/goalie/percentiles?id=222&season=8')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.gsax).toBeNull()
+    expect(body.percentiles.gsax.pct).toBeNull()
+    expect(body.percentiles.pkSv.pct).toBeNull()
+  })
+
+  it('returns populated percentiles for a fully-computed row, pinned to season+seasonType, with SV% rounded to 1 decimal as a percentage', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{
+        player_id: 222, team_id: 5, season_id: 8, season_type: 'regular',
+        gsax: 65.99, gsax_per60: 2.409,
+        ev_sv_pct: 0.9267, hd_sv_pct: 0.8734, md_sv_pct: 0.9095, pk_sv_pct: 0.902,
+        pct_gsax: 91, pct_gsax60: 91, pct_ev_sv: 64, pct_hd_sv: 73, pct_md_sv: 64, pct_pk_sv: 36,
+      }],
+    })
+
+    const env = makeEnv()
+    const res = await handlePWHL(
+      makeRequest('/pwhl/goalie/percentiles?id=222&season=8&seasonType=regular'), env, makeCtx(),
+      new URL('https://example.com/pwhl/goalie/percentiles?id=222&season=8&seasonType=regular')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({
+      player_id: 222, team_id: 5, season_id: 8, season_type: 'regular',
+      gsax: 65.99, gsax60: 2.409,
+      evSvPct: 92.7, hdSvPct: 87.3, mdSvPct: 91, pkSvPct: 90.2,
+    })
+    expect(body.percentiles.gsax.pct).toBe(91)
+    expect(body.percentiles.gsax60.pct).toBe(91)
+    expect(body.percentiles.evSv.pct).toBe(64)
+    expect(body.percentiles.hdSv.pct).toBe(73)
+    expect(body.percentiles.mdSv.pct).toBe(64)
+    expect(body.percentiles.pkSv.pct).toBe(36)
+
+    const statsCall = globalThis.fetch.mock.calls.find(([u]) => String(u).includes('pwhl_goalie_seasons'))
+    expect(statsCall[0]).toContain('season_id=eq.8')
+    expect(statsCall[0]).toContain('season_type=eq.regular')
+    expect(statsCall[0]).not.toContain('order=season_id.desc')
+
+    const cached = await env.CACHE.get('pwhl:goalie:percentiles:222:8:regular')
+    expect(JSON.parse(cached)).toEqual(body)
+  })
+
+  it('defaults to season_type=regular and the most recent season_id when season is omitted', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ player_id: 222, team_id: 5, season_id: 8, season_type: 'regular', pct_gsax: 50, pct_gsax60: 50, pct_ev_sv: 50, pct_hd_sv: 50, pct_md_sv: 50, pct_pk_sv: 50 }],
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/goalie/percentiles?id=222'), makeEnv(), makeCtx(),
+      new URL('https://example.com/pwhl/goalie/percentiles?id=222')
+    )
+
+    expect(res.status).toBe(200)
+    const statsCall = globalThis.fetch.mock.calls.find(([u]) => String(u).includes('pwhl_goalie_seasons'))
+    expect(statsCall[0]).toContain('season_type=eq.regular')
+    expect(statsCall[0]).toContain('order=season_id.desc')
+    expect(statsCall[0]).not.toContain('season_id=eq.')
+  })
+
+  it('returns 502 when the Supabase fetch fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/goalie/percentiles?id=222&season=8'), makeEnv(), makeCtx(),
+      new URL('https://example.com/pwhl/goalie/percentiles?id=222&season=8')
+    )
+
+    expect(res.status).toBe(502)
+  })
+})
+
 describe('GET /pwhl/player/career', () => {
   // Shape matches a real live view=player pull (Session 74 investigation,
   // player_id=31 -- Marie-Philip Poulin): careerStats[0].sections[], each
