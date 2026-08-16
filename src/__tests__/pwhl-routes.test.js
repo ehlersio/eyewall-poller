@@ -1533,6 +1533,71 @@ describe('GET /pwhl/goalie/percentiles', () => {
   })
 })
 
+describe('GET /pwhl/goalie-shots', () => {
+  it('returns 400 when goalieId is missing', async () => {
+    const res = await handlePWHL(
+      makeRequest('/pwhl/goalie-shots'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/goalie-shots')
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('serves from KV cache without hitting Supabase', async () => {
+    const env = makeEnv({
+      CACHE: { async get(key) {
+        return key === 'pwhl:gshots:6:8' ? JSON.stringify({ shots: [{ x: 10, y: 0, t: 'g', p: 1 }], total: 1 }) : null
+      }, async put() {} },
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/goalie-shots?goalieId=6&season=8'), env, makeCtx(),
+      new URL('https://example.com/pwhl/goalie-shots?goalieId=6&season=8')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ shots: [{ x: 10, y: 0, t: 'g', p: 1 }], total: 1 })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('queries goalie_id + season_id, excludes blocked_shot, maps event_type to g/s, and folds negative x', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { event_type: 'goal', period_id: 1, time_seconds: 120, x_norm: 12.5, y_norm: -3.2 },
+        { event_type: 'shot', period_id: 2, time_seconds: 340, x_norm: -20, y_norm: 5 },
+      ],
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/goalie-shots?goalieId=6&season=8'), makeEnv(), makeCtx(),
+      new URL('https://example.com/pwhl/goalie-shots?goalieId=6&season=8')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.total).toBe(2)
+    expect(body.shots).toEqual([
+      { x: 12.5, y: -3.2, t: 'g', p: 1 },
+      { x: 20, y: -5, t: 's', p: 2 }, // folded: x was negative, x/y sign flipped
+    ])
+
+    const call = globalThis.fetch.mock.calls[0][0]
+    expect(call).toContain('goalie_id=eq.6')
+    expect(call).toContain('season_id=eq.8')
+    expect(call).toContain('event_type=in.(goal,shot)')
+  })
+
+  it('returns 502 when the Supabase fetch fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/goalie-shots?goalieId=6&season=8'), makeEnv(), makeCtx(),
+      new URL('https://example.com/pwhl/goalie-shots?goalieId=6&season=8')
+    )
+
+    expect(res.status).toBe(502)
+  })
+})
+
 describe('GET /pwhl/player/career', () => {
   // Shape matches a real live view=player pull (Session 74 investigation,
   // player_id=31 -- Marie-Philip Poulin): careerStats[0].sections[], each

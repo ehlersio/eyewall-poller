@@ -1664,6 +1664,45 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
     return json(result);
   }
 
+  // GET /pwhl/goalie-shots?goalieId=6&season=8
+  // Shots faced by a specific goalie, for the goalie heat map. Mirrors
+  // /pwhl/player-shots's shape/normalisation exactly, but filters
+  // goalie_id instead of shooter_id and excludes blocked_shot -- a
+  // blocked shot never reaches the goalie at all (same convention
+  // pwhl_goalie_percentiles.py's GOALIE_FACED_TYPES uses).
+  if (url.pathname === '/pwhl/goalie-shots') {
+    const goalieId = parseInt(url.searchParams.get('goalieId') || '0', 10);
+    const season    = await seasonParam(url, env);
+    if (!goalieId) return new Response(JSON.stringify({ error: 'goalieId required' }), { status: 400, headers: corsHeaders() });
+    const kvKey  = `pwhl:gshots:${goalieId}:${season}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+    const r = await fetch(
+      `${SB_URL}/rest/v1/pwhl_shot_events?goalie_id=eq.${goalieId}&season_id=eq.${season}` +
+      `&event_type=in.(goal,shot)&select=event_type,period_id,time_seconds,x_norm,y_norm&limit=1500`,
+      { headers: { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` } }
+    );
+    if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
+    const rows = await r.json();
+    // Normalise coordinates: fold to positive x (attacking direction) --
+    // same defensive fold /pwhl/player-shots applies against this same
+    // table (x_norm is already attack-direction-normalised at ingestion,
+    // this just guards the rare deep-defensive-zone outlier).
+    const shots = rows.map(r => {
+      let x = parseFloat(r.x_norm), y = parseFloat(r.y_norm);
+      if (x < 0) { x = -x; y = -y; }
+      return {
+        x: Math.min(Math.abs(x), 99),
+        y: Math.max(-42, Math.min(42, y)),
+        t: r.event_type === 'goal' ? 'g' : 's',
+        p: r.period_id,
+      };
+    }).filter(s => !isNaN(s.x) && !isNaN(s.y));
+    const result = { shots, total: shots.length };
+    await kvPut(env, kvKey, result, 3600 * 6); // 6hr cache
+    return json(result);
+  }
+
   // GET /pwhl/news
   if (url.pathname === '/pwhl/news' && request.method === 'GET') {
     const cached = await kvGet(env, 'pwhl:news');
