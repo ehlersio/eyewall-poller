@@ -220,6 +220,7 @@ Key patterns:
 | `GET` | `/pwhl/player/landing?id=&season=` | Single player's identity + one season's stat line, merged (pwhl_players + pwhl_player_seasons/pwhl_goalie_seasons). Powers `PWHLPlayerPopup`'s self-fetch-by-id. `season` pins the stat line to that `season_id`; omitted, falls back to the most recent regular-season row. |
 | `GET` | `/pwhl/player/career?id=` | Career Regular Season / Playoffs totals, live proxy of HockeyTech's `view=player` server-computed `careerStats` Total rows (no Supabase, no aggregation on this side). `playoffs` is `null` if the player hasn't made the playoffs yet. |
 | `GET` | `/pwhl/player-shots?playerId=&season=` | Player shot heat map data |
+| `GET` | `/pwhl/goalie-shots?goalieId=&season=` | Shots faced by a specific goalie, for the goalie heat map (Session 100) — mirrors `/pwhl/player-shots`'s query/normalisation shape against `pwhl_shot_events.goalie_id`, excludes `blocked_shot` (never reaches the goalie) |
 | `GET` | `/pwhl/today?season=` | Today's games with live status |
 | `GET` | `/pwhl/live/:gameId` | Live PBP + normalized events |
 | `GET` | `/pwhl/news` | PWHL news feed |
