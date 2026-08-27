@@ -235,6 +235,25 @@ describe('GET /trivia/today', () => {
     expect(body.easy).toBeNull()
     expect(body.hard).toEqual(staleHard)
   })
+
+  it('defaults to locale=en when ?locale is omitted, and filters every tier by ?locale=fr', async () => {
+    // Track B Phase B2 -- trivia_questions is keyed on
+    // (question_date, tier, sport, team, locale) as of Phase B0/B1
+    // (eyewall-pipeline). Applied uniformly to all three tiers, including
+    // hard (see nhl.js/worker.js's inline comment on the /trivia/today
+    // handler for why an empty hard tier under locale=fr is expected, not
+    // a bug, until French hard-tier rows exist).
+    const seen = []
+    mockSupabaseFetch((u) => {
+      seen.push(u)
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    await worker.fetch(makeRequest('/trivia/today?sport=nhl&team=CAR&locale=fr'), makeEnv(), makeCtx())
+
+    expect(seen.length).toBe(3)
+    for (const u of seen) expect(u).toContain('locale=eq.fr')
+  })
 })
 
 describe('GET /milestones/latest', () => {

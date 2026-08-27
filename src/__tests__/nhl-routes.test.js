@@ -395,8 +395,34 @@ describe('GET /player-results-vs-process', () => {
     expect(String(fetchedUrl)).toContain('narrative_type=eq.results_vs_process')
     expect(String(fetchedUrl)).toContain('player_id=eq.8471685')
 
-    const cached = await env.CACHE.get('nhl:player-results-vs-process:8471685:20252026')
+    const cached = await env.CACHE.get('nhl:player-results-vs-process:8471685:20252026:en')
     expect(JSON.parse(cached)[0].narrative_text).toContain('outperforming')
+  })
+
+  it('defaults to locale=en when ?locale is omitted or unrecognized, and honors ?locale=fr', async () => {
+    // Track B Phase B2 -- player_narratives is keyed on
+    // (player_id, season, team, narrative_type, locale) as of Phase B0/B1
+    // (eyewall-pipeline), so this filter and cache-key suffix are required
+    // once both locales exist for the same player/season.
+    const env = makeEnv()
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ narrative_text: 'texte français', generated_at: '2026-01-01' }],
+    })
+
+    await handleNHL(
+      makeRequest('/player-results-vs-process?playerId=1&season=20252026&locale=fr'), env, makeCtx(),
+      new URL('https://example.com/player-results-vs-process?playerId=1&season=20252026&locale=fr')
+    )
+    expect(String(globalThis.fetch.mock.calls[0][0])).toContain('locale=eq.fr')
+    expect(await env.CACHE.get('nhl:player-results-vs-process:1:20252026:fr')).not.toBeNull()
+
+    globalThis.fetch.mockClear()
+    await handleNHL(
+      makeRequest('/player-results-vs-process?playerId=2&season=20252026&locale=de'), env, makeCtx(),
+      new URL('https://example.com/player-results-vs-process?playerId=2&season=20252026&locale=de')
+    )
+    expect(String(globalThis.fetch.mock.calls[0][0])).toContain('locale=eq.en')
   })
 
   it('returns an empty array (not a 502) when the Supabase fetch fails', async () => {

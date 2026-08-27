@@ -2519,15 +2519,22 @@ Only reference the two teams named above and the numbers given -- no player name
     const gameId = url.searchParams.get('gameId');
     const team   = url.searchParams.get('team')?.toUpperCase();
     if (!gameId || !team) return new Response(JSON.stringify({ error: 'gameId and team required' }), { status: 400, headers: corsHeaders() });
+    // French/English localization, Track B Phase B2 -- defaults to 'en' for
+    // any missing/unrecognized value rather than erroring, same posture as
+    // this file's existing team/season param handling below. game_summaries
+    // rows are keyed on (game_id, team, locale) as of Track B Phase B0/B1
+    // (eyewall-pipeline), so this filter is required, not optional, once
+    // both locales exist for the same game/team.
+    const locale = url.searchParams.get('locale') === 'fr' ? 'fr' : 'en';
 
-    const kvKey  = `nhl:game-summary:${gameId}:${team}`;
+    const kvKey  = `nhl:game-summary:${gameId}:${team}:${locale}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
     let rows;
     try {
       rows = await sbRows(
-        `game_summaries?game_id=eq.${gameId}&team=eq.${team}` +
+        `game_summaries?game_id=eq.${gameId}&team=eq.${team}&locale=eq.${locale}` +
         `&select=summary_text,card_text,generated_at&limit=1`
       );
     } catch {
@@ -2542,15 +2549,16 @@ Only reference the two teams named above and the numbers given -- no player name
     const playerId = url.searchParams.get('playerId');
     const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     if (!playerId) return new Response(JSON.stringify({ error: 'playerId required' }), { status: 400, headers: corsHeaders() });
+    const locale = url.searchParams.get('locale') === 'fr' ? 'fr' : 'en'; // Track B Phase B2
 
-    const kvKey  = `nhl:player-scouting:${playerId}:${season}`;
+    const kvKey  = `nhl:player-scouting:${playerId}:${season}:${locale}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
     let rows;
     try {
       rows = await sbRows(
-        `player_scouting?player_id=eq.${playerId}&season=eq.${season}` +
+        `player_scouting?player_id=eq.${playerId}&season=eq.${season}&locale=eq.${locale}` +
         `&select=scouting_text,generated_at&limit=1`
       );
     } catch {
@@ -2570,8 +2578,9 @@ Only reference the two teams named above and the numbers given -- no player name
     const playerId = url.searchParams.get('playerId');
     const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     if (!playerId) return new Response(JSON.stringify({ error: 'playerId required' }), { status: 400, headers: corsHeaders() });
+    const locale = url.searchParams.get('locale') === 'fr' ? 'fr' : 'en'; // Track B Phase B2
 
-    const kvKey  = `nhl:player-results-vs-process:${playerId}:${season}`;
+    const kvKey  = `nhl:player-results-vs-process:${playerId}:${season}:${locale}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
@@ -2579,7 +2588,7 @@ Only reference the two teams named above and the numbers given -- no player name
     try {
       rows = await sbRows(
         `player_narratives?player_id=eq.${playerId}&season=eq.${season}` +
-        `&narrative_type=eq.results_vs_process` +
+        `&narrative_type=eq.results_vs_process&locale=eq.${locale}` +
         `&select=narrative_text,generated_at&limit=1`
       );
     } catch {

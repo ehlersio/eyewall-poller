@@ -278,9 +278,18 @@ async function handleRequest(request, env, ctx) {
       return badRequest('sport must be nhl or pwhl');
     }
     const team = url.searchParams.get('team')?.toUpperCase() || null;
+    // French/English localization, Track B Phase B2. Applied uniformly to
+    // all three tiers including hard, even though hard is hand-curated
+    // with no admin UI and every existing hard row defaults to locale='en'
+    // (Track B Phase B0's schema default) -- there is no French hard-tier
+    // content yet. A French request's hard tier will legitimately come back
+    // empty until Matt adds French hard rows by hand; that's the same
+    // "not published yet" empty state this route already falls back to for
+    // other gaps, not a bug in this filter.
+    const locale = url.searchParams.get('locale') === 'fr' ? 'fr' : 'en';
 
     const today  = new Date().toISOString().slice(0, 10);
-    const kvKey  = `trivia:${today}:${sport}:${team || 'ALL'}`;
+    const kvKey  = `trivia:${today}:${sport}:${team || 'ALL'}:${locale}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
@@ -298,7 +307,7 @@ async function handleRequest(request, env, ctx) {
       const dateFilter = fallback
         ? `question_date=lte.${today}&order=question_date.desc`
         : `question_date=eq.${today}`;
-      const filter = `?${dateFilter}&tier=eq.${tier}&sport=eq.${sport}&team=eq.${teamFilter}&limit=1`;
+      const filter = `?${dateFilter}&tier=eq.${tier}&sport=eq.${sport}&team=eq.${teamFilter}&locale=eq.${locale}&limit=1`;
       const r = await fetch(`${SB_URL}/rest/v1/trivia_questions${filter}`, { headers: sbHeaders() });
       if (!r.ok) return null;
       const rows = await r.json();
