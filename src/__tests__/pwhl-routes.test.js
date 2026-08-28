@@ -1894,3 +1894,75 @@ describe('GET /pwhl/player/career', () => {
     expect(res.status).toBe(502)
   })
 })
+
+describe('GET /pwhl/transactions', () => {
+  // Shape matches a real live view=transactions pull (PWHL parity
+  // investigation, 2026-08-27): sections[0] title "transaction_results",
+  // player_name includes position inline, "from" is empty in every real
+  // example seen so far (presumably populates for trades/waiver claims).
+  function transactionsPayload() {
+    return [{
+      sections: [
+        {
+          title: 'transaction_results',
+          data: [
+            { row: { transaction_date: '2026-08-27', player_name: 'Neena Brick (F)', team_city: 'Seattle', team_name: 'Seattle Torrent', division: 'PWHL', transaction_type: 'ADD', transaction: 'Signed', from: '' } },
+            { row: { transaction_date: '2026-08-17', player_name: 'Casey Borgiel (D)', team_city: 'Detroit', team_name: 'PWHL Detroit', division: 'PWHL', transaction_type: 'ADD', transaction: 'Signed', from: '' } },
+          ],
+        },
+        {
+          title: 'num_results',
+          data: [{ row: { num_results: '163' } }],
+        },
+      ],
+    }]
+  }
+
+  it('serves from KV cache without hitting HockeyTech', async () => {
+    const cached = { transactions: [{ date: '2026-08-27', player: 'Neena Brick (F)', team: 'Seattle Torrent', type: 'ADD', action: 'Signed', from: '' }] }
+    const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:transactions:8': cached }) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/transactions?season=8'), env, makeCtx(), new URL('https://example.com/pwhl/transactions?season=8')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cached)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('normalizes a live payload into a flat transactions list, ignoring the num_results section', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(transactionsPayload()) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/transactions?season=8'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/transactions?season=8')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.transactions).toEqual([
+      { date: '2026-08-27', player: 'Neena Brick (F)', team: 'Seattle Torrent', type: 'ADD', action: 'Signed', from: '' },
+      { date: '2026-08-17', player: 'Casey Borgiel (D)', team: 'PWHL Detroit', type: 'ADD', action: 'Signed', from: '' },
+    ])
+  })
+
+  it('502s when the HockeyTech fetch fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/transactions?season=8'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/transactions?season=8')
+    )
+
+    expect(res.status).toBe(502)
+  })
+
+  it('502s when the HockeyTech response fails to parse', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => 'not json' })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/transactions?season=8'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/transactions?season=8')
+    )
+
+    expect(res.status).toBe(502)
+  })
+})

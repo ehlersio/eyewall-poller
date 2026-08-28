@@ -1379,6 +1379,52 @@ Only reference the two teams named above and the numbers given -- no player name
     return json(data);
   }
 
+  // GET /pwhl/transactions?season=8
+  // Live proxy for HockeyTech's view=transactions -- league-wide signings/
+  // moves feed, confirmed live and fully populated (real 2026-08 signings
+  // during the offseason). Genuinely new fetch -- unlike /pwhl/summary and
+  // /pwhl/player/career above, nothing already calls this view.
+  //
+  // Deliberately NOT handling the response's second "num_results" section /
+  // pagination -- HockeyTech's default page (50 rows) is plenty for a
+  // "recent transactions" feed; out of scope for v1.
+  //
+  // 24hr TTL -- same "changes when an event happens, not continuously"
+  // class as /pwhl/player/career, not real-time data.
+  if (url.pathname === '/pwhl/transactions') {
+    const season = await seasonParam(url, env);
+    const kvKey  = `pwhl:transactions:${season}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const htRes = await fetch(
+      `${HT_BASE}?feed=statviewfeed&view=transactions&season=${season}&key=${HT_KEY}&client_code=pwhl&lang=en&league_id=`,
+      { headers: HT_HDR }
+    );
+    if (!htRes.ok) return new Response(JSON.stringify({ error: `HockeyTech ${htRes.status}` }), { status: 502, headers: corsHeaders() });
+
+    let raw;
+    try {
+      const parsed = unwrapJsonp(await htRes.text());
+      raw = Array.isArray(parsed) ? parsed[0] : parsed;
+    } catch (e) {
+      return new Response(JSON.stringify({ error: 'transactions parse failed', detail: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    const rows = extractRows(raw?.sections, 'transaction_results').map(r => ({
+      date:   r.transaction_date || null,
+      player: r.player_name || '',   // includes position inline, e.g. "Neena Brick (F)"
+      team:   r.team_name || r.team_city || '',
+      type:   r.transaction_type || '',   // "ADD" confirmed live; other values unconfirmed
+      action: r.transaction || '',        // "Signed" confirmed live
+      from:   r.from || '',               // empty in every example seen -- presumably populates for trades
+    }));
+
+    const data = { transactions: rows };
+    await kvPut(env, kvKey, data, 24 * 3600);
+    return json(data);
+  }
+
   // GET /pwhl/lastgame?teamId=1&season=8
   // Returns the most recent completed game with opponent abbr resolved.
   if (url.pathname === '/pwhl/lastgame') {
