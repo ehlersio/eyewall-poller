@@ -15,7 +15,7 @@ src/
 
 Wrangler bundles all modules on deploy. The scheduled trigger (`* * * * *`) runs `poll()`, `pollPWHL()`, `refreshPPUnits()`, and `refreshSeasonsCache()` every 60 seconds during the season to keep NHL/PWHL data and the resolved season fresh in KV.
 
-Bindings: `CACHE` (KV), `AI` (Workers AI — required for all narrative/scouting endpoints), `AI_ROUTE_LIMITER` (Rate Limit — guards the 4 unauthenticated AI-calling routes from public-cost abuse).
+Bindings: `CACHE` (KV), `AI_ROUTE_LIMITER` (Rate Limit — guards the 4 unauthenticated AI-calling routes from public-cost abuse). AI generation (all narrative/scouting endpoints) went through a `[ai]` Workers AI binding until 2026-08; it's now a plain `fetch()` to OpenRouter (`OPENROUTER_API_KEY` secret) instead — see [Model provider](#model-provider-openrouter) below.
 
 ## Live Season Resolution
 
@@ -79,7 +79,7 @@ npm install -D vitest
 npm run test    # or: npx vitest run
 ```
 
-`vitest.config.js` runs under plain Node (`environment: 'node'`), not `@cloudflare/vitest-pool-workers` — deliberately. Route handlers only touch Workers-specific APIs via `env.CACHE`/`env.AI`/`env.AI_ROUTE_LIMITER`, all of which mock cleanly without a real Workers runtime (see `src/__tests__/route-harness.js`).
+`vitest.config.js` runs under plain Node (`environment: 'node'`), not `@cloudflare/vitest-pool-workers` — deliberately. Route handlers only touch Workers-specific APIs via `env.CACHE`/`env.AI_ROUTE_LIMITER`, both of which mock cleanly without a real Workers runtime (see `src/__tests__/route-harness.js`). AI generation is a plain `fetch()` call (OpenRouter, since 2026-08) rather than a Workers binding, so it's mocked the same way as every other external call — `mockFetchWithAI()`/`aiCalls()`/`aiPrompt()` in the same harness file.
 
 Test files:
 - `src/__tests__/seasons.test.js` — `seasons.js`'s own resolution logic. Covers: the manual override, KV cache hits, the "reject a zero-games-played candidate" fallback, the "reject a hidden `current_season_id`" fallback, and — the two tests that actually matter most — a regression test asserting `feed=statviewfeed` (not `feed=modulekit`) gets called, and a fixture built from the real 2026-07-05 production bootstrap payload confirming resolution picks season 8 (regular) over season 9 (playoffs) even though 9 is more recent by date. Both of those fixtures exist because they're exactly the two real bugs that shipped to production before being caught.
@@ -103,6 +103,7 @@ Set via `wrangler secret put <NAME>`. Never commit values.
 
 | Secret | Description |
 |--------|-------------|
+| `OPENROUTER_API_KEY` | AI generation for every narrative/scouting/prediction route (`shared.js`'s `generateText()`) — see [Model provider](#model-provider-openrouter) below |
 | `POLL_SECRET` | Protects `POST /poll` manual trigger |
 | `VAPID_PRIVATE_KEY` | Web Push VAPID private key |
 | `VAPID_PUBLIC_KEY` | Web Push VAPID public key |
@@ -117,8 +118,15 @@ Set via `wrangler secret put <NAME>`. Never commit values.
 | Binding | Type | Description |
 |---------|------|-------------|
 | `CACHE` | KV Namespace | All KV read/write operations |
-| `AI` | Workers AI | Required for `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/prediction/analyze`, `/draft/analyze`, `/pwhl/prediction`, `/team-seasons/head-to-head/narrative`, `/pwhl/team-seasons/head-to-head/narrative` |
-| `AI_ROUTE_LIMITER` | Rate Limit | Per-IP, per-route limit (10 req/60s) on the AI-calling routes with no secret check — `/prediction/analyze`, `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/pwhl/prediction`, `/team-seasons/head-to-head/narrative`, `/pwhl/team-seasons/head-to-head/narrative`. Provisioned automatically from `wrangler.toml` at deploy time, no dashboard setup needed. |
+| `AI_ROUTE_LIMITER` | Rate Limit | Per-IP, per-route limit (10 req/60s) on the AI-calling routes with no secret check — `/prediction/analyze`, `/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/pwhl/prediction`, `/team-seasons/head-to-head/narrative`, `/pwhl/team-seasons/head-to-head/narrative`. Provisioned automatically from `wrangler.toml` at deploy time, no dashboard setup needed. Unrelated to which AI provider those routes call — unaffected by the OpenRouter migration below. |
+
+### Model provider: OpenRouter
+
+AI generation (`/summary/narrative`, `/pwhl/summary/narrative`, `/pwhl/scout`, `/prediction/analyze`, `/draft/analyze`, `/pwhl/prediction`, `/team-seasons/head-to-head/narrative`, `/pwhl/team-seasons/head-to-head/narrative`, plus the internal `generateGameSummary()`/`buildPreseasonFallback()` helpers — 11 call sites total) went through a Cloudflare Workers AI `[ai]` binding (`env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', ...)`) until 2026-08. All 11 now call `shared.js`'s `generateText(env, {messages, max_tokens})`, a plain `fetch()` to OpenRouter's `google/gemma-4-26b-a4b-it` — the `[ai]` binding was removed from `wrangler.toml` since nothing reads `env.AI` anymore.
+
+Same model swap and reasoning as `eyewall-pipeline`'s `ai_client.py` (see that repo's README for the full writeup: real accuracy problems found in the old model via side-by-side testing, and why OpenRouter rather than Cloudflare's own hosting of the same new model — its default "thinking" mode burns the whole completion budget and returns empty content, with no working way found to disable it via Cloudflare's endpoint; OpenRouter's own `reasoning: {enabled: false}` works correctly against the same model).
+
+`generateText()` deliberately mirrors `env.AI.run()`'s exact call/return shape (`{messages, max_tokens}` in, `{response: string}` out) so every call site only needed a one-line swap, not a rewrite of prompt-building or response-handling code.
 
 View current secrets:
 ```powershell

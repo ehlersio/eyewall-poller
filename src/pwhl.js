@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -719,7 +719,7 @@ ${thinSampleNote}
 Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.`;
 
     try {
-      const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+      const aiResponse = await generateText(env, {
         messages:   [{ role: 'user', content: prompt }],
         max_tokens: 100,
       });
@@ -1622,7 +1622,7 @@ Stats: ${statsLine}
 Write a 2-3 sentence scouting report highlighting their strengths, style of play, and impact this season. Be specific and use the stats. Do not use generic filler phrases. Write in plain text, no markdown.`;
 
     try {
-      const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+      const aiResponse = await generateText(env, {
         messages: [{ role: 'user', content: prompt }],
       });
       const blurb = aiResponse.response?.trim() || '';
@@ -2148,7 +2148,7 @@ ${goalLines ? 'Goals:\n' + goalLines : 'No goals this period.'}
 Write in plain text, no markdown. 1-2 sentences max.`;
 
     try {
-      const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+      const aiResponse = await generateText(env, {
         messages:   [{ role: 'user', content: prompt }],
         max_tokens: isGame ? 120 : 80,
       });
@@ -2441,7 +2441,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
 
     let narrative = '';
     try {
-      const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+      const aiResponse = await generateText(env, {
         messages: [{ role: 'user', content: prompt }],
       });
       narrative = aiResponse.response?.trim() || '';

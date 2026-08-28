@@ -19,10 +19,6 @@ enabled = true
 binding = "CACHE"
 id      = "08c4ef455c584c83a811a96aa3c620ed"
 
-# AI binding
-[ai]
-binding = "AI"
-
 # Rate limiting binding — guards the billed AI-calling routes
 # (/prediction/analyze, /summary/narrative, /pwhl/summary/narrative,
 # /pwhl/scout) from unbounded public-cost abuse. These routes are called
@@ -44,6 +40,8 @@ simple       = { limit = 10, period = 60 }
 #   VAPID_PRIVATE_KEY
 #   VAPID_SUBJECT
 #   NHL_SEASON        — e.g. "20252026" (flip each October)
+#   OPENROUTER_API_KEY — AI generation (2026-08 migration off the [ai] binding
+#                         above, removed -- see shared.js's generateText())
 #
 # View current secrets: wrangler secret list
 # Set a secret:        wrangler secret put POLL_SECRET

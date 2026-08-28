@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText } from './shared.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
@@ -318,7 +318,7 @@ Model win probability (roster-continuity adjusted): ${tc.abbr} ${carWinPct}%
 
 Write the analysis now. Mention the single most decisive factor from last season, note the roster continuity level for at least one team if notably low, and a concrete expected-score range.`;
 
-  const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+  const aiResponse = await generateText(env, {
     messages: [{ role: 'user', content: prompt }],
   });
   const narrative = aiResponse.response?.trim() || '';
@@ -724,7 +724,7 @@ ${allowedBlock}
 
 3 sentences only. Sentence 1: result and key storyline. Sentence 2: possession/goaltending insight. Sentence 3: one forward-looking thought.`;
 
-  const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+  const aiResponse = await generateText(env, {
     messages: [{ role: 'user', content: prompt }],
   });
   const narrative = aiResponse.response?.trim() || '';
@@ -2450,7 +2450,7 @@ ${thinSampleNote}
 Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.`;
 
     try {
-      const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+      const aiResponse = await generateText(env, {
         messages:   [{ role: 'user', content: prompt }],
         max_tokens: 100,
       });
@@ -3158,7 +3158,7 @@ ${corsiSource === 'sog_share_proxy' ? 'Note: the Corsi figure above is a shots-o
 
 Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.`;
 
-    const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+    const aiResponse = await generateText(env, {
       messages: [{ role: 'user', content: prompt }],
     });
     const narrative = aiResponse.response?.trim() || '';
@@ -3288,11 +3288,11 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       : null;
 
     const [aiResponse, cardResponse] = await Promise.all([
-      env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+      generateText(env, {
         messages: [{ role: 'user', content: prompt }],
       }),
       cardPrompt
-        ? env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+        ? generateText(env, {
             messages: [{ role: 'user', content: cardPrompt }],
           })
         : Promise.resolve(null),
@@ -3488,7 +3488,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       return new Response(`Bad request: ${e.message}`, { status: 400 });
     }
 
-    const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
+    const aiResponse = await generateText(env, {
       messages: [
         {
           role: 'system',

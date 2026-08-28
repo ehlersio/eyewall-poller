@@ -17,7 +17,7 @@
 // /player-analytics/-shots and remain mechanical to extend if ever needed.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { makeEnv, makeCtx, makeRequest, flushWaitUntil, makeFakeCache } from './route-harness.js'
+import { makeEnv, makeCtx, makeRequest, flushWaitUntil, makeFakeCache, mockFetchWithAI, aiCalls, aiPrompt } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({
   resolveNHLSeason: vi.fn().mockResolvedValue(20252026),
@@ -727,14 +727,15 @@ describe('POST /team-seasons/head-to-head/narrative', () => {
   }
 
   it('returns a null narrative without calling the AI model when there are zero meetings', async () => {
-    const env = makeEnv({ AI: { run: vi.fn() } })
+    const env = makeEnv()
+    mockFetchWithAI('should not be called')
     const res = await handleNHL(
       makeRequest('/team-seasons/head-to-head/narrative', { method: 'POST', body: { ...basePayload, totalMeetings: 0 } }),
       env, makeCtx(), new URL('https://example.com/team-seasons/head-to-head/narrative')
     )
     expect(res.status).toBe(200)
     expect((await res.json()).narrative).toBeNull()
-    expect(env.AI.run).not.toHaveBeenCalled()
+    expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
   it('returns an error on invalid JSON body', async () => {
@@ -746,17 +747,19 @@ describe('POST /team-seasons/head-to-head/narrative', () => {
 
   it('serves from cache without calling the AI model', async () => {
     const cached = { narrative: 'cached narrative' }
-    const env = makeEnv({ CACHE: { async get(key) { return key === 'nhl:h2h-narrative:CAR,NYR' ? JSON.stringify(cached) : null }, async put() {} }, AI: { run: vi.fn() } })
+    const env = makeEnv({ CACHE: { async get(key) { return key === 'nhl:h2h-narrative:CAR,NYR' ? JSON.stringify(cached) : null }, async put() {} } })
+    mockFetchWithAI('should not be called')
     const res = await handleNHL(
       makeRequest('/team-seasons/head-to-head/narrative', { method: 'POST', body: basePayload }),
       env, makeCtx(), new URL('https://example.com/team-seasons/head-to-head/narrative')
     )
     expect(await res.json()).toEqual(cached)
-    expect(env.AI.run).not.toHaveBeenCalled()
+    expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
   it('generates and caches a narrative, sorting the cache key regardless of team order', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Carolina leads this series.' }) } })
+    const env = makeEnv()
+    mockFetchWithAI('Carolina leads this series.')
     const res = await handleNHL(
       makeRequest('/team-seasons/head-to-head/narrative', { method: 'POST', body: basePayload }),
       env, makeCtx(), new URL('https://example.com/team-seasons/head-to-head/narrative')
@@ -764,17 +767,18 @@ describe('POST /team-seasons/head-to-head/narrative', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.narrative).toBe('Carolina leads this series.')
-    expect(env.AI.run).toHaveBeenCalledTimes(1)
+    expect(aiCalls(globalThis.fetch)).toHaveLength(1)
     expect(JSON.parse(await env.CACHE.get('nhl:h2h-narrative:CAR,NYR')).narrative).toBe('Carolina leads this series.')
   })
 
   it('includes a thin-sample guardrail note in the prompt when isThinSample is true', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Too early to say much.' }) } })
+    const env = makeEnv()
+    mockFetchWithAI('Too early to say much.')
     await handleNHL(
       makeRequest('/team-seasons/head-to-head/narrative', { method: 'POST', body: { ...basePayload, totalMeetings: 2, isThinSample: true } }),
       env, makeCtx(), new URL('https://example.com/team-seasons/head-to-head/narrative')
     )
-    const prompt = env.AI.run.mock.calls[0][1].messages[0].content
+    const prompt = aiPrompt(globalThis.fetch)[0].content
     expect(prompt).toMatch(/too small a sample/i)
   })
 })
@@ -1366,7 +1370,6 @@ describe('poll() — multi-team dual broadcast', () => {
       VAPID_PRIVATE_KEY: 'fake-key-for-test',
       CACHE: makeFakeCache({ 'push:subs': [] }),
     })
-    const aiSpy = env.AI.run
     const finalGame = {
       id: 2025020888, gameState: 'FINAL', gameType: 2, gameDate: '2026-01-16',
       homeTeam: { id: 10, abbrev: 'TOR', score: 4 },
@@ -1376,7 +1379,7 @@ describe('poll() — multi-team dual broadcast', () => {
 
     await poll(env, makeCtx())
 
-    expect(aiSpy).not.toHaveBeenCalled()
+    expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 })
 
@@ -1443,7 +1446,8 @@ describe('POST /draft/analyze', () => {
   })
 
   it('returns the AI analysis on a valid request', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Great value pick at this slot.' }) } })
+    const env = makeEnv()
+    mockFetchWithAI('Great value pick at this slot.')
     const res = await handleNHL(
       makeRequest('/draft/analyze', { method: 'POST', body: { prompt: 'Analyze this pick' }, headers: { 'X-Poll-Secret': 'test-poll-secret' } }),
       env, makeCtx(), new URL('https://example.com/draft/analyze')
@@ -1453,7 +1457,8 @@ describe('POST /draft/analyze', () => {
   })
 
   it('502s when the AI response is empty', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: '' }) } })
+    const env = makeEnv()
+    mockFetchWithAI('')
     const res = await handleNHL(
       makeRequest('/draft/analyze', { method: 'POST', body: { prompt: 'Analyze this pick' }, headers: { 'X-Poll-Secret': 'test-poll-secret' } }),
       env, makeCtx(), new URL('https://example.com/draft/analyze')
@@ -1480,12 +1485,13 @@ describe('GET /prediction/analyze', () => {
   it('serves from cache without calling the AI model', async () => {
     const cached = { gameId: '123', narrative: 'cached narrative' }
     const env = makeEnv({ CACHE: { async get(key) { return key === 'prediction:123' ? JSON.stringify(cached) : null }, async put() {} } })
+    mockFetchWithAI('should not be called')
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
       new URL('https://example.com/prediction/analyze?gameId=123')
     )
     expect(await res.json()).toEqual(cached)
-    expect(env.AI.run).not.toHaveBeenCalled()
+    expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
   it('returns an error when the game is not found in the schedule', async () => {
@@ -1503,9 +1509,12 @@ describe('GET /prediction/analyze', () => {
   // standings -> existing scorecard + isotonic calibration. Never both.
   // See COMBINED_CALIBRATION_IMPLEMENTATION.md / TRUE_PRESEASON_BACKTEST_RESULTS.md.
 
-  function mockSupabaseByTable(responses) {
+  function mockSupabaseByTable(responses, aiText = 'mock AI response') {
     globalThis.fetch = vi.fn((url) => {
       const u = String(url)
+      if (u.includes('openrouter.ai')) {
+        return Promise.resolve({ ok: true, json: async () => ({ choices: [{ message: { content: aiText } }] }) })
+      }
       for (const [match, rows] of Object.entries(responses)) {
         if (u.includes(match)) return Promise.resolve({ ok: true, json: async () => rows })
       }
@@ -1524,7 +1533,6 @@ describe('GET /prediction/analyze', () => {
     ]
     const env = makeEnv({
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
-      AI: { run: vi.fn().mockResolvedValue({ response: 'Preseason take.' }) },
     })
     mockSupabaseByTable({
       // CAR wins points/GA/PP, BOS wins GF/SF -- a non-degenerate split
@@ -1540,7 +1548,7 @@ describe('GET /prediction/analyze', () => {
         { player_id: 99, team: 'CAR', games_played: 82, toi_per_game: 900 }, // traded away, not on current roster
         { player_id: 3, team: 'BOS', games_played: 82, toi_per_game: 1000 },
       ],
-    })
+    }, 'Preseason take.')
 
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
@@ -1577,9 +1585,8 @@ describe('GET /prediction/analyze', () => {
     ]
     const env = makeEnv({
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
-      AI: { run: vi.fn().mockResolvedValue({ response: 'should not be called' }) },
     })
-    mockSupabaseByTable({ 'team_seasons': [] })
+    mockSupabaseByTable({ 'team_seasons': [] }, 'should not be called')
 
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
@@ -1587,7 +1594,7 @@ describe('GET /prediction/analyze', () => {
     )
 
     expect((await res.json()).error).toMatch(/no prior-season.*data available/i)
-    expect(env.AI.run).not.toHaveBeenCalled()
+    expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
   it('defaults a missing prior-season pp_pct to league-average (22%) identically in scoring and the AI prompt text', async () => {
@@ -1602,10 +1609,8 @@ describe('GET /prediction/analyze', () => {
       { teamAbbrev: { default: 'CAR' }, seasonId: 20242025, gamesPlayed: 82, points: 100 },
       { teamAbbrev: { default: 'BOS' }, seasonId: 20242025, gamesPlayed: 82, points: 90 },
     ]
-    const aiRun = vi.fn().mockResolvedValue({ response: 'Preseason take.' })
     const env = makeEnv({
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
-      AI: { run: aiRun },
     })
     mockSupabaseByTable({
       // CAR's pp_pct is missing entirely -- the UTA-shaped gap
@@ -1622,7 +1627,7 @@ describe('GET /prediction/analyze', () => {
         { player_id: 99, team: 'CAR', games_played: 82, toi_per_game: 900 },
         { player_id: 3, team: 'BOS', games_played: 82, toi_per_game: 1000 },
       ],
-    })
+    }, 'Preseason take.')
 
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
@@ -1639,7 +1644,7 @@ describe('GET /prediction/analyze', () => {
     expect(body.carWinPct).toBe(53)
     // Prompt text: both teams' PP% lines use the same 22.0% default CAR's
     // missing value resolved to -- not a separate, disagreeing 0.0%.
-    const promptSent = aiRun.mock.calls[0][1].messages[0].content
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
     expect(promptSent).toMatch(/CAR last season \(\d+\): 100 pts, GF\/GA per game: 3\.00 \/ 2\.80, PP%: 22\.0%/)
     expect(promptSent).not.toMatch(/CAR.*PP%: 0\.0%/)
   })
@@ -1652,9 +1657,8 @@ describe('GET /prediction/analyze', () => {
     ]
     const env = makeEnv({
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
-      AI: { run: vi.fn().mockResolvedValue({ response: 'CAR should win this one comfortably.' }) },
     })
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+    mockFetchWithAI('CAR should win this one comfortably.', () => Promise.resolve({ ok: true, json: async () => [] }))
 
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
@@ -1673,12 +1677,11 @@ describe('GET /prediction/analyze', () => {
     ]
     const env = makeEnv({
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
-      AI: { run: vi.fn().mockResolvedValue({ response: 'CAR should win this one comfortably.' }) },
     })
     // team_seasons has no rows for either team yet (e.g. before the
     // Session 52 Corsi rollup has run for this season) — route must fall
     // back to the SOG-share proxy rather than erroring.
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+    mockFetchWithAI('CAR should win this one comfortably.', () => Promise.resolve({ ok: true, json: async () => [] }))
 
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
@@ -1690,7 +1693,7 @@ describe('GET /prediction/analyze', () => {
     expect(body.gameId).toBe('123')
     expect(body.oppAbbr).toBe('BOS')
     expect(body.narrative).toBe('CAR should win this one comfortably.')
-    expect(env.AI.run).toHaveBeenCalledTimes(1)
+    expect(aiCalls(globalThis.fetch)).toHaveLength(1)
     // SOG-share proxy: carCF = carSF/(carSF+oppSA)*100 = 32/(32+31)*100 = 50.8
     expect(body.carCF).toBe('50.8')
     expect(body.corsiForPct).toEqual({ car: 50.8, opp: expect.any(Number) })
@@ -1723,12 +1726,10 @@ describe('GET /prediction/analyze', () => {
       { teamAbbrev: { default: 'CAR' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 30, goalAgainst: 30, powerPlayPct: null, penaltyKillPct: 80, shotsForPerGame: 30, shotsAgainstPerGame: 30 },
       { teamAbbrev: { default: 'BOS' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 30, goalAgainst: 30, powerPlayPct: 21, penaltyKillPct: 76, shotsForPerGame: 30, shotsAgainstPerGame: 30 },
     ]
-    const aiRun = vi.fn().mockResolvedValue({ response: 'In-season take.' })
     const env = makeEnv({
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
-      AI: { run: aiRun },
     })
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+    mockFetchWithAI('In-season take.', () => Promise.resolve({ ok: true, json: async () => [] }))
 
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
@@ -1746,7 +1747,7 @@ describe('GET /prediction/analyze', () => {
     // float drift within that plateau.
     expect(body.carWinPct).toBe(52)
     expect(body.regime).toBe('in-season')
-    const promptSent = aiRun.mock.calls[0][1].messages[0].content
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
     expect(promptSent).toMatch(/CAR stats:[\s\S]*PP%: 22\.0%/)
     expect(promptSent).not.toMatch(/CAR stats:[\s\S]{0,120}PP%: 0\.0%/)
   })
@@ -1759,15 +1760,14 @@ describe('GET /prediction/analyze', () => {
     ]
     const env = makeEnv({
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
-      AI: { run: vi.fn().mockResolvedValue({ response: 'CAR has the possession edge.' }) },
     })
-    globalThis.fetch = vi.fn().mockResolvedValue({
+    mockFetchWithAI('CAR has the possession edge.', () => Promise.resolve({
       ok: true,
       json: async () => [
         { team: 'CAR', corsi_for_pct: 0.55, corsi_for_pct_5v5: 0.592 },
         { team: 'BOS', corsi_for_pct: 0.47, corsi_for_pct_5v5: 0.431 },
       ],
-    })
+    }))
 
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=124'), env, makeCtx(),
@@ -1796,12 +1796,13 @@ describe('POST /summary/narrative', () => {
   it('serves from cache without calling the AI model', async () => {
     const cached = { narrative: 'cached', cardNarrative: null }
     const env = makeEnv({ CACHE: { async get(key) { return key === 'narrative:1:1:CAR' ? JSON.stringify(cached) : null }, async put() {} } })
+    mockFetchWithAI('should not be called')
     const res = await handleNHL(
       makeRequest('/summary/narrative?gameId=1&period=1&carAbbr=CAR', { method: 'POST', body: {} }), env, makeCtx(),
       new URL('https://example.com/summary/narrative?gameId=1&period=1&carAbbr=CAR')
     )
     expect(await res.json()).toEqual(cached)
-    expect(env.AI.run).not.toHaveBeenCalled()
+    expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
   it('returns an error on invalid JSON body', async () => {
@@ -1812,7 +1813,8 @@ describe('POST /summary/narrative', () => {
   })
 
   it('makes one AI call for a period summary and caches for 30 days', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Period summary text.' }) } })
+    const env = makeEnv()
+    mockFetchWithAI('Period summary text.')
     const res = await handleNHL(
       makeRequest('/summary/narrative?gameId=1&period=1&carAbbr=CAR', {
         method: 'POST',
@@ -1825,12 +1827,13 @@ describe('POST /summary/narrative', () => {
     const body = await res.json()
     expect(body.narrative).toBe('Period summary text.')
     expect(body.cardNarrative).toBeNull()
-    expect(env.AI.run).toHaveBeenCalledTimes(1)
+    expect(aiCalls(globalThis.fetch)).toHaveLength(1)
     expect(JSON.parse(await env.CACHE.get('narrative:1:1:CAR')).narrative).toBe('Period summary text.')
   })
 
   it('makes two AI calls (narrative + card caption) for a full game summary', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Game summary text.' }) } })
+    const env = makeEnv()
+    mockFetchWithAI('Game summary text.')
     const res = await handleNHL(
       makeRequest('/summary/narrative?gameId=1&period=game&carAbbr=CAR', {
         method: 'POST',
@@ -1840,7 +1843,7 @@ describe('POST /summary/narrative', () => {
     )
 
     expect(res.status).toBe(200)
-    expect(env.AI.run).toHaveBeenCalledTimes(2)
+    expect(aiCalls(globalThis.fetch)).toHaveLength(2)
   })
 })
 
