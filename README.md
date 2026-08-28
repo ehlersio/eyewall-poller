@@ -85,7 +85,7 @@ Test files:
 - `src/__tests__/seasons.test.js` — `seasons.js`'s own resolution logic. Covers: the manual override, KV cache hits, the "reject a zero-games-played candidate" fallback, the "reject a hidden `current_season_id`" fallback, and — the two tests that actually matter most — a regression test asserting `feed=statviewfeed` (not `feed=modulekit`) gets called, and a fixture built from the real 2026-07-05 production bootstrap payload confirming resolution picks season 8 (regular) over season 9 (playoffs) even though 9 is more recent by date. Both of those fixtures exist because they're exactly the two real bugs that shipped to production before being caught.
 - `src/__tests__/worker-routes.test.js` — the dispatcher (`/config/seasons`, `/config/seasons/pwhl-types`, `/pwhl/*` vs. everything-else routing).
 - `src/__tests__/nhl-routes.test.js` — `handleNHL`'s routes: a representative slice of read-proxy routes, all `POLL_SECRET`-gated mutating/ingest routes (asserting actual KV mutations/merge logic, not just status codes), and the AI-calling routes (`/prediction/analyze`, `/summary/narrative`, `/team-seasons/head-to-head/narrative`). `/atom/ingest` is covered for both real Atom and plain-RSS-format sources (Session: news ingestion investigation — the route used to assume every source was true Atom, silently parsing 0 items out of any RSS-format feed).
-- `src/__tests__/pwhl-routes.test.js` — `handlePWHL`'s equivalent: `/pwhl/standings`'s enrichment logic, the `POLL_SECRET`-gated cache-bust/ingest routes, the AI-calling routes (`/pwhl/scout`, `/pwhl/summary/narrative`, `/pwhl/prediction`, `/pwhl/team-seasons/head-to-head/narrative`), and `/pwhl/preview`'s gameCenterPreview normalization.
+- `src/__tests__/pwhl-routes.test.js` — `handlePWHL`'s equivalent: `/pwhl/standings`'s enrichment logic, the `POLL_SECRET`-gated cache-bust/ingest routes, the AI-calling routes (`/pwhl/scout`, `/pwhl/summary/narrative`, `/pwhl/prediction`, `/pwhl/team-seasons/head-to-head/narrative`), `/pwhl/preview`'s gameCenterPreview normalization, and `/pwhl/summary`'s gameSummary normalization (venue, officials, Head-Coach-only coach filtering).
 
 The remaining ~35 plain read-proxy routes (parse params → cache check → `sbRows()`/fetch → cache write → JSON) all follow the same shape already covered here and are mechanical to extend if ever needed.
 
@@ -165,7 +165,7 @@ Key patterns:
 | `pwhl:news` | 25hr populated / 5min empty | PWHL news feed. Written by both `/pwhl/news/ingest` (nightly pipeline) and `fetchPWHLNews()` (on-demand cold-cache path) — both now use the same TTL (fixed 2026-08-14, was a 30min/5min mismatch that let the nightly job's fuller article set get silently replaced by the on-demand path's narrower 3-source result once a day). |
 | `pwhl:today:{season}` | 60s | Today's PWHL games + status |
 | `pwhl:live:{gameId}` | 30s live / 1hr final | PWHL live PBP |
-| `pwhl:summary:{gameId}` | 1hr | PWHL game summary (goals, MVPs, team stats) |
+| `pwhl:gamesummary:{gameId}` | 1hr | PWHL game summary (goals, MVPs, team stats, venue, officials, head coaches) |
 | `pwhl:narrative:{period}:{gameId}:{carAbbr}` | 24hr | AI period/game narrative per team perspective |
 | `pwhl:pshots:{playerId}:{season}` | 6hr | PWHL player shot heat map data |
 | `pwhl:player:landing:{playerId}:{season|'latest'}` | 1hr | Single PWHL player's identity + one season's stat line |
@@ -246,7 +246,7 @@ Key patterns:
 | `POST` | `/pwhl/news/bust` | Invalidate news KV cache |
 | `POST` | `/pwhl/scout` | AI scouting report for a player |
 | `POST` | `/pwhl/cache/bust?secret=&teamId=&season=` | Invalidate one team's KV caches (players/shots/schedule/lastgame) for a given season |
-| `GET` | `/pwhl/summary?gameId=` | Game summary (goals, MVPs, team stats) from HockeyTech |
+| `GET` | `/pwhl/summary?gameId=` | Game summary (goals, MVPs, team stats, venue, officials, head coaches) from HockeyTech |
 | `POST` | `/pwhl/summary/narrative?gameId=&period=&carAbbr=` | AI period/game narrative (cached per team perspective) |
 | `GET` | `/pwhl/preview?gameId=` | Pre-game preview for an upcoming game — season series, head-to-head, streaks, team-scoped leading scorers, special teams (Session 51, live HockeyTech `gameCenterPreview` passthrough) |
 | `GET` | `/pwhl/prediction?gameId=&force=` | Win probability + AI narrative for an upcoming game (Session 51) — PWHL analog of `/prediction/analyze`'s fallback-tier heuristic, not its DB-first Tier-1 system. `corsiForPct` prefers 5v5-filtered shot-attempt share, falling back to all-situations if the 5v5 column isn't populated yet (Session 53, same preference order as `/prediction/analyze`) — check `corsiCaveat` for which one a given response used |

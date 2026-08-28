@@ -932,6 +932,97 @@ describe('POST /pwhl/summary/narrative', () => {
   })
 })
 
+describe('GET /pwhl/summary', () => {
+  // Shape matches a real live view=gameSummary pull (PWHL parity
+  // investigation, game_id=261): referees[]/linesmen[] are top-level
+  // arrays; coaches live nested per-team and mix General Manager + Head
+  // Coach roles in the same array -- the route filters to Head Coach only.
+  function gameSummaryPayload() {
+    return {
+      periods: [],
+      mostValuablePlayers: [],
+      details: { venue: 'Climate Pledge Arena | Seattle' },
+      referees: [
+        { firstName: 'Jarrett T.', lastName: 'Burton', jerseyNumber: 8,  role: 'Referee' },
+        { firstName: 'Sydney',     lastName: 'Harris',  jerseyNumber: 28, role: 'Referee' },
+      ],
+      linesmen: [
+        { firstName: 'Amy', lastName: 'Laroche', jerseyNumber: 62, role: 'Linesperson' },
+      ],
+      homeTeam: {
+        stats: { shots: 30 },
+        coaches: [
+          { personId: '317', firstName: 'Meghan', lastName: 'Turner',    role: 'General Manager' },
+          { personId: '474', firstName: 'Steve',   lastName: "O'Rourke", role: 'Head Coach' },
+        ],
+      },
+      visitingTeam: {
+        stats: { shots: 25 },
+        coaches: [
+          { personId: '308', firstName: 'Gina',  lastName: 'Kingsbury', role: 'General Manager' },
+          { personId: '117', firstName: 'Troy',  lastName: 'Ryan',       role: 'Head Coach' },
+        ],
+      },
+    }
+  }
+
+  it('400s when gameId is missing', async () => {
+    const res = await handlePWHL(
+      makeRequest('/pwhl/summary'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/summary')
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('serves from KV cache without hitting HockeyTech', async () => {
+    const cached = { periods: [], mvps: [], venue: 'Cached Arena', officials: { referees: [], linesmen: [] }, coaches: { home: null, away: null }, homeTeamStats: {}, visitingTeamStats: {} }
+    const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:gamesummary:261': cached }) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/summary?gameId=261'), env, makeCtx(), new URL('https://example.com/pwhl/summary?gameId=261')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cached)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('normalizes a live payload: venue, officials (with numeric jerseyNumber), and Head-Coach-only coaches', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(gameSummaryPayload()) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/summary?gameId=261'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/summary?gameId=261')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.venue).toBe('Climate Pledge Arena | Seattle')
+    expect(body.officials.referees).toEqual([
+      { firstName: 'Jarrett T.', lastName: 'Burton', jerseyNumber: 8 },
+      { firstName: 'Sydney',     lastName: 'Harris',  jerseyNumber: 28 },
+    ])
+    expect(body.officials.linesmen).toEqual([
+      { firstName: 'Amy', lastName: 'Laroche', jerseyNumber: 62 },
+    ])
+    expect(body.coaches.home).toEqual({ firstName: 'Steve', lastName: "O'Rourke" })
+    expect(body.coaches.away).toEqual({ firstName: 'Troy', lastName: 'Ryan' })
+  })
+
+  it('coaches are null when a team has no Head Coach entry, venue is null when details is missing', async () => {
+    const payload = gameSummaryPayload()
+    delete payload.details
+    payload.homeTeam.coaches = [{ personId: '1', firstName: 'A', lastName: 'B', role: 'General Manager' }]
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(payload) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/summary?gameId=261'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/summary?gameId=261')
+    )
+
+    const body = await res.json()
+    expect(body.venue).toBeNull()
+    expect(body.coaches.home).toBeNull()
+  })
+})
+
 // ── /pwhl/preview + /pwhl/prediction (Session 51) ────────────────────────────
 
 describe('GET /pwhl/preview', () => {
