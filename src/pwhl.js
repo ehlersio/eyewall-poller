@@ -2072,9 +2072,32 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       homeTeam:    mvp.homeTeam === 1 || mvp.homeTeam === true,
     }));
 
+    // Officials + coaches -- gameSummary already carries these, previously
+    // discarded entirely. referees/linesmen are top-level arrays; coaches
+    // live nested under each team and mix General Manager + Head Coach
+    // entries in the same array, so filter to the one role that matters.
+    const official = (o) => ({
+      firstName:    o.firstName || '',
+      lastName:     o.lastName  || '',
+      jerseyNumber: o.jerseyNumber != null ? parseInt(o.jerseyNumber, 10) : null,
+    });
+    const headCoach = (coaches) => {
+      const c = (coaches || []).find(c => c.role === 'Head Coach');
+      return c ? { firstName: c.firstName || '', lastName: c.lastName || '' } : null;
+    };
+
     const payload = {
       periods,
       mvps,
+      venue: raw.details?.venue || null,
+      officials: {
+        referees: (raw.referees || []).map(official),
+        linesmen: (raw.linesmen || []).map(official),
+      },
+      coaches: {
+        home: headCoach(raw.homeTeam?.coaches),
+        away: headCoach(raw.visitingTeam?.coaches),
+      },
       homeTeamStats:     raw.homeTeam?.stats     || {},
       visitingTeamStats: raw.visitingTeam?.stats || {},
     };
