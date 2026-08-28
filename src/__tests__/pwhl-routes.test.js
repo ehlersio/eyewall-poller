@@ -10,7 +10,7 @@
 // Session 48 scope — see SESSION_48_DECISIONS.md.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { makeEnv, makeCtx, makeRequest, makeFakeCache, makeFakeRateLimiter } from './route-harness.js'
+import { makeEnv, makeCtx, makeRequest, makeFakeCache, makeFakeRateLimiter, mockFetchWithAI, mockFetchWithFailingAI, aiCalls, aiPrompt } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({
   resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
@@ -405,14 +405,15 @@ describe('POST /pwhl/team-seasons/head-to-head/narrative', () => {
   }
 
   it('returns a null narrative without calling the AI model when there are zero meetings', async () => {
-    const env = makeEnv({ AI: { run: vi.fn() } })
+    const env = makeEnv()
+    mockFetchWithAI('should not be called')
     const res = await handlePWHL(
       makeRequest('/pwhl/team-seasons/head-to-head/narrative', { method: 'POST', body: { ...basePayload, totalMeetings: 0 } }),
       env, makeCtx(), new URL('https://example.com/pwhl/team-seasons/head-to-head/narrative')
     )
     expect(res.status).toBe(200)
     expect((await res.json()).narrative).toBeNull()
-    expect(env.AI.run).not.toHaveBeenCalled()
+    expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
   it('returns an error on invalid JSON body', async () => {
@@ -424,17 +425,19 @@ describe('POST /pwhl/team-seasons/head-to-head/narrative', () => {
 
   it('serves from cache without calling the AI model', async () => {
     const cached = { narrative: 'cached narrative' }
-    const env = makeEnv({ CACHE: { async get(key) { return key === 'pwhl:h2h-narrative:2,3' ? JSON.stringify(cached) : null }, async put() {} }, AI: { run: vi.fn() } })
+    const env = makeEnv({ CACHE: { async get(key) { return key === 'pwhl:h2h-narrative:2,3' ? JSON.stringify(cached) : null }, async put() {} } })
+    mockFetchWithAI('should not be called')
     const res = await handlePWHL(
       makeRequest('/pwhl/team-seasons/head-to-head/narrative', { method: 'POST', body: basePayload }),
       env, makeCtx(), new URL('https://example.com/pwhl/team-seasons/head-to-head/narrative')
     )
     expect(await res.json()).toEqual(cached)
-    expect(env.AI.run).not.toHaveBeenCalled()
+    expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
   it('generates and caches a narrative, sorting the numeric cache key regardless of team order', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Too early to call a rivalry.' }) } })
+    const env = makeEnv()
+    mockFetchWithAI('Too early to call a rivalry.')
     const res = await handlePWHL(
       makeRequest('/pwhl/team-seasons/head-to-head/narrative', { method: 'POST', body: { ...basePayload, teamA: 3, teamB: 2 } }),
       env, makeCtx(), new URL('https://example.com/pwhl/team-seasons/head-to-head/narrative')
@@ -442,17 +445,18 @@ describe('POST /pwhl/team-seasons/head-to-head/narrative', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.narrative).toBe('Too early to call a rivalry.')
-    expect(env.AI.run).toHaveBeenCalledTimes(1)
+    expect(aiCalls(globalThis.fetch)).toHaveLength(1)
     expect(JSON.parse(await env.CACHE.get('pwhl:h2h-narrative:2,3')).narrative).toBe('Too early to call a rivalry.')
   })
 
   it('includes a thin-sample guardrail note in the prompt when isThinSample is true', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Not much history yet.' }) } })
+    const env = makeEnv()
+    mockFetchWithAI('Not much history yet.')
     await handlePWHL(
       makeRequest('/pwhl/team-seasons/head-to-head/narrative', { method: 'POST', body: basePayload }),
       env, makeCtx(), new URL('https://example.com/pwhl/team-seasons/head-to-head/narrative')
     )
-    const prompt = env.AI.run.mock.calls[0][1].messages[0].content
+    const prompt = aiPrompt(globalThis.fetch)[0].content
     expect(prompt).toMatch(/too small a sample/i)
   })
 })
@@ -829,7 +833,8 @@ describe('POST /pwhl/scout', () => {
   })
 
   it('generates a scouting blurb for a skater', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'A dynamic playmaker with elite vision.' }) } })
+    const env = makeEnv()
+    mockFetchWithAI('A dynamic playmaker with elite vision.')
     const res = await handlePWHL(
       makeRequest('/pwhl/scout', {
         method: 'POST',
@@ -842,7 +847,8 @@ describe('POST /pwhl/scout', () => {
   })
 
   it('generates a scouting blurb for a goalie using goalie-shaped stats', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'A steady presence between the pipes.' }) } })
+    const env = makeEnv()
+    mockFetchWithAI('A steady presence between the pipes.')
     const res = await handlePWHL(
       makeRequest('/pwhl/scout', {
         method: 'POST',
@@ -855,7 +861,8 @@ describe('POST /pwhl/scout', () => {
   })
 
   it('returns an error when the AI response is empty', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: '' }) } })
+    const env = makeEnv()
+    mockFetchWithAI('')
     const res = await handlePWHL(
       makeRequest('/pwhl/scout', { method: 'POST', body: { name: 'X', position: 'F', stats: {} } }),
       env, makeCtx(), new URL('https://example.com/pwhl/scout')
@@ -864,7 +871,8 @@ describe('POST /pwhl/scout', () => {
   })
 
   it('502s when the AI call throws', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockRejectedValue(new Error('AI unavailable')) } })
+    const env = makeEnv()
+    mockFetchWithFailingAI()
     const res = await handlePWHL(
       makeRequest('/pwhl/scout', { method: 'POST', body: { name: 'X', position: 'F', stats: {} } }),
       env, makeCtx(), new URL('https://example.com/pwhl/scout')
@@ -877,12 +885,13 @@ describe('POST /pwhl/summary/narrative', () => {
   it('serves from cache without calling the AI model', async () => {
     const cached = { narrative: 'cached', cardNarrative: null }
     const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:narrative:1:210:CAR': cached }) })
+    mockFetchWithAI('should not be called')
     const res = await handlePWHL(
       makeRequest('/pwhl/summary/narrative?gameId=210&period=1&carAbbr=CAR', { method: 'POST', body: {} }),
       env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=1&carAbbr=CAR')
     )
     expect(await res.json()).toEqual(cached)
-    expect(env.AI.run).not.toHaveBeenCalled()
+    expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
   it('400s on invalid JSON body', async () => {
@@ -893,7 +902,8 @@ describe('POST /pwhl/summary/narrative', () => {
   })
 
   it('generates and caches a period narrative for 24hr', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'A tight period for both sides.' }) } })
+    const env = makeEnv()
+    mockFetchWithAI('A tight period for both sides.')
     const res = await handlePWHL(
       makeRequest('/pwhl/summary/narrative?gameId=210&period=1&carAbbr=BOS', {
         method: 'POST',
@@ -909,7 +919,8 @@ describe('POST /pwhl/summary/narrative', () => {
   })
 
   it('502s when the AI call throws', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockRejectedValue(new Error('AI unavailable')) } })
+    const env = makeEnv()
+    mockFetchWithFailingAI()
     const res = await handlePWHL(
       makeRequest('/pwhl/summary/narrative?gameId=210&period=1&carAbbr=BOS', {
         method: 'POST',
@@ -1001,9 +1012,13 @@ describe('GET /pwhl/prediction', () => {
   // Mocks the 3 Supabase REST calls the route makes, keyed by URL substring:
   // the single-game lookup, the 2-team pwhl_team_seasons pull, and the
   // season-wide Final game log (for streak + this-season H2H).
-  function mockSupabaseFlow({ game, teams, seasonGames }) {
+  function mockSupabaseFlow({ game, teams, seasonGames, aiText = 'mock AI response', aiReject = false }) {
     globalThis.fetch = vi.fn((url) => {
       const u = String(url)
+      if (u.includes('openrouter.ai')) {
+        if (aiReject) return Promise.reject(new Error('AI unavailable'))
+        return Promise.resolve({ ok: true, json: async () => ({ choices: [{ message: { content: aiText } }] }) })
+      }
       if (u.includes('pwhl_game_log?game_id=eq.')) {
         return Promise.resolve({ ok: true, json: async () => (game ? [game] : []) })
       }
@@ -1039,11 +1054,12 @@ describe('GET /pwhl/prediction', () => {
   it('serves from KV cache without calling the AI model', async () => {
     const cached = { gameId: 210, homeWinPct: 60 }
     const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:prediction:210': cached }) })
+    mockFetchWithAI('should not be called')
     const res = await handlePWHL(
       makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
     )
     expect(await res.json()).toEqual(cached)
-    expect(env.AI.run).not.toHaveBeenCalled()
+    expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
   it('404s when the game is not found in pwhl_game_log', async () => {
@@ -1056,7 +1072,7 @@ describe('GET /pwhl/prediction', () => {
   })
 
   it('computes win probability/Corsi/streaks and generates a narrative', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Montreal should win behind their possession edge.' }) } })
+    const env = makeEnv()
     mockSupabaseFlow({
       game: { game_id: 210, season_id: 8, home_team_id: 3, away_team_id: 5 },
       teams: [homeTeamRow, awayTeamRow],
@@ -1064,6 +1080,7 @@ describe('GET /pwhl/prediction', () => {
         { game_id: 201, home_team_id: 3, away_team_id: 5, home_score: 4, away_score: 2, ot: false, shootout: false },
         { game_id: 205, home_team_id: 3, away_team_id: 8, home_score: 3, away_score: 1, ot: false, shootout: false },
       ],
+      aiText: 'Montreal should win behind their possession edge.',
     })
 
     const res = await handlePWHL(
@@ -1084,7 +1101,7 @@ describe('GET /pwhl/prediction', () => {
   })
 
   it('uses real 5v5 Corsi from pwhl_team_seasons when both teams have it, instead of the all-situations column', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'Montreal has the 5v5 possession edge.' }) } })
+    const env = makeEnv()
     mockSupabaseFlow({
       game: { game_id: 210, season_id: 8, home_team_id: 3, away_team_id: 5 },
       teams: [
@@ -1092,6 +1109,7 @@ describe('GET /pwhl/prediction', () => {
         { ...awayTeamRow, corsi_for_pct_5v5: 44.3 },
       ],
       seasonGames: [],
+      aiText: 'Montreal has the 5v5 possession edge.',
     })
 
     const res = await handlePWHL(
@@ -1106,11 +1124,12 @@ describe('GET /pwhl/prediction', () => {
   })
 
   it('resolves playoff status via getAllPWHLSeasonTypes and skips the points term', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: 'A tight playoff tilt.' }) } })
+    const env = makeEnv()
     mockSupabaseFlow({
       game: { game_id: 300, season_id: 9, home_team_id: 3, away_team_id: 5 },
       teams: [homeTeamRow, awayTeamRow],
       seasonGames: [],
+      aiText: 'A tight playoff tilt.',
     })
     const res = await handlePWHL(
       makeRequest('/pwhl/prediction?gameId=300'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=300')
@@ -1121,11 +1140,12 @@ describe('GET /pwhl/prediction', () => {
   })
 
   it('returns an error when the AI response is empty', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockResolvedValue({ response: '' }) } })
+    const env = makeEnv()
     mockSupabaseFlow({
       game: { game_id: 210, season_id: 8, home_team_id: 3, away_team_id: 5 },
       teams: [homeTeamRow, awayTeamRow],
       seasonGames: [],
+      aiText: '',
     })
     const res = await handlePWHL(
       makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
@@ -1135,11 +1155,12 @@ describe('GET /pwhl/prediction', () => {
   })
 
   it('502s when the AI call throws', async () => {
-    const env = makeEnv({ AI: { run: vi.fn().mockRejectedValue(new Error('AI unavailable')) } })
+    const env = makeEnv()
     mockSupabaseFlow({
       game: { game_id: 210, season_id: 8, home_team_id: 3, away_team_id: 5 },
       teams: [homeTeamRow, awayTeamRow],
       seasonGames: [],
+      aiReject: true,
     })
     const res = await handlePWHL(
       makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')

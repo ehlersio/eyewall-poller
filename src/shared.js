@@ -82,6 +82,46 @@ export async function checkAiRateLimit(env, request, routeName) {
   return success ? null : tooManyRequests();
 }
 
+// ── AI generation (OpenRouter) ──────────────────────────────────
+// Shared by nhl.js and pwhl.js for every live/on-demand narrative route
+// (11 call sites). Switched 2026-08 from Cloudflare Workers AI's native
+// env.AI.run() binding (llama-3.1-8b-instruct-fp8-fast) to OpenRouter's
+// google/gemma-4-26b-a4b-it -- see eyewall-pipeline's ai_client.py for the
+// same swap and the full reasoning (real accuracy problems found in the
+// old model via side-by-side testing against this app's actual prompts,
+// and why OpenRouter rather than Cloudflare's own hosting of the same new
+// model -- its default "thinking" mode burns the whole completion budget
+// and returns empty content, with no working way found to disable it via
+// Cloudflare's endpoint; OpenRouter's own reasoning:{enabled:false} works
+// correctly against the same model, which is why it's sent below).
+//
+// Deliberately mirrors env.AI.run()'s exact call/return shape --
+// {messages, max_tokens} in, {response: string} out -- so every call site
+// only needed a one-line swap (function name), not a rewrite of its
+// prompt-building or response-handling code. max_tokens stays snake_case
+// (inconsistent with this file's camelCase convention) for the same
+// reason: it's the literal field OpenRouter's API expects, and keeping it
+// unchanged from the original env.AI.run() call sites is what makes the
+// swap a true one-liner per site.
+export async function generateText(env, { messages, max_tokens = 1024 } = {}) {
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${env.OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'google/gemma-4-26b-a4b-it',
+      messages,
+      max_tokens,
+      reasoning: { enabled: false },
+    }),
+  });
+  if (!res.ok) throw new Error(`OpenRouter ${res.status}`);
+  const data = await res.json();
+  return { response: data?.choices?.[0]?.message?.content ?? '' };
+}
+
 export function sbError(status) {
   return new Response(JSON.stringify({ error: `Supabase ${status}` }), { status: 502, headers: corsHeaders() });
 }

@@ -8,8 +8,11 @@
 // fetch/KV boundary" approach seasons.test.js already established, per
 // CLAUDE.md's documented choice not to use a real Workers runtime
 // (Miniflare/@cloudflare/vitest-pool-workers) — plain Node is sufficient
-// since these handlers only touch Workers-specific APIs via env.CACHE /
-// env.AI, both of which are easy to fake here.
+// since these handlers only touch Workers-specific APIs via env.CACHE,
+// easy to fake here (AI generation used to be a second such API,
+// env.AI.run() — since the 2026-08 OpenRouter migration it's a plain
+// fetch() call like everything else, so it's mocked the same way as
+// Supabase/HockeyTech calls now; see mockFetchWithAI() below).
 
 import { vi } from 'vitest'
 
@@ -36,10 +39,48 @@ export function makeFakeCache(initial = {}) {
   }
 }
 
-// Fake env.AI — routes call env.AI.run(model, opts). Default resolves to a
-// generic shape; override per-test for routes that inspect the response.
-export function makeFakeAI(runImpl) {
-  return { run: runImpl || vi.fn().mockResolvedValue({ response: 'mock AI response' }) }
+// ── AI generation mocking (shared.js's generateText(), OpenRouter) ─────
+// Post-2026-08-migration, AI calls go through plain fetch() like every
+// other external call in this suite — mockFetchWithAI() wraps a test's
+// own fetch dispatch (Supabase/HockeyTech/etc., if any) and adds the
+// openrouter.ai branch on top, so most call sites only need to change
+// what they pass in rather than rewrite their whole fetch mock.
+export function mockFetchWithAI(aiResponseText, otherHandler) {
+  globalThis.fetch = vi.fn((url, opts) => {
+    if (String(url).includes('openrouter.ai')) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: aiResponseText } }] }),
+      })
+    }
+    return otherHandler
+      ? otherHandler(url, opts)
+      : Promise.resolve({ ok: true, json: async () => ({}) })
+  })
+}
+
+// Same shape, but the OpenRouter call rejects — for routes' "AI call
+// throws -> 502" coverage.
+export function mockFetchWithFailingAI(otherHandler) {
+  globalThis.fetch = vi.fn((url, opts) => {
+    if (String(url).includes('openrouter.ai')) {
+      return Promise.reject(new Error('AI unavailable'))
+    }
+    return otherHandler
+      ? otherHandler(url, opts)
+      : Promise.resolve({ ok: true, json: async () => ({}) })
+  })
+}
+
+// Reads back what a mocked fetch()'s OpenRouter call(s) received — the
+// fetch-boundary equivalent of the old env.AI.run.mock.calls[i][1].
+export function aiCalls(fetchMock) {
+  return fetchMock.mock.calls.filter(([url]) => String(url).includes('openrouter.ai'))
+}
+
+export function aiPrompt(fetchMock, callIndex = 0) {
+  const call = aiCalls(fetchMock)[callIndex]
+  return JSON.parse(call[1].body).messages
 }
 
 // Fake env.AI_ROUTE_LIMITER — the Workers-native rate-limit binding guarding
@@ -53,8 +94,8 @@ export function makeFakeRateLimiter(limitImpl) {
 export function makeEnv(overrides = {}) {
   return {
     CACHE: makeFakeCache(),
-    AI: makeFakeAI(),
     AI_ROUTE_LIMITER: makeFakeRateLimiter(),
+    OPENROUTER_API_KEY: 'test-openrouter-key',
     POLL_SECRET: 'test-poll-secret',
     VAPID_PUBLIC_KEY: undefined,
     VAPID_PRIVATE_KEY: undefined,
