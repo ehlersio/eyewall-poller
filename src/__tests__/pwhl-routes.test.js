@@ -1717,7 +1717,7 @@ describe('GET /pwhl/player/career', () => {
   // "Total" row. Rate fields (shooting_percentage etc.) come back as
   // stringified numbers from HockeyTech, same as every other statviewfeed
   // view in this codebase.
-  function skaterPayload({ withPlayoffs = true } = {}) {
+  function skaterPayload({ withPlayoffs = true, withProfile = false } = {}) {
     const sections = [
       {
         title: 'Regular Season',
@@ -1736,7 +1736,32 @@ describe('GET /pwhl/player/career', () => {
         ],
       })
     }
-    return { info: { position: 'F' }, careerStats: [{ sections }] }
+    const info = { position: 'F' }
+    const payload = { info, careerStats: [{ sections }] }
+    // Profile fields (bio/draft/photo/game log) -- shape matches a real
+    // live view=player pull confirmed during the PWHL parity investigation
+    // (player_id=155 Corinne Schroeder, player_id=31 Marie-Philip Poulin):
+    // info.bio is <ul><li><p>...</p></li></ul>, draftInfo/gameByGame are
+    // the same sections[].data[].row table shape as careerStats but with a
+    // blank section title, media.images[] flags one entry is_primary: '1'.
+    if (withProfile) {
+      info.bio = "<ul><li><p>Won gold in 2022.</p></li><li><p>Captain since 2023&nbsp;&mdash; O&rsquo;Brien Cup.</p></li></ul>"
+      info.display_drafts = true
+      payload.media = {
+        images: [
+          { url: 'https://example.com/photo-alt.jpg',     is_primary: '0', width: '400', height: '600' },
+          { url: 'https://example.com/photo-primary.jpg', is_primary: '1', width: '400', height: '600' },
+        ],
+      }
+      payload.draftInfo = [{ sections: [{ title: '', data: [
+        { row: { draft_year: '2023', draft_round: '1', draft_team: 'Boston Fleet' } },
+      ] }] }]
+      payload.gameByGame = [{ sections: [{ title: '', data: [
+        { row: { date_played: '2026-01-01', game: 'MTL @ BOS', goals: '1', assists: '0', points: '1' } },
+        { row: { date_played: '2026-01-05', game: 'MTL @ OTT', goals: '0', assists: '2', points: '2' } },
+      ] }] }]
+    }
+    return payload
   }
 
   it('400s when id is missing', async () => {
@@ -1791,6 +1816,62 @@ describe('GET /pwhl/player/career', () => {
     const body = await res.json()
     expect(body.regularSeason.goals).toBe(38)
     expect(body.playoffs).toBeNull()
+  })
+
+  it('bioPoints/photo/draft/recentGames default to empty/null when profile fields are absent', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(skaterPayload()) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/career?id=31'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/player/career?id=31')
+    )
+
+    const body = await res.json()
+    expect(body.bioPoints).toEqual([])
+    expect(body.photo).toBeNull()
+    expect(body.draft).toBeNull()
+    expect(body.recentGames).toEqual([])
+  })
+
+  it('extracts bioPoints as plain decoded text (no HTML), photo as the is_primary image, and draft when display_drafts is true with a real row', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(skaterPayload({ withProfile: true })) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/career?id=31'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/player/career?id=31')
+    )
+
+    const body = await res.json()
+    expect(body.bioPoints).toEqual([
+      'Won gold in 2022.',
+      "Captain since 2023 — O'Brien Cup.",
+    ])
+    expect(body.photo).toEqual({ url: 'https://example.com/photo-primary.jpg', width: 400, height: 600 })
+    expect(body.draft).toEqual({ draft_year: 2023, draft_round: 1, draft_team: 'Boston Fleet' })
+  })
+
+  it('recentGames are most-recent-first, numeric fields coerced', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(skaterPayload({ withProfile: true })) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/career?id=31'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/player/career?id=31')
+    )
+
+    const body = await res.json()
+    expect(body.recentGames).toEqual([
+      { date_played: '2026-01-05', game: 'MTL @ OTT', goals: 0, assists: 2, points: 2 },
+      { date_played: '2026-01-01', game: 'MTL @ BOS', goals: 1, assists: 0, points: 1 },
+    ])
+  })
+
+  it('draft stays null when display_drafts is true but there are no rows (the common real-world case)', async () => {
+    const payload = skaterPayload({ withProfile: true })
+    payload.draftInfo = [{ sections: [{ title: '', data: [] }] }]
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(payload) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/career?id=31'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/player/career?id=31')
+    )
+
+    expect((await res.json()).draft).toBeNull()
   })
 
   it('502s when the HockeyTech fetch fails', async () => {

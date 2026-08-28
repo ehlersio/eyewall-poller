@@ -39,6 +39,56 @@ function extractCareerTotal(sections, title) {
   return out;
 }
 
+// Generalizes extractCareerTotal to return EVERY row in a titled section
+// (not just the one matching season_name === 'Total'), same numeric-string
+// coercion. Used for draftInfo/gameByGame below -- both are the same
+// HockeyTech sections[].data[].row table shape as careerStats, just with a
+// blank section title ('') rather than 'Regular Season'/'Playoffs'.
+function extractRows(sections, title) {
+  const section = (sections || []).find(s => s.title === title);
+  return (section?.data || []).map(item => {
+    const out = {};
+    for (const [k, v] of Object.entries(item.row || {})) {
+      const n = typeof v === 'string' ? Number(v) : v;
+      out[k] = typeof v === 'string' && v !== '' && !Number.isNaN(n) ? n : v;
+    }
+    return out;
+  });
+}
+
+// info.bio is HockeyTech's own CMS content, consistently a
+// <ul><li><p>text</p></li></ul> block of career-highlight bullets in every
+// real response seen. Extracted server-side into plain strings rather than
+// ever sending raw HTML to the frontend -- this repo has no HTML-
+// sanitization tooling and no dangerouslySetInnerHTML precedent, so this
+// is the one place that content gets neutralized.
+const HTML_ENTITIES = { nbsp: ' ', amp: '&', quot: '"', rsquo: "'", lsquo: "'", rdquo: '"', ldquo: '"', mdash: '—', ndash: '–' };
+function decodeHtmlEntities(s) {
+  return s
+    .replace(/&([a-z]+);/gi, (m, name) => HTML_ENTITIES[name.toLowerCase()] ?? m)
+    .replace(/&#(\d+);/g, (m, code) => String.fromCharCode(parseInt(code, 10)));
+}
+function extractBioPoints(html) {
+  if (!html) return [];
+  const items = html.match(/<li>[\s\S]*?<\/li>/gi) || [];
+  return items
+    .map(li => decodeHtmlEntities(li.replace(/<[^>]+>/g, '')).trim())
+    .filter(Boolean);
+}
+
+// media.images[] is a photo gallery; is_primary ('1'/'0', a string per
+// HockeyTech convention) flags the one to show, falling back to the first
+// entry if none is flagged (seen in practice: single-photo players).
+function extractPhoto(images) {
+  const primary = (images || []).find(img => img.is_primary === '1') || (images || [])[0];
+  if (!primary?.url) return null;
+  return {
+    url:    primary.url,
+    width:  primary.width  != null ? parseInt(primary.width, 10)  : null,
+    height: primary.height != null ? parseInt(primary.height, 10) : null,
+  };
+}
+
 // Live-fetch + cache HockeyTech's gameCenterPreview view, used by
 // /pwhl/preview (season series / H2H / streaks / leaders / special teams).
 // 30min TTL — pre-game data (records, streaks) shifts daily, unlike the
@@ -1299,10 +1349,30 @@ Only reference the two teams named above and the numbers given -- no player name
     }
 
     const sections = raw?.careerStats?.[0]?.sections || [];
+
+    // draft: at most one row per player, gated on HockeyTech's own
+    // display_drafts flag -- most PWHL players tested so far have neither
+    // (display_drafts: false, zero rows), which is expected, not a bug.
+    const draftRows = extractRows(raw?.draftInfo?.[0]?.sections, '');
+    const draft = (raw?.info?.display_drafts === true && draftRows.length > 0) ? draftRows[0] : null;
+
+    // recentGames: gameByGame rows come back oldest-first; take the last 5
+    // and reverse for most-recent-first, matching the NHL Recent Form
+    // convention. Field set differs by position (goalie rows carry
+    // shots_against/saves/win/loss/ot_loss/shootout_loss/gaa/svpct/shutout;
+    // skater rows carry goals/assists/points/plusminus/shots/hits) -- both
+    // share game/date_played. Left as-is for the frontend to branch on.
+    const gameRows = extractRows(raw?.gameByGame?.[0]?.sections, '');
+    const recentGames = gameRows.slice(-5).reverse();
+
     const data = {
       player_id:     parseInt(playerId, 10),
       regularSeason: extractCareerTotal(sections, 'Regular Season'),
       playoffs:      extractCareerTotal(sections, 'Playoffs'),
+      bioPoints:     extractBioPoints(raw?.info?.bio),
+      photo:         extractPhoto(raw?.media?.images),
+      draft,
+      recentGames,
     };
 
     await kvPut(env, kvKey, data, 24 * 3600);
