@@ -28,7 +28,7 @@
  *     see AHL_BUILD_BRIEF.md's explicit scope notes.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS } from './shared.js';
 import { resolveAHLSeason, getAllAHLSeasonTypes, AHL_HT_BASE, AHL_HT_KEY, AHL_HT_HDR } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -38,6 +38,95 @@ async function seasonParam(url, env) {
   const raw = url.searchParams.get('season');
   if (raw) return parseInt(raw, 10);
   return (await resolveAHLSeason(env)).seasonId;
+}
+
+// AHL news sources -- all three are dedicated AHL-only feeds (confirmed
+// live 2026-08-29), so none need PWHL_NEWS_SOURCES-style keyword filtering:
+// unlike PWHL, which has no single-league outlet and has to filter general
+// hockey feeds for PWHL mentions, AHL has an official site feed plus two
+// aggregators that are AHL-scoped by construction.
+const AHL_NEWS_SOURCES = [
+  {
+    // TheAHL.com's own WordPress feed -- the official league site, so this
+    // is the highest-signal source (no PWHL equivalent exists: PWHL has no
+    // dedicated news RSS on pwhl.com).
+    id:     'official-ahl',
+    name:   'TheAHL.com',
+    color:  '#FFFFFF',
+    bg:     '#003876',
+    url:    'https://theahl.com/feed',
+    type:   'rss',
+    filter: null,
+  },
+  {
+    // Hockey Writers' dedicated AHL category feed (not its general site
+    // feed) -- every item here is already AHL-tagged, no filter needed.
+    id:     'hockeywriters-ahl',
+    name:   'The Hockey Writers',
+    color:  '#FFFFFF',
+    bg:     '#1a1a1a',
+    url:    'https://thehockeywriters.com/category/ahl/feed/',
+    type:   'rss',
+    filter: null,
+  },
+  {
+    // OurSportsCentral's AHL press-release feed (league id 17 on that
+    // site, confirmed live) -- mirrors pwhl_news.py's osc-pwhl source
+    // (same site, filter=False) but this one covers the live-fallback
+    // path too since AHL has no PWHL-style "wider nightly list vs.
+    // narrower live list" gap yet (only 3 sources total either way).
+    id:     'osc-ahl',
+    name:   'OurSports Central',
+    color:  '#FFFFFF',
+    bg:     '#8b0000',
+    url:    'https://www.oursportscentral.com/feeds/l17.xml',
+    type:   'rss',
+    filter: null,
+  },
+];
+
+export async function fetchAHLNews(env) {
+  const allItems = [];
+  for (const source of AHL_NEWS_SOURCES) {
+    try {
+      console.log(`AHL news: fetching ${source.id} from ${source.url}`);
+      const res = await fetch(source.url, {
+        headers: { 'User-Agent': 'EyeWall-Analytics/1.0', 'Accept': 'application/rss+xml,text/xml,*/*' },
+        cf: { cacheTtl: 0 },
+      });
+      console.log(`AHL news: ${source.id} status=${res.status}`);
+      if (!res.ok) { console.warn(`AHL news: ${source.id} failed ${res.status}`); continue; }
+      const xml = await res.text();
+      let parsed = parseRSS(xml, source);
+      if (source.filter?.length) {
+        parsed = parsed.filter(item => {
+          const text = (item.title + ' ' + (item.excerpt || '')).toLowerCase();
+          return source.filter.some(kw => text.includes(kw));
+        });
+      }
+      allItems.push(...parsed);
+      console.log(`AHL news: ${source.id} → ${parsed.length} items`);
+    } catch (err) {
+      console.warn(`AHL news: ${source.id} error: ${err.message}`);
+    }
+  }
+  const seenIds = new Set();
+  const deduped = allItems
+    .filter(item => { if (seenIds.has(item.id)) return false; seenIds.add(item.id); return true; })
+    .sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
+  // Merge with whatever's cached rather than overwriting -- same reasoning
+  // as fetchPWHLNews: this runs on a cold user request, but /ahl/news/ingest
+  // (eyewall-pipeline's nightly ahl_news.py, GH Actions IPs) also writes
+  // this key, and a thin live-fallback result shouldn't wipe out a fuller
+  // nightly one.
+  const existing = (await kvGet(env, 'ahl:news')) || [];
+  const merged = [
+    ...deduped,
+    ...existing.filter(item => !deduped.find(d => d.id === item.id)),
+  ].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
+    .slice(0, 60);
+  await kvPut(env, 'ahl:news', merged, merged.length > 0 ? 25 * 3600 : 300);
+  return merged;
 }
 
 // AHL team ID -> abbreviation map. Current as of season 94 (2026-27),
@@ -1110,6 +1199,47 @@ Only reference the two teams named above and the numbers given -- no player name
       console.error('[AHL] head-to-head narrative AI error:', e);
       return new Response(JSON.stringify({ error: 'AI generation failed' }), { status: 502, headers: corsHeaders() });
     }
+  }
+
+  // GET /ahl/news
+  if (url.pathname === '/ahl/news' && request.method === 'GET') {
+    const cached = await kvGet(env, 'ahl:news');
+    if (cached) return json(cached);
+    ctx.waitUntil(fetchAHLNews(env).catch(e => console.warn('AHL news bg fetch:', e.message)));
+    return json([]);
+  }
+
+  // POST /ahl/news/bust — invalidate news cache so next GET triggers fresh fetch
+  if (url.pathname === '/ahl/news/bust' && request.method === 'POST') {
+    const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
+    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    await env.CACHE.delete('ahl:news');
+    console.log('AHL news cache busted');
+    return json({ ok: true, busted: ['ahl:news'] });
+  }
+
+  // POST /ahl/news/ingest — accepts AHL articles from GitHub Actions
+  // (eyewall-pipeline's ahl_news.py, run nightly via ahl-nightly.yml).
+  // Mirrors /pwhl/news/ingest exactly.
+  if (url.pathname === '/ahl/news/ingest' && request.method === 'POST') {
+    const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
+    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    let articles;
+    try {
+      articles = await request.json();
+      if (!Array.isArray(articles)) throw new Error('Expected array');
+    } catch (e) {
+      return new Response(`Bad request: ${e.message}`, { status: 400 });
+    }
+    const existing = (await kvGet(env, 'ahl:news')) || [];
+    const merged = [
+      ...articles,
+      ...existing.filter(a => !articles.find(n => n.id === a.id)),
+    ].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
+      .slice(0, 60);
+    await kvPut(env, 'ahl:news', merged, 25 * 3600);
+    console.log(`AHL news ingest: ${articles.length} new → ${merged.length} total`);
+    return json({ ok: true, received: articles.length, total: merged.length });
   }
 
   return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: corsHeaders() });
