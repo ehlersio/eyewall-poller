@@ -53,6 +53,7 @@ const NHL_BASE = 'https://api-web.nhle.com/v1';
 // touching again after that.
 const FALLBACK_NHL_SEASON = '20252026';
 const FALLBACK_PWHL = { seasonId: 8, seasonType: 'regular', startYear: 2025 };
+const FALLBACK_AHL = { seasonId: 90, seasonType: 'regular' };
 
 const TTL_SECONDS = 6 * 3600; // re-check every 6 hours
 
@@ -263,22 +264,111 @@ export async function getAllPWHLSeasons(env) {
   }
 }
 
+// ── AHL ───────────────────────────────────────────────────────
+// Different HockeyTech client (client_code=ahl, key=ccb91f29d6744675,
+// site_id=3 -- see eyewall-pipeline's docs/hockeytech-ahl-api-notes.md)
+// from PWHL's, and a different feed/view: `modulekit&view=seasons`, not
+// `statviewfeed&view=bootstrap`. Confirmed live 2026-08-29: without a
+// `callback=` param this feed returns bare JSON (no parens at all), which
+// unwrapJsonp() already handles correctly (it only strips a leading `(`
+// if present, otherwise passes the text through to JSON.parse
+// unchanged) -- no separate unwrap needed for this feed vs PWHL's.
+//
+// AHL's `seasons` feed has no `hide_in_standings` flag the way PWHL's
+// bootstrap does, so "is this candidate season real" is decided purely by
+// `career === "1"` (skips All-Star Challenge entries) AND `start_date` not
+// being in the future (skips an already-announced-but-not-started
+// upcoming season) -- mirrors eyewall-pipeline's ahl_stats.py
+// resolve_current_season() exactly, including its reasoning: a naive
+// "max season_id with career=1" picked a season with zero games in
+// testing (2026-27, starts October) instead of the actually-current one.
+const AHL_HT_BASE = 'https://lscluster.hockeytech.com/feed/index.php';
+const AHL_HT_KEY = 'ccb91f29d6744675';
+const AHL_HT_HDR = { 'User-Agent': 'Mozilla/5.0', Referer: 'https://theahl.com/' };
+
+function ahlSeasonTypeFromName(name, playoff, career) {
+  const n = (name || '').toLowerCase();
+  if (playoff === '1' || n.includes('playoffs')) return 'playoffs';
+  if (n.includes('preseason')) return 'preseason';
+  if (n.includes('all-star')) return 'allstar';
+  if (career === '1') return 'regular';
+  return 'other';
+}
+
+async function fetchAHLSeasons(env) {
+  const cached = await kvGet(env, 'config:season:ahl:seasons');
+  if (cached) return cached;
+  const url = `${AHL_HT_BASE}?feed=modulekit&view=seasons&key=${AHL_HT_KEY}&client_code=ahl&site_id=3&lang=en`;
+  const res = await fetch(url, { headers: AHL_HT_HDR });
+  if (!res.ok) throw new Error(`AHL seasons ${res.status}`);
+  const data = unwrapJsonp(await res.text());
+  const seasons = data?.SiteKit?.Seasons || [];
+  await kvPut(env, 'config:season:ahl:seasons', seasons, TTL_SECONDS);
+  return seasons;
+}
+
+export async function resolveAHLSeason(env) {
+  const override = await kvGet(env, 'config:season:ahl:override');
+  if (override) return override;
+
+  const cached = await kvGet(env, 'config:season:ahl');
+  if (cached) return cached;
+
+  try {
+    const seasons = await fetchAHLSeasons(env);
+    const today = new Date().toISOString().slice(0, 10);
+    const started = seasons.filter(s => s.career === '1' && (s.start_date || '9999') <= today);
+    if (!started.length) {
+      console.warn('AHL season resolve: no started career season in feed — using fallback');
+      return FALLBACK_AHL;
+    }
+    const latest = started.reduce((a, b) => (Number(b.season_id) > Number(a.season_id) ? b : a));
+    const resolved = {
+      seasonId: Number(latest.season_id),
+      seasonType: ahlSeasonTypeFromName(latest.season_name, latest.playoff, latest.career),
+      resolvedAt: new Date().toISOString(),
+      source: 'live',
+    };
+    await kvPut(env, 'config:season:ahl', resolved, TTL_SECONDS);
+    return resolved;
+  } catch (e) {
+    console.warn(`AHL season resolve failed: ${e.message} — using fallback`);
+    return FALLBACK_AHL;
+  }
+}
+
+// AHL equivalent of getAllPWHLSeasonTypes() -- id -> seasonType for every
+// season AHL's feed knows about (current + historical), for the same
+// "don't guess regular for an unrecognized id" reasoning.
+export async function getAllAHLSeasonTypes(env) {
+  try {
+    const seasons = await fetchAHLSeasons(env);
+    const map = {};
+    for (const s of seasons) map[String(s.season_id)] = ahlSeasonTypeFromName(s.season_name, s.playoff, s.career);
+    return map;
+  } catch (e) {
+    console.warn(`AHL season-type map resolve failed: ${e.message}`);
+    return null;
+  }
+}
+
 // ── Combined config endpoint ──────────────────────────────────
 
 export async function getSeasonsConfig(env) {
-  const [nhl, pwhl] = await Promise.all([
+  const [nhl, pwhl, ahl] = await Promise.all([
     resolveNHLSeason(env),
     resolvePWHLSeason(env),
+    resolveAHLSeason(env),
   ]);
-  return { nhl: { seasonId: nhl }, pwhl };
+  return { nhl: { seasonId: nhl }, pwhl, ahl };
 }
 
 // Called from scheduled() (runs every ~60s). This does NOT force a
-// network re-fetch on every tick — resolveNHLSeason/resolvePWHLSeason
-// already check the KV cache first and only hit the network when the
-// 6-hour TTL has actually lapsed. Calling them here just means the cache
-// gets warmed automatically shortly after expiry, instead of on whatever
-// unlucky user request happens to hit it first.
+// network re-fetch on every tick — resolveNHLSeason/resolvePWHLSeason/
+// resolveAHLSeason already check the KV cache first and only hit the
+// network when the 6-hour TTL has actually lapsed. Calling them here just
+// means the cache gets warmed automatically shortly after expiry, instead
+// of on whatever unlucky user request happens to hit it first.
 export async function refreshSeasonsCache(env) {
-  await Promise.all([resolveNHLSeason(env), resolvePWHLSeason(env)]);
+  await Promise.all([resolveNHLSeason(env), resolvePWHLSeason(env), resolveAHLSeason(env)]);
 }
