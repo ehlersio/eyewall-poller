@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -19,75 +19,9 @@ async function seasonParam(url, env) {
   return (await resolvePWHLSeason(env)).seasonId;
 }
 
-// Pulls the server-computed "Total" row out of one careerStats section
-// (view=player's Regular Season / Playoffs split), coercing HockeyTech's
-// stringified numeric fields (e.g. "16.9") to real numbers and dropping
-// season_name/team_name, which don't apply to an aggregate row. Returns
-// null if the player has no rows in that section at all (e.g. hasn't made
-// the playoffs yet) -- callers must not assume both sections exist.
-function extractCareerTotal(sections, title) {
-  const section = (sections || []).find(s => s.title === title);
-  const totalItem = (section?.data || []).find(item => item.row?.season_name === 'Total');
-  if (!totalItem) return null;
-
-  const out = {};
-  for (const [k, v] of Object.entries(totalItem.row)) {
-    if (k === 'season_name' || k === 'team_name') continue;
-    const n = typeof v === 'string' ? Number(v) : v;
-    out[k] = typeof v === 'string' && v !== '' && !Number.isNaN(n) ? n : v;
-  }
-  return out;
-}
-
-// Generalizes extractCareerTotal to return EVERY row in a titled section
-// (not just the one matching season_name === 'Total'), same numeric-string
-// coercion. Used for draftInfo/gameByGame below -- both are the same
-// HockeyTech sections[].data[].row table shape as careerStats, just with a
-// blank section title ('') rather than 'Regular Season'/'Playoffs'.
-function extractRows(sections, title) {
-  const section = (sections || []).find(s => s.title === title);
-  return (section?.data || []).map(item => {
-    const out = {};
-    for (const [k, v] of Object.entries(item.row || {})) {
-      const n = typeof v === 'string' ? Number(v) : v;
-      out[k] = typeof v === 'string' && v !== '' && !Number.isNaN(n) ? n : v;
-    }
-    return out;
-  });
-}
-
-// info.bio is HockeyTech's own CMS content, consistently a
-// <ul><li><p>text</p></li></ul> block of career-highlight bullets in every
-// real response seen. Extracted server-side into plain strings rather than
-// ever sending raw HTML to the frontend -- this repo has no HTML-
-// sanitization tooling and no dangerouslySetInnerHTML precedent, so this
-// is the one place that content gets neutralized.
-const HTML_ENTITIES = { nbsp: ' ', amp: '&', quot: '"', rsquo: "'", lsquo: "'", rdquo: '"', ldquo: '"', mdash: '—', ndash: '–' };
-function decodeHtmlEntities(s) {
-  return s
-    .replace(/&([a-z]+);/gi, (m, name) => HTML_ENTITIES[name.toLowerCase()] ?? m)
-    .replace(/&#(\d+);/g, (m, code) => String.fromCharCode(parseInt(code, 10)));
-}
-function extractBioPoints(html) {
-  if (!html) return [];
-  const items = html.match(/<li>[\s\S]*?<\/li>/gi) || [];
-  return items
-    .map(li => decodeHtmlEntities(li.replace(/<[^>]+>/g, '')).trim())
-    .filter(Boolean);
-}
-
-// media.images[] is a photo gallery; is_primary ('1'/'0', a string per
-// HockeyTech convention) flags the one to show, falling back to the first
-// entry if none is flagged (seen in practice: single-photo players).
-function extractPhoto(images) {
-  const primary = (images || []).find(img => img.is_primary === '1') || (images || [])[0];
-  if (!primary?.url) return null;
-  return {
-    url:    primary.url,
-    width:  primary.width  != null ? parseInt(primary.width, 10)  : null,
-    height: primary.height != null ? parseInt(primary.height, 10) : null,
-  };
-}
+// extractCareerTotal/extractRows/extractBioPoints/extractPhoto moved to
+// shared.js (2026-08-29) -- generic HockeyTech view=player table parsers,
+// AHL's ahl.js needs the exact same ones for /ahl/player/career.
 
 // Live-fetch + cache HockeyTech's gameCenterPreview view, used by
 // /pwhl/preview (season series / H2H / streaks / leaders / special teams).

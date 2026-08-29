@@ -135,6 +135,87 @@ export function unwrapJsonp(text) {
   return JSON.parse(text);
 }
 
+// ── HockeyTech view=player table parsers ─────────────────────
+// Moved here from pwhl.js (originally PWHL-only) since AHL's ahl.js needs
+// the exact same parsers for its own /ahl/player/career route -- these are
+// generic parsers over HockeyTech's standard sections[].data[].row table
+// shape (view=player's careerStats/draftInfo/gameByGame all use it), with
+// zero PWHL-specific field names or assumptions. Confirmed live 2026-08-29
+// that AHL's view=player response uses the identical shape (careerStats
+// Regular Season/Playoffs sections each end in a season_name: 'Total' row,
+// info.bio is the same <ul><li> HTML, media.images[] has the same
+// is_primary convention).
+
+// Pulls the server-computed "Total" row out of one careerStats section
+// (view=player's Regular Season / Playoffs split), coercing HockeyTech's
+// stringified numeric fields (e.g. "16.9") to real numbers and dropping
+// season_name/team_name, which don't apply to an aggregate row. Returns
+// null if the player has no rows in that section at all (e.g. hasn't made
+// the playoffs yet) -- callers must not assume both sections exist.
+export function extractCareerTotal(sections, title) {
+  const section = (sections || []).find(s => s.title === title);
+  const totalItem = (section?.data || []).find(item => item.row?.season_name === 'Total');
+  if (!totalItem) return null;
+
+  const out = {};
+  for (const [k, v] of Object.entries(totalItem.row)) {
+    if (k === 'season_name' || k === 'team_name') continue;
+    const n = typeof v === 'string' ? Number(v) : v;
+    out[k] = typeof v === 'string' && v !== '' && !Number.isNaN(n) ? n : v;
+  }
+  return out;
+}
+
+// Generalizes extractCareerTotal to return EVERY row in a titled section
+// (not just the one matching season_name === 'Total'), same numeric-string
+// coercion. Used for draftInfo/gameByGame -- both are the same HockeyTech
+// sections[].data[].row table shape as careerStats, just with a blank
+// section title ('') rather than 'Regular Season'/'Playoffs'.
+export function extractRows(sections, title) {
+  const section = (sections || []).find(s => s.title === title);
+  return (section?.data || []).map(item => {
+    const out = {};
+    for (const [k, v] of Object.entries(item.row || {})) {
+      const n = typeof v === 'string' ? Number(v) : v;
+      out[k] = typeof v === 'string' && v !== '' && !Number.isNaN(n) ? n : v;
+    }
+    return out;
+  });
+}
+
+// info.bio is HockeyTech's own CMS content, consistently a
+// <ul><li><p>text</p></li></ul> block of career-highlight bullets in every
+// real response seen. Extracted server-side into plain strings rather than
+// ever sending raw HTML to the frontend -- this repo has no HTML-
+// sanitization tooling and no dangerouslySetInnerHTML precedent, so this
+// is the one place that content gets neutralized.
+const HTML_ENTITIES = { nbsp: ' ', amp: '&', quot: '"', rsquo: "'", lsquo: "'", rdquo: '"', ldquo: '"', mdash: '—', ndash: '–' };
+function decodeHtmlEntities(s) {
+  return s
+    .replace(/&([a-z]+);/gi, (m, name) => HTML_ENTITIES[name.toLowerCase()] ?? m)
+    .replace(/&#(\d+);/g, (m, code) => String.fromCharCode(parseInt(code, 10)));
+}
+export function extractBioPoints(html) {
+  if (!html) return [];
+  const items = html.match(/<li>[\s\S]*?<\/li>/gi) || [];
+  return items
+    .map(li => decodeHtmlEntities(li.replace(/<[^>]+>/g, '')).trim())
+    .filter(Boolean);
+}
+
+// media.images[] is a photo gallery; is_primary ('1'/'0', a string per
+// HockeyTech convention) flags the one to show, falling back to the first
+// entry if none is flagged (seen in practice: single-photo players).
+export function extractPhoto(images) {
+  const primary = (images || []).find(img => img.is_primary === '1') || (images || [])[0];
+  if (!primary?.url) return null;
+  return {
+    url:    primary.url,
+    width:  primary.width  != null ? parseInt(primary.width, 10)  : null,
+    height: primary.height != null ? parseInt(primary.height, 10) : null,
+  };
+}
+
 // ── Supabase headers factory ──────────────────────────────────
 
 export function sbHeaders() {

@@ -28,8 +28,8 @@
  *     see AHL_BUILD_BRIEF.md's explicit scope notes.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON } from './shared.js';
-import { resolveAHLSeason, getAllAHLSeasonTypes } from './seasons.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto } from './shared.js';
+import { resolveAHLSeason, getAllAHLSeasonTypes, AHL_HT_BASE, AHL_HT_KEY, AHL_HT_HDR } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
 // (see seasons.js) when the param is omitted. Mirrors pwhl.js's
@@ -373,6 +373,133 @@ export async function handleAHL(request, env, ctx, url) {
     await kvPut(env, kvKey, data, 3600);
     console.log(`AHL team-season-summary: teamId=${teamId} season=${season} games=${gameIds.length}`);
     return json(data);
+  }
+
+  // GET /ahl/player/landing?id=6681&season=90
+  // Player detail lookup for AHLPlayerPopup -- self-fetches identity + a
+  // season's stat line by id. Mirrors /pwhl/player/landing exactly
+  // (ahl_players/ahl_player_seasons/ahl_goalie_seasons are already the
+  // same shape as their PWHL counterparts) -- Supabase-only, no HockeyTech
+  // call needed.
+  if (url.pathname === '/ahl/player/landing') {
+    const playerId = url.searchParams.get('id');
+    const seasonQ = url.searchParams.get('season');
+    if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey = `ahl:player:landing:${playerId}:${seasonQ || 'latest'}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const playerRes = await fetch(`${SB_URL}/rest/v1/ahl_players?player_id=eq.${playerId}&select=*`, { headers: sbH });
+    if (!playerRes.ok) return new Response(JSON.stringify({ error: `Supabase ${playerRes.status}` }), { status: 502, headers: corsHeaders() });
+    const playerRows = await playerRes.json();
+    if (!playerRows.length) return new Response(JSON.stringify({ error: 'Player not found' }), { status: 404, headers: corsHeaders() });
+
+    const player = playerRows[0];
+    const statsTable = player.position === 'G' ? 'ahl_goalie_seasons' : 'ahl_player_seasons';
+    const statsQuery = seasonQ
+      ? `player_id=eq.${playerId}&season_id=eq.${seasonQ}&season_type=eq.regular&limit=1&select=*`
+      : `player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc&limit=1&select=*`;
+
+    const statsRes = await fetch(`${SB_URL}/rest/v1/${statsTable}?${statsQuery}`, { headers: sbH });
+    const statsRows = statsRes.ok ? await statsRes.json() : [];
+    const stats = statsRows[0] || {};
+
+    const data = { ...player, ...stats };
+    await kvPut(env, kvKey, data, 3600);
+    return json(data);
+  }
+
+  // GET /ahl/player/career?id=6681
+  // Live proxy for HockeyTech's view=player careerStats Total rows, same
+  // shape/role as /pwhl/player/career -- confirmed live 2026-08-29 that
+  // AHL's view=player response uses the identical sections[].data[].row
+  // table shape (Regular Season/Playoffs sections each end in a
+  // season_name: 'Total' aggregate row, info.bio is the same <ul><li>
+  // HTML, media.images[] has the same is_primary convention), so this
+  // reuses shared.js's extractCareerTotal/extractRows/extractBioPoints/
+  // extractPhoto unmodified -- no AHL-specific parsing needed.
+  // No ?season= param -- careerStats is season-independent, same as PWHL's.
+  // 24hr TTL -- career totals only change when the player plays a new game.
+  if (url.pathname === '/ahl/player/career') {
+    const playerId = url.searchParams.get('id');
+    if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey = `ahl:player:career:${playerId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const htRes = await fetch(
+      `${AHL_HT_BASE}?feed=statviewfeed&view=player&player_id=${playerId}&site_id=0&key=${AHL_HT_KEY}&client_code=ahl&lang=en&league_id=&statsType=standard`,
+      { headers: AHL_HT_HDR }
+    );
+    if (!htRes.ok) return new Response(JSON.stringify({ error: `HockeyTech ${htRes.status}` }), { status: 502, headers: corsHeaders() });
+
+    let raw;
+    try {
+      const parsed = unwrapJsonp(await htRes.text());
+      raw = Array.isArray(parsed) ? parsed[0] : parsed;
+    } catch (e) {
+      return new Response(JSON.stringify({ error: 'player career parse failed', detail: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    const sections = raw?.careerStats?.[0]?.sections || [];
+    const draftRows = extractRows(raw?.draftInfo?.[0]?.sections, '');
+    const draft = (raw?.info?.display_drafts === true && draftRows.length > 0) ? draftRows[0] : null;
+
+    const gameRows = extractRows(raw?.gameByGame?.[0]?.sections, '');
+    const recentGames = gameRows.slice(-5).reverse();
+
+    const data = {
+      player_id:     parseInt(playerId, 10),
+      regularSeason: extractCareerTotal(sections, 'Regular Season'),
+      playoffs:      extractCareerTotal(sections, 'Playoffs'),
+      bioPoints:     extractBioPoints(raw?.info?.bio),
+      photo:         extractPhoto(raw?.media?.images),
+      draft,
+      recentGames,
+    };
+
+    await kvPut(env, kvKey, data, 24 * 3600);
+    return json(data);
+  }
+
+  // GET /ahl/player-shots?playerId=6681&season=90
+  // Shot-map heat map data for a single skater. Mirrors /pwhl/player-shots
+  // exactly (ahl_shot_events already has the same x_norm/y_norm shape) --
+  // skaters only. No /ahl/goalie-shots equivalent: confirmed live that
+  // AHL's PBP goal events carry goalie_id: null (ahl_shot_events.py's own
+  // comment -- "not carried on the goal event itself", a real structural
+  // difference from PWHL's feed, which synthesizes its "goal" rows from a
+  // richer "shot" event that DOES carry goalie info). Building a goalie
+  // heat map here would silently under-count every goal allowed; not
+  // worth shipping a misleading stat instead of an honest "not available."
+  if (url.pathname === '/ahl/player-shots') {
+    const playerId = parseInt(url.searchParams.get('playerId') || '0', 10);
+    const season = await seasonParam(url, env);
+    if (!playerId) return new Response(JSON.stringify({ error: 'playerId required' }), { status: 400, headers: corsHeaders() });
+    const kvKey = `ahl:pshots:${playerId}:${season}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+    const r = await fetch(
+      `${SB_URL}/rest/v1/ahl_shot_events?shooter_id=eq.${playerId}&season_id=eq.${season}&select=event_type,period_id,time_seconds,x_norm,y_norm&limit=500`,
+      { headers: sbH }
+    );
+    if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
+    const rows = await r.json();
+    const shots = rows.map(row => {
+      let x = parseFloat(row.x_norm), y = parseFloat(row.y_norm);
+      if (x < 0) { x = -x; y = -y; }
+      return {
+        x: Math.min(Math.abs(x), 99),
+        y: Math.max(-42, Math.min(42, y)),
+        t: row.event_type === 'goal' ? 'g' : 's',
+        p: row.period_id,
+      };
+    }).filter(s => !isNaN(s.x) && !isNaN(s.y));
+    const result = { shots, total: shots.length };
+    await kvPut(env, kvKey, result, 3600 * 6);
+    return json(result);
   }
 
   return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: corsHeaders() });
