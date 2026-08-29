@@ -355,6 +355,24 @@ export async function getAllAHLSeasonTypes(env) {
   }
 }
 
+// AHL equivalent of getAllPWHLSeasons() -- for /config/seasons/comparison's
+// AHL branch. AHL's seasons feed has no explicit startYear field the way
+// PWHL's bootstrap does; derived from start_date's year instead (e.g.
+// "2025-10-08" -> 2025), same value a human would read off the season.
+export async function getAllAHLSeasons(env) {
+  try {
+    const seasons = await fetchAHLSeasons(env);
+    return seasons.map(s => ({
+      seasonId: Number(s.season_id),
+      seasonType: ahlSeasonTypeFromName(s.season_name, s.playoff, s.career),
+      startYear: s.start_date ? new Date(s.start_date).getUTCFullYear() : null,
+    }));
+  } catch (e) {
+    console.warn(`AHL season list resolve failed: ${e.message}`);
+    return null;
+  }
+}
+
 // ── Combined config endpoint ──────────────────────────────────
 
 export async function getSeasonsConfig(env) {

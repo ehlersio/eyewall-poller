@@ -19,9 +19,9 @@
 
 import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.js';
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
-import { handleAHL } from './ahl.js';
+import { handleAHL, AHL_TEAM_CODES } from './ahl.js';
 import { corsHeaders, json, kvGet, kvPut, sbError, badRequest, sbHeaders, SB_URL, SB_ANON } from './shared.js';
-import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
+import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
 async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
@@ -138,9 +138,45 @@ async function handleRequest(request, env, ctx) {
       console.warn(`PWHL comparison-seasons query failed: ${e.message}`);
     }
 
+    // AHL branch (2026-08-29) -- same shape/reasoning as PWHL's above.
+    // AHL_TEAM_CODES includes one historical-only entry (317, Bridgeport
+    // Islanders, pre-2026-27-relocation) that's never a "current active
+    // team" for the comparable-threshold math the same way an NHL/PWHL
+    // franchise never disappears from TEAM_CONFIGS/PWHL_TEAM_CODES --
+    // harmless here since it only inflates the denominator by one team
+    // out of 32, not enough to flip any real season's comparable flag.
+    const ahlActiveTeamCount = Object.keys(AHL_TEAM_CODES).length;
+    let ahlSeasons = [];
+    try {
+      const [r, meta] = await Promise.all([
+        fetch(`${SB_URL}/rest/v1/ahl_team_seasons?select=season_id,team_id&limit=2000`, { headers: sbH }),
+        getAllAHLSeasons(env),
+      ]);
+      if (!r.ok) throw new Error(`Supabase ${r.status}`);
+      const rows = await r.json();
+      const metaById = new Map((meta || []).map(m => [m.seasonId, m]));
+      const bySeason = new Map();
+      for (const row of rows) {
+        if (!bySeason.has(row.season_id)) bySeason.set(row.season_id, new Set());
+        bySeason.get(row.season_id).add(row.team_id);
+      }
+      ahlSeasons = [...bySeason.entries()]
+        .map(([seasonId, teams]) => ({
+          seasonId,
+          seasonType: metaById.get(seasonId)?.seasonType ?? null,
+          startYear:  metaById.get(seasonId)?.startYear ?? null,
+          teamCount:  teams.size,
+          comparable: teams.size > ahlActiveTeamCount / 2,
+        }))
+        .sort((a, b) => b.seasonId - a.seasonId);
+    } catch (e) {
+      console.warn(`AHL comparison-seasons query failed: ${e.message}`);
+    }
+
     const result = {
       nhl:  { activeTeamCount: nhlActiveTeamCount,  seasons: nhlSeasons },
       pwhl: { activeTeamCount: pwhlActiveTeamCount, seasons: pwhlSeasons },
+      ahl:  { activeTeamCount: ahlActiveTeamCount,  seasons: ahlSeasons },
     };
     await kvPut(env, kvKey, result, 3600); // 1hr — matches /team-seasons' own cache TTL
     return json(result);
