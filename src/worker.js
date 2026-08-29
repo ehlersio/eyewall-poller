@@ -19,7 +19,7 @@
 
 import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.js';
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
-import { handleAHL } from './ahl.js';
+import { handleAHL, fetchAHLNews } from './ahl.js';
 import { corsHeaders, json, kvGet, kvPut, sbError, badRequest, sbHeaders, SB_URL, SB_ANON } from './shared.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
@@ -331,24 +331,27 @@ async function handleRequest(request, env, ctx) {
     return json(result);
   }
 
-  // GET /news/latest?sport=nhl&team=CAR | ?sport=pwhl — cheap "is there
+  // GET /news/latest?sport=nhl&team=CAR | ?sport=pwhl|ahl — cheap "is there
   // anything new" check for the News tab's read-state badge (Session 92).
-  // Deliberately reuses the exact KV entry /news and /pwhl/news already
-  // populate (news:${team} / pwhl:news) instead of a second parallel
-  // fetch — if that cache is warm, this is a pure KV read, no Supabase/RSS
-  // call at all. If cold, triggers the same background warm those routes
-  // use and returns null for now (identical "empty now, real data next
-  // request" shape as /news itself) rather than duplicating fetch logic.
+  // Deliberately reuses the exact KV entry /news, /pwhl/news, /ahl/news
+  // already populate (news:${team} / pwhl:news / ahl:news) instead of a
+  // second parallel fetch — if that cache is warm, this is a pure KV read,
+  // no Supabase/RSS call at all. If cold, triggers the same background
+  // warm those routes use and returns null for now (identical "empty now,
+  // real data next request" shape as /news itself) rather than duplicating
+  // fetch logic.
   if (url.pathname === '/news/latest') {
     const sport = url.searchParams.get('sport')?.toLowerCase();
-    if (!sport || !['nhl', 'pwhl'].includes(sport)) {
-      return badRequest('sport must be nhl or pwhl');
+    if (!sport || !['nhl', 'pwhl', 'ahl'].includes(sport)) {
+      return badRequest('sport must be nhl, pwhl, or ahl');
     }
 
-    if (sport === 'pwhl') {
-      const cached = await kvGet(env, 'pwhl:news');
+    if (sport === 'pwhl' || sport === 'ahl') {
+      const kvKey = sport === 'pwhl' ? 'pwhl:news' : 'ahl:news';
+      const fetchFn = sport === 'pwhl' ? fetchPWHLNews : fetchAHLNews;
+      const cached = await kvGet(env, kvKey);
       if (!cached) {
-        ctx.waitUntil(fetchPWHLNews(env).catch(e => console.warn('PWHL news bg fetch:', e.message)));
+        ctx.waitUntil(fetchFn(env).catch(e => console.warn(`${sport.toUpperCase()} news bg fetch:`, e.message)));
         return json({ latestId: null, publishedAt: null });
       }
       const latest = cached[0] || null;

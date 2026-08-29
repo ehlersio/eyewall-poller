@@ -246,16 +246,17 @@ export function stripHtml(s) {
 }
 
 export function safeId(sourceId, link) {
-  // Use full base64 of URL to avoid collisions (12 chars was too short)
-  try {
-    const hash = btoa(unescape(encodeURIComponent(link))).replace(/[^a-z0-9]/gi, '');
-    return sourceId + '-' + hash.slice(0, 32);
-  } catch {
-    // Fallback: use a simple hash of the link string
-    let h = 0;
-    for (let i = 0; i < link.length; i++) h = (Math.imul(31, h) + link.charCodeAt(i)) | 0;
-    return sourceId + '-' + Math.abs(h).toString(36);
-  }
+  // Hash the FULL link, not a truncated prefix of it -- a truncated
+  // base64 prefix (the previous approach, "12 chars was too short" fixed
+  // by widening to 32) still collides whenever two article URLs share a
+  // long common path prefix: confirmed live 2026-08-29 against theahl.com's
+  // own RSS feed, which republishes NHL.com's "32 in 32" prospect series --
+  // those URLs are identical for well past the first 32 base64 characters,
+  // so every article in that series produced the same id and collapsed to
+  // one row after dedup. A full-string hash has no such blind spot.
+  let h = 0;
+  for (let i = 0; i < link.length; i++) h = (Math.imul(31, h) + link.charCodeAt(i)) | 0;
+  return sourceId + '-' + Math.abs(h).toString(36);
 }
 
 // ── RSS/ESPN news parsers (used by NHL and PWHL news fetchers) ──
