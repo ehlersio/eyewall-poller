@@ -282,9 +282,12 @@ export async function getAllPWHLSeasons(env) {
 // resolve_current_season() exactly, including its reasoning: a naive
 // "max season_id with career=1" picked a season with zero games in
 // testing (2026-27, starts October) instead of the actually-current one.
-const AHL_HT_BASE = 'https://lscluster.hockeytech.com/feed/index.php';
-const AHL_HT_KEY = 'ccb91f29d6744675';
-const AHL_HT_HDR = { 'User-Agent': 'Mozilla/5.0', Referer: 'https://theahl.com/' };
+// Exported (2026-08-29) so ahl.js can call HockeyTech directly for routes
+// beyond season resolution (e.g. /ahl/player/career) -- same constants,
+// just no longer module-private.
+export const AHL_HT_BASE = 'https://lscluster.hockeytech.com/feed/index.php';
+export const AHL_HT_KEY = 'ccb91f29d6744675';
+export const AHL_HT_HDR = { 'User-Agent': 'Mozilla/5.0', Referer: 'https://theahl.com/' };
 
 function ahlSeasonTypeFromName(name, playoff, career) {
   const n = (name || '').toLowerCase();
