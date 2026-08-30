@@ -22,6 +22,31 @@ export async function kvGet(env, key) {
   return raw ? JSON.parse(raw) : null;
 }
 
+// Derive 'pre' | 'live' | 'final' from a pwhl_game_log/ahl_game_log row.
+// game_status_code (HockeyTech's numeric GameStatus, added Phase 6 --
+// see eyewall-pipeline's docs/live_score_refresh_ddl.sql) is preferred
+// when present: confirmed live that a not-yet-started game's game_state
+// string is literally its scheduled clock time ("7:00PM"), not a state
+// word, so string-matching alone can't reliably tell "scheduled" apart
+// from an unrecognized live state. 1=scheduled, 4=final confirmed live;
+// 2/3 unconfirmed (no in-progress game observed yet) -- treated as live
+// rather than guessing the exact code. Falls back to the original
+// string-matching approach for rows written before this column existed
+// (or if the live-score-refresh job hasn't reached this game yet).
+export function deriveGameStatus(gameRow) {
+  if (!gameRow) return 'pre';
+  const code = gameRow.game_status_code;
+  if (code != null) {
+    if (code === 4) return 'final';
+    if (code === 1) return 'pre';
+    return 'live';
+  }
+  const gs = (gameRow.game_state || '').toLowerCase();
+  if (gs === 'final' || gs === 'official') return 'final';
+  if (gs.includes('progress') || gs.includes('live') || gs.includes('intermission')) return 'live';
+  return 'pre';
+}
+
 // ── Response helpers ──────────────────────────────────────────
 
 export function json(val) {
