@@ -30,8 +30,19 @@
  * instead of AHL's 3 (see ECHL_NEWS_SOURCES's own comment -- echl.com has
  * no RSS feed at all).
  *
- * Not in this pass (deferred to a later parity pass, matching AHL's own
- * two-pass history): today/live routes.
+ * today/live/:gameId + pollECHL/pollECHLGame/broadcastECHL (Phase 6
+ * equivalent) were added 2026-08-30 -- mirrors ahl.js's own routes and
+ * poll functions exactly. Confirmed live against a real completed game
+ * (24296, 81 events) that ECHL's PBP has the identical goal/shot/
+ * penalty/goalie_change shape as AHL's -- same field names throughout
+ * (shooterTeamId, xLocation/yLocation, properties.isPowerPlay, etc).
+ * penaltyshot is confirmed real for ECHL (see echl_penalty_shots.py),
+ * unlike AHL's own still-unconfirmed "shootout" branch -- kept the same
+ * defensive shootout branch anyway in case it turns out to be real here
+ * too. This is the final phase of the ECHL parity pass -- every route
+ * AHL has now has an ECHL equivalent except milestones/trivia/
+ * transactions (real data walls, not scope choices -- see
+ * ECHLNewsView.jsx's own comment).
  *
  * Real differences from AHL, all confirmed live 2026-08-30 against
  * production data (see eyewall-pipeline's docs/hockeytech-ahl-api-notes.md
@@ -50,7 +61,7 @@
  *     network-tab hunt (see seasons.js's ECHL_HT_KEY comment).
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus } from './shared.js';
 import { resolveECHLSeason, getAllECHLSeasonTypes, ECHL_HT_BASE, ECHL_HT_KEY, ECHL_HT_HDR } from './seasons.js';
 
 // ECHL news sources -- only 2, not AHL's 3: echl.com has no discoverable
@@ -155,6 +166,291 @@ export const ECHL_TEAM_CODES = {
   70: 'RC', 17: 'REA', 102: 'SAV', 18: 'SC', 106: 'TAH', 21: 'TOL',
   113: 'TRE', 99: 'TR', 71: 'TUL', 25: 'WHL', 72: 'WIC', 77: 'WOR',
 };
+
+// ── ECHL Push Notification Poll ──────────────────────────────
+// Called from the Worker scheduled trigger alongside NHL/PWHL/AHL
+// poll(). Mirrors pollAHL/pollAHLGame/broadcastAHL in ahl.js exactly --
+// see that file for the conventions reused here. ECHL's PBP event
+// shapes confirmed identical to AHL's via a live test against a real
+// completed game (24296, 81 events) while building this route.
+
+// Periods when ECHL season is active -- same Oct-June window as AHL's
+// (2026 Kelly Cup Finals ended June 15, confirmed live via OSC's own
+// article dates during this pass's research).
+function echlSeasonActive() {
+  const now   = new Date();
+  const month = now.getUTCMonth() + 1; // 1-12
+  return month >= 10 || month <= 6;
+}
+
+export async function pollECHL(env) {
+  if (!echlSeasonActive()) { console.log('[ECHL poll] Off-season — skipping'); return; }
+  if (!env.VAPID_PRIVATE_KEY) return;
+
+  try {
+    const { seasonId: echlSeason } = await resolveECHLSeason(env);
+
+    const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const todayStr = nowET.toISOString().slice(0, 10);
+
+    const schedRes = await fetch(
+      `${SB_URL}/rest/v1/echl_game_log?game_date=eq.${todayStr}&season_id=eq.${echlSeason}` +
+      `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10`,
+      { headers: sbH }
+    );
+    if (!schedRes.ok) return;
+    const games = await schedRes.json();
+    if (!games?.length) return;
+
+    const liveGames = games.filter(g => deriveGameStatus(g) === 'live');
+    if (!liveGames.length) return;
+
+    for (const game of liveGames) {
+      await pollECHLGame(env, game).catch(e =>
+        console.error(`[ECHL poll] game ${game.game_id}: ${e.message}`)
+      );
+    }
+  } catch (e) {
+    console.error('[ECHL poll] error:', e.message);
+  }
+}
+
+async function pollECHLGame(env, game) {
+  const gameId    = game.game_id;
+  const homeId    = game.home_team_id;
+  const awayId    = game.away_team_id;
+  const homeAbbr  = ECHL_TEAM_CODES[homeId] || String(homeId);
+  const awayAbbr  = ECHL_TEAM_CODES[awayId]  || String(awayId);
+
+  const pbpRes = await fetch(
+    `${ECHL_HT_BASE}?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=${gameId}` +
+    `&key=${ECHL_HT_KEY}&client_code=echl&lang=en&league_id=`,
+    { headers: ECHL_HT_HDR }
+  );
+  if (!pbpRes.ok) return;
+
+  let events;
+  try {
+    events = unwrapJsonp(await pbpRes.text());
+  } catch { return; }
+  if (!Array.isArray(events) || !events.length) return;
+
+  const stateKey = `echl:push:state:${gameId}`;
+  const lastState = (await kvGet(env, stateKey)) || {
+    homeScore: 0, awayScore: 0, eventCount: 0, started: false, period: 0,
+    scorerGoalCounts: {},
+  };
+
+  const newEvents = events.slice(lastState.eventCount);
+  const period    = events[events.length - 1]?.details?.period?.id;
+  const periodNum = typeof period === 'string' && period.startsWith('OT')
+    ? 4 : (parseInt(period, 10) || 1);
+  const periodLabel = n => n <= 3 ? `P${n}` : n === 4 ? 'OT' : `OT${n - 3}`;
+
+  const scorerGoalCounts = { ...lastState.scorerGoalCounts };
+
+  // ── Game start ───────────────────────────────────────────
+  if (!lastState.started && newEvents.length > 0) {
+    const sessionKey = `echl:push:start:${gameId}`;
+    if (!(await kvGet(env, sessionKey))) {
+      await kvPut(env, sessionKey, true, 24 * 3600);
+      for (const abbr of [homeAbbr, awayAbbr]) {
+        await broadcastECHL(env, {
+          title: `🏒 ECHL Game Starting!`,
+          body:  `${homeAbbr} vs ${awayAbbr} — puck drop!`,
+          tag:   `echl-start-${gameId}`,
+          url:   '/echl/shots',
+        }, `ECHL:${abbr}`, 'gameStart');
+      }
+    }
+  }
+
+  // ── Period start (P2+) ───────────────────────────────────
+  if (periodNum > 1 && periodNum !== lastState.period) {
+    const sessionKey = `echl:push:period:${gameId}:${periodNum}`;
+    if (!(await kvGet(env, sessionKey))) {
+      await kvPut(env, sessionKey, true, 24 * 3600);
+      const curHome = game.home_score ?? lastState.homeScore;
+      const curAway = game.away_score ?? lastState.awayScore;
+      for (const [abbr, myScore, oppScore, oppAbbr] of [
+        [homeAbbr, curHome, curAway, awayAbbr],
+        [awayAbbr, curAway, curHome, homeAbbr],
+      ]) {
+        await broadcastECHL(env, {
+          title: `🔔 ${periodLabel(periodNum)} Starting`,
+          body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
+          tag:   `echl-period-${gameId}-${periodNum}-${abbr}`,
+          url:   '/echl/shots',
+        }, `ECHL:${abbr}`, 'periodStart');
+      }
+    }
+  }
+
+  // ── Process new events ───────────────────────────────────
+  for (const ev of newEvents) {
+    const type = ev.event;
+    const d    = ev.details || {};
+    const time = d.time || null;
+
+    if (type === 'goal') {
+      const teamId   = parseInt(d.team?.id, 10) || null;
+      const isHome   = teamId === homeId;
+      const abbr     = isHome ? homeAbbr : awayAbbr;
+      const oppAbbr  = isHome ? awayAbbr : homeAbbr;
+      const scorer   = d.scoredBy ? `${d.scoredBy.firstName} ${d.scoredBy.lastName}`.trim() : abbr;
+      const scorerId = String(d.scoredBy?.id || '');
+      const assists  = (d.assists || []).map(a => `${a.firstName} ${a.lastName}`.trim());
+      const isPP     = d.properties?.isPowerPlay === '1';
+      const isSH     = d.properties?.isShortHanded === '1';
+      const isEN     = d.properties?.isEmptyNet === '1';
+
+      const goalKey = `echl:push:goal:${d.game_goal_id || `${gameId}-${teamId}-${time}`}`;
+      if (await kvGet(env, goalKey)) continue;
+      await kvPut(env, goalKey, true, 24 * 3600);
+
+      if (scorerId) scorerGoalCounts[scorerId] = (scorerGoalCounts[scorerId] || 0) + 1;
+
+      const modifier = isPP ? ' (PP)' : isSH ? ' (SH)' : isEN ? ' (EN)' : '';
+      const curHome  = isHome ? (lastState.homeScore + 1) : lastState.homeScore;
+      const curAway  = isHome ? lastState.awayScore : (lastState.awayScore + 1);
+
+      await broadcastECHL(env, {
+        title: `🚨 GOAL! ${abbr} ${isHome ? curHome : curAway}–${isHome ? curAway : curHome} ${oppAbbr}`,
+        body:  `${scorer} scores!${modifier}${assists.length ? ` Assists: ${assists.slice(0,2).join(', ')}` : ''}`,
+        tag:   `echl-goal-${goalKey}`,
+        url:   '/echl/shots',
+      }, `ECHL:${abbr}`, 'goal');
+
+      await broadcastECHL(env, {
+        title: `${abbr} scores. ${oppAbbr} ${isHome ? curAway : curHome}–${isHome ? curHome : curAway} ${abbr}`,
+        body:  `${scorer} scores for ${abbr}${modifier}`,
+        tag:   `echl-opp-goal-${goalKey}`,
+        url:   '/echl/shots',
+      }, `ECHL:${oppAbbr}`, 'oppGoal');
+
+      if (scorerId && scorerGoalCounts[scorerId] === 3) {
+        await broadcastECHL(env, {
+          title: `🎩 HAT TRICK! ${scorer}`,
+          body:  `${scorer} scores their 3rd goal of the game for ${abbr}!`,
+          tag:   `echl-hattrick-${gameId}-${scorerId}`,
+          url:   '/echl/shots',
+        }, `ECHL:${abbr}`, 'hatTrick');
+      }
+    }
+
+    // penalty/goalie_change field shapes confirmed identical to AHL's/
+    // PWHL's own shape -- see this section's header comment.
+    if (type === 'penalty' && d.isPowerPlay) {
+      const penId = `echl:push:pen:${d.game_penalty_id || `${gameId}-${time}`}`;
+      if (await kvGet(env, penId)) continue;
+      await kvPut(env, penId, true, 24 * 3600);
+
+      const penTeamId = parseInt(d.againstTeam?.id, 10) || null;
+      const ppTeamId  = penTeamId === homeId ? awayId : homeId;
+      const ppAbbr    = ECHL_TEAM_CODES[ppTeamId]  || String(ppTeamId);
+      const penAbbr   = ECHL_TEAM_CODES[penTeamId] || String(penTeamId);
+      const mins      = parseFloat(d.minutes || '2') || 2;
+      const desc      = (d.description || 'Penalty')
+        .replace(/^(?:Ob|Maj|Min|Mis|Gm)-/i, '').replace(/-/g, ' ').trim();
+
+      await broadcastECHL(env, {
+        title: `⚡ ${ppAbbr} Power Play!`,
+        body:  `${penAbbr} — ${mins} min ${desc}`,
+        tag:   `echl-pp-${penId}`,
+        url:   '/echl/shots',
+      }, `ECHL:${ppAbbr}`, 'penalty');
+    }
+
+    if (type === 'goalie_change' && d.goalieComingIn === null) {
+      const pulledTeamId  = parseInt(d.team_id, 10) || null;
+      const benefitTeamId = pulledTeamId === homeId ? awayId : homeId;
+      const benefitAbbr   = ECHL_TEAM_CODES[benefitTeamId] || String(benefitTeamId);
+      const pulledAbbr    = ECHL_TEAM_CODES[pulledTeamId]  || String(pulledTeamId);
+      const pullKey = `echl:push:pull:${gameId}-${time}`;
+      if (!(await kvGet(env, pullKey))) {
+        await kvPut(env, pullKey, true, 24 * 3600);
+        await broadcastECHL(env, {
+          title: `🥅 ${pulledAbbr} pulled their goalie!`,
+          body:  `6-on-5 — empty net opportunity for ${benefitAbbr}!`,
+          tag:   `echl-pull-${pullKey}`,
+          url:   '/echl/shots',
+        }, `ECHL:${benefitAbbr}`, 'goaliePulled');
+      }
+    }
+  }
+
+  // ── Game over ────────────────────────────────────────────
+  if (deriveGameStatus(game) === 'final') {
+    const finalKey = `echl:push:final:${gameId}`;
+    if (!(await kvGet(env, finalKey))) {
+      await kvPut(env, finalKey, true, 48 * 3600);
+      const hs = game.home_score ?? 0;
+      const as = game.away_score ?? 0;
+
+      await broadcastECHL(env, hs > as ? {
+        title: `🏆 ${homeAbbr} Win! ${homeAbbr} ${hs}–${as} ${awayAbbr}`,
+        body:  'Final score — great win!',
+        tag:   `echl-win-${gameId}-home`,
+        url:   '/echl/shots',
+      } : {
+        title: `Final: ${homeAbbr} ${hs}–${as} ${awayAbbr}`,
+        body:  'Final score.',
+        tag:   `echl-final-${gameId}-home`,
+        url:   '/echl/shots',
+      }, `ECHL:${homeAbbr}`, hs > as ? 'win' : 'loss');
+
+      await broadcastECHL(env, as > hs ? {
+        title: `🏆 ${awayAbbr} Win! ${awayAbbr} ${as}–${hs} ${homeAbbr}`,
+        body:  'Final score — great win!',
+        tag:   `echl-win-${gameId}-away`,
+        url:   '/echl/shots',
+      } : {
+        title: `Final: ${awayAbbr} ${as}–${hs} ${homeAbbr}`,
+        body:  'Final score.',
+        tag:   `echl-final-${gameId}-away`,
+        url:   '/echl/shots',
+      }, `ECHL:${awayAbbr}`, as > hs ? 'win' : 'loss');
+    }
+  }
+
+  await kvPut(env, stateKey, {
+    homeScore:        game.home_score ?? lastState.homeScore,
+    awayScore:        game.away_score ?? lastState.awayScore,
+    eventCount:       events.length,
+    started:          true,
+    period:           periodNum,
+    scorerGoalCounts,
+  }, 24 * 3600);
+}
+
+// ECHL-specific broadcast — wraps shared broadcast with ECHL: prefixed teamAbbr
+async function broadcastECHL(env, payload, teamKey, eventType) {
+  const subs = (await kvGet(env, 'push:subs')) || [];
+  if (!subs.length) return;
+
+  const targets = subs.filter(s => {
+    const subTeam = s.teamAbbr || 'NHL:CAR';
+    if (subTeam !== teamKey) return false;
+    if (!s.prefs) return true;
+    return s.prefs[eventType] !== false;
+  });
+
+  if (!targets.length) return;
+
+  console.log(`[ECHL push] ${targets.length} targets for ${teamKey}:${eventType}`);
+
+  const results = await Promise.all(targets.map(s => sendPush(s, payload, env)));
+
+  const expiredEndpoints = new Set(
+    targets.filter((_, i) => results[i] === 'expired').map(s => s.endpoint)
+  );
+  if (expiredEndpoints.size > 0) {
+    const allSubs = (await kvGet(env, 'push:subs')) || [];
+    const active = allSubs.filter(s => !expiredEndpoints.has(s.endpoint));
+    await kvPut(env, 'push:subs', active, 365 * 24 * 3600);
+  }
+  console.log(`[ECHL push] results: ${results.join(', ')}`);
+}
 
 export async function handleECHL(request, env, ctx, url) {
   // ── ECHL endpoints ───────────────────────────────────────────────────────
@@ -1194,6 +1490,204 @@ Only reference the two teams named above and the numbers given -- no player name
     await kvPut(env, 'echl:news', merged, 25 * 3600);
     console.log(`ECHL news ingest: ${articles.length} new → ${merged.length} total`);
     return json({ ok: true, received: articles.length, total: merged.length });
+  }
+
+  // GET /echl/today?season=76
+  // Returns all games scheduled for today (Eastern time) with status pre/live/final.
+  // Mirrors /ahl/today exactly.
+  if (url.pathname === '/echl/today') {
+    const season = await seasonParam(url, env);
+    const kvKey  = `echl:today:${season}`;
+
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const todayStr = nowET.toISOString().slice(0, 10);
+
+    const r = await fetch(
+      `${SB_URL}/rest/v1/echl_game_log?game_date=eq.${todayStr}&season_id=eq.${season}` +
+      `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&limit=10`,
+      { headers: sbH }
+    );
+    if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
+
+    const rows  = await r.json();
+    const games = rows.map(g => ({
+      gameId:       g.game_id,
+      homeTeamId:   g.home_team_id,
+      awayTeamId:   g.away_team_id,
+      homeTeamCode: ECHL_TEAM_CODES[g.home_team_id] || String(g.home_team_id),
+      awayTeamCode: ECHL_TEAM_CODES[g.away_team_id] || String(g.away_team_id),
+      homeScore:    g.home_score,
+      awayScore:    g.away_score,
+      status:       deriveGameStatus(g),
+    }));
+
+    await kvPut(env, kvKey, games, 60);
+    return json(games);
+  }
+
+  // GET /echl/live/:gameId
+  // Fetches + normalises live PBP from HockeyTech. KV TTL: 60s live, 1hr final
+  // (60, not 30 -- Cloudflare KV's minimum expiration_ttl is 60s).
+  // Mirrors /ahl/live/:gameId's structure exactly -- confirmed live against
+  // a real completed game (24296, 81 events) that ECHL's PBP has the
+  // identical goal/shot/penalty/goalie_change shape as AHL's. penaltyshot
+  // is confirmed real for ECHL (see echl_penalty_shots.py); shootout kept
+  // as the same defensive branch AHL's route has, still unconfirmed for
+  // either league. No hit/faceoff/blocked_shot branches -- confirmed
+  // absent from ECHL's PBP entirely, same as AHL.
+  if (url.pathname.startsWith('/echl/live/')) {
+    const gameId = parseInt(url.pathname.split('/echl/live/')[1], 10);
+    if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey  = `echl:live:${gameId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const pbpRes = await fetch(
+      `${ECHL_HT_BASE}?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=${gameId}&key=${ECHL_HT_KEY}&client_code=echl&lang=en&league_id=`,
+      { headers: ECHL_HT_HDR }
+    );
+    if (!pbpRes.ok) return new Response(JSON.stringify({ error: `HockeyTech PBP ${pbpRes.status}` }), { status: 502, headers: corsHeaders() });
+
+    let rawEvents;
+    try {
+      rawEvents = unwrapJsonp(await pbpRes.text());
+    } catch (e) {
+      return new Response(JSON.stringify({ error: 'PBP parse failed', detail: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    const normPeriod = (raw) => {
+      const periodMap = { 'OT1': 4, 'OT2': 5, 'OT3': 6, 'SO': 7 };
+      const s = String(raw ?? '1');
+      return periodMap[s] ?? (parseInt(s, 10) || 1);
+    };
+    const normAbbr = (abbr) => (abbr || '').replace(/^[a-z]+ - /i, '').trim();
+    const timeToSeconds = (t) => {
+      const parts = (t || '0:00').split(':');
+      return parseInt(parts[0], 10) * 60 + parseInt(parts[parts.length - 1], 10);
+    };
+    const normPlayer = (p) => p ? {
+      id:           parseInt(p.id, 10) || null,
+      firstName:    p.firstName || '',
+      lastName:     p.lastName  || '',
+      jerseyNumber: p.jerseyNumber || null,
+    } : null;
+
+    const events = rawEvents.map(ev => {
+      if (!ev || typeof ev !== 'object') return null;
+      const type = ev.event;
+      const d    = ev.details || {};
+      const period      = normPeriod(d.period?.id);
+      const time        = d.time || '0:00';
+      const timeSeconds = timeToSeconds(time);
+
+      const base = { eventType: type, period, time, timeSeconds };
+
+      if (type === 'goal') {
+        return {
+          ...base,
+          teamId:        parseInt(d.team?.id, 10) || null,
+          teamAbbrev:    normAbbr(d.team?.abbreviation),
+          scoredBy:      normPlayer(d.scoredBy),
+          assists:       (d.assists || []).map(normPlayer),
+          isPowerPlay:   d.properties?.isPowerPlay      === '1',
+          isShortHanded: d.properties?.isShortHanded    === '1',
+          isEmptyNet:    d.properties?.isEmptyNet       === '1',
+          isPenaltyShot: d.properties?.isPenaltyShot    === '1',
+          isGameWinner:  d.properties?.isGameWinningGoal === '1',
+          plusPlayers:   (d.plus_players  || []).map(normPlayer),
+          minusPlayers:  (d.minus_players || []).map(normPlayer),
+          x: d.xLocation ?? null,
+          y: d.yLocation ?? null,
+        };
+      }
+
+      if (type === 'shot') {
+        return {
+          ...base,
+          teamId:      parseInt(d.shooterTeamId, 10) || null,
+          shooter:     normPlayer(d.shooter),
+          goalie:      normPlayer(d.goalie),
+          shotType:    d.shotType    || null,
+          shotQuality: d.shotQuality || null,
+          isGoal:      !!d.isGoal,
+          x: d.xLocation ?? null,
+          y: d.yLocation ?? null,
+        };
+      }
+
+      // penaltyshot / shootout: no coordinates (breakaway-style attempts
+      // aren't location-tracked). penaltyshot is confirmed real for ECHL
+      // (see echl_penalty_shots.py); shootout is not, included
+      // defensively with the same shape in case it turns out to be one.
+      if (type === 'penaltyshot' || type === 'shootout') {
+        return {
+          ...base,
+          teamId:  parseInt(d.shooter_team?.id, 10) || null,
+          shooter: normPlayer(d.shooter),
+          goalie:  normPlayer(d.goalie),
+          isGoal:  !!d.isGoal,
+        };
+      }
+
+      // penalty/goalie_change: shape confirmed live 2026-08-30 against a
+      // real completed game (24296) -- identical to AHL's/PWHL's shape.
+      if (type === 'penalty') {
+        return {
+          ...base,
+          teamId:      parseInt(d.againstTeam?.id, 10) || null,
+          teamAbbrev:  normAbbr(d.againstTeam?.abbreviation),
+          takenBy:     normPlayer(d.takenBy),
+          servedBy:    normPlayer(d.servedBy),
+          minutes:     parseFloat(d.minutes || '2') || 2,
+          description: d.description || '',
+          isPowerPlay: !!d.isPowerPlay,
+          isBench:     !!d.isBench,
+        };
+      }
+
+      if (type === 'goalie_change') {
+        return {
+          ...base,
+          teamId:    parseInt(d.team_id, 10) || null,
+          goalieIn:  normPlayer(d.goalieComingIn),
+          goalieOut: normPlayer(d.goalieGoingOut),
+        };
+      }
+
+      return null; // unknown/unconfirmed event type — skip
+    }).filter(Boolean);
+
+    const gameRows = await fetch(
+      `${SB_URL}/rest/v1/echl_game_log?game_id=eq.${gameId}&select=home_team_id,away_team_id,game_state,game_status_code&limit=1`,
+      { headers: sbH }
+    ).then(r => r.ok ? r.json() : []).catch(() => []);
+    const gameRow = gameRows[0] || null;
+
+    let homeScore = 0, awayScore = 0, gameStatus = 'pre';
+    if (gameRow) {
+      for (const g of events.filter(e => e.eventType === 'goal')) {
+        if (g.teamId === gameRow.home_team_id) homeScore++;
+        else awayScore++;
+      }
+      gameStatus = deriveGameStatus(gameRow);
+    }
+
+    const ttl     = gameStatus === 'final' ? 3600 : 60;
+    const payload = {
+      gameId,
+      homeTeamId: gameRow?.home_team_id ?? null,
+      awayTeamId: gameRow?.away_team_id ?? null,
+      homeScore,
+      awayScore,
+      gameStatus,
+      events,
+    };
+    await kvPut(env, kvKey, payload, ttl);
+    return json(payload);
   }
 
   return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: corsHeaders() });
