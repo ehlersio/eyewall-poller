@@ -19,10 +19,10 @@
 
 import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.js';
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
-import { handleAHL, fetchAHLNews, pollAHL } from './ahl.js';
-import { handleECHL } from './echl.js';
+import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES } from './ahl.js';
+import { handleECHL, ECHL_TEAM_CODES } from './echl.js';
 import { corsHeaders, json, kvGet, kvPut, sbError, badRequest, sbHeaders, SB_URL, SB_ANON } from './shared.js';
-import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
+import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
 async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
@@ -139,9 +139,76 @@ async function handleRequest(request, env, ctx) {
       console.warn(`PWHL comparison-seasons query failed: ${e.message}`);
     }
 
+    // AHL/ECHL entries added 2026-08-30 -- see seasons.js's
+    // getAllAHLSeasons()/getAllECHLSeasons() comments for why these were
+    // missing (AHLTeamView.jsx's own comment claimed an "AHL entry" here
+    // since AHL/PWHL parity Phase 4, but this route never actually built
+    // one, so AHL's "Compare Seasons" picker has been showing its "no
+    // seasons" empty state this whole time). Mirrors the PWHL block above
+    // exactly -- same team_seasons-grouping shape, same season-metadata
+    // join, just against ahl_team_seasons/echl_team_seasons.
+    const ahlActiveTeamCount  = Object.keys(AHL_TEAM_CODES).length;
+    const echlActiveTeamCount = Object.keys(ECHL_TEAM_CODES).length;
+
+    let ahlSeasons = [];
+    try {
+      const [r, meta] = await Promise.all([
+        fetch(`${SB_URL}/rest/v1/ahl_team_seasons?select=season_id,team_id&limit=2000`, { headers: sbH }),
+        getAllAHLSeasons(env),
+      ]);
+      if (!r.ok) throw new Error(`Supabase ${r.status}`);
+      const rows = await r.json();
+      const metaById = new Map((meta || []).map(m => [m.seasonId, m]));
+      const bySeason = new Map();
+      for (const row of rows) {
+        if (!bySeason.has(row.season_id)) bySeason.set(row.season_id, new Set());
+        bySeason.get(row.season_id).add(row.team_id);
+      }
+      ahlSeasons = [...bySeason.entries()]
+        .map(([seasonId, teams]) => ({
+          seasonId,
+          seasonType: metaById.get(seasonId)?.seasonType ?? null,
+          startYear:  metaById.get(seasonId)?.startYear ?? null,
+          teamCount:  teams.size,
+          comparable: teams.size > ahlActiveTeamCount / 2,
+        }))
+        .sort((a, b) => b.seasonId - a.seasonId);
+    } catch (e) {
+      console.warn(`AHL comparison-seasons query failed: ${e.message}`);
+    }
+
+    let echlSeasons = [];
+    try {
+      const [r, meta] = await Promise.all([
+        fetch(`${SB_URL}/rest/v1/echl_team_seasons?select=season_id,team_id&limit=2000`, { headers: sbH }),
+        getAllECHLSeasons(env),
+      ]);
+      if (!r.ok) throw new Error(`Supabase ${r.status}`);
+      const rows = await r.json();
+      const metaById = new Map((meta || []).map(m => [m.seasonId, m]));
+      const bySeason = new Map();
+      for (const row of rows) {
+        if (!bySeason.has(row.season_id)) bySeason.set(row.season_id, new Set());
+        bySeason.get(row.season_id).add(row.team_id);
+      }
+      echlSeasons = [...bySeason.entries()]
+        .map(([seasonId, teams]) => ({
+          seasonId,
+          seasonType: metaById.get(seasonId)?.seasonType ?? null,
+          startYear:  metaById.get(seasonId)?.startYear ?? null,
+          teamCount:  teams.size,
+          comparable: teams.size > echlActiveTeamCount / 2,
+        }))
+        .sort((a, b) => b.seasonId - a.seasonId);
+    } catch (e) {
+      console.warn(`ECHL comparison-seasons query failed: ${e.message}`);
+    }
+
     const result = {
       nhl:  { activeTeamCount: nhlActiveTeamCount,  seasons: nhlSeasons },
       pwhl: { activeTeamCount: pwhlActiveTeamCount, seasons: pwhlSeasons },
+      ahl:  { activeTeamCount: ahlActiveTeamCount,  seasons: ahlSeasons },
+      echl: { activeTeamCount: echlActiveTeamCount, seasons: echlSeasons },
     };
     await kvPut(env, kvKey, result, 3600); // 1hr — matches /team-seasons' own cache TTL
     return json(result);

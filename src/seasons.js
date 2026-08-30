@@ -355,6 +355,32 @@ export async function getAllAHLSeasonTypes(env) {
   }
 }
 
+// AHL equivalent of getAllPWHLSeasons() -- {seasonId, seasonType, startYear}
+// for every season AHL's feed knows about. Added 2026-08-30: AHLTeamView.jsx
+// has claimed since Phase 4 of the AHL/PWHL parity plan that
+// "/config/seasons/comparison's AHL entry" exists, but it never actually
+// did -- worker.js's route only ever built nhl/pwhl keys, so
+// SeasonComparisonPicker's `data?.ahl?.seasons ?? []` was always empty and
+// AHL's "Compare Seasons" mode inside TeamComparisonPopup has been showing
+// its "no seasons available" empty state since that phase shipped. This
+// (plus the matching worker.js block) fixes it for AHL and gives ECHL's own
+// new Compare Seasons feature (parity plan Phase 4 equivalent) working
+// season labels from day one, instead of reproducing the same gap a third
+// time.
+export async function getAllAHLSeasons(env) {
+  try {
+    const seasons = await fetchAHLSeasons(env);
+    return seasons.map(s => ({
+      seasonId: Number(s.season_id),
+      seasonType: ahlSeasonTypeFromName(s.season_name, s.playoff, s.career),
+      startYear: deriveStartYear(s.start_date, s.season_name),
+    }));
+  } catch (e) {
+    console.warn(`AHL season list resolve failed: ${e.message}`);
+    return null;
+  }
+}
+
 // ── ECHL ──────────────────────────────────────────────────────
 // Same HockeyTech/LeagueStat vendor as AHL, different client
 // (client_code=echl, key=2c2b89ea7345cae8, site_id=0, league_id=1 --
@@ -439,6 +465,24 @@ export async function getAllECHLSeasonTypes(env) {
     return map;
   } catch (e) {
     console.warn(`ECHL season-type map resolve failed: ${e.message}`);
+    return null;
+  }
+}
+
+// ECHL equivalent of getAllAHLSeasons() -- see that function's comment for
+// why this exists (fixes a real, already-shipped gap in AHL's own
+// /config/seasons/comparison entry, and gives ECHL's own Compare Seasons
+// feature the same working season labels from day one).
+export async function getAllECHLSeasons(env) {
+  try {
+    const seasons = await fetchECHLSeasons(env);
+    return seasons.map(s => ({
+      seasonId: Number(s.season_id),
+      seasonType: echlSeasonTypeFromName(s.season_name, s.playoff, s.career),
+      startYear: deriveStartYear(s.start_date, s.season_name),
+    }));
+  } catch (e) {
+    console.warn(`ECHL season list resolve failed: ${e.message}`);
     return null;
   }
 }
