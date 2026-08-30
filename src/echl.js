@@ -18,9 +18,15 @@
  * eyewallanalytics -- a real pre-existing gap (built for a "Compare"
  * feature that was never wired up), not something worth reproducing here.
  *
+ * team-seasons compare/compare-teams/head-to-head(+narrative) (Phase 4
+ * equivalent) were added 2026-08-30 -- mirrors ahl.js's own 4 routes
+ * exactly. worker.js's /config/seasons/comparison also got a real 'echl'
+ * entry as part of this same change (see seasons.js's
+ * getAllECHLSeasons() comment -- it fixes a matching, already-shipped gap
+ * in AHL's own entry at the same time).
+ *
  * Not in this pass (deferred to a later parity pass, matching AHL's own
- * two-pass history): team-seasons compare/compare-teams/head-to-head
- * (+narrative), news routes, today/live routes.
+ * two-pass history): news routes, today/live routes.
  *
  * Real differences from AHL, all confirmed live 2026-08-30 against
  * production data (see eyewall-pipeline's docs/hockeytech-ahl-api-notes.md
@@ -39,7 +45,7 @@
  *     network-tab hunt (see seasons.js's ECHL_HT_KEY comment).
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload } from './shared.js';
 import { resolveECHLSeason, getAllECHLSeasonTypes, ECHL_HT_BASE, ECHL_HT_KEY, ECHL_HT_HDR } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -914,6 +920,158 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
 
     await kvPut(env, kvKey, result, 1800);
     return json(result);
+  }
+
+  // GET /echl/team-seasons/compare?teamId=8&seasons=73,76
+  // One team across multiple seasons. Mirrors /ahl/team-seasons/compare
+  // exactly -- echl_team_seasons already has this shape.
+  if (url.pathname === '/echl/team-seasons/compare') {
+    const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+    const seasons = (url.searchParams.get('seasons') || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!teamId || seasons.length === 0) {
+      return new Response(JSON.stringify({ error: 'teamId and seasons (comma-separated) are required' }), { status: 400, headers: corsHeaders() });
+    }
+    const kvKey = `echl:team-seasons:compare:${teamId}:${seasons.slice().sort().join(',')}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const res = await fetch(
+      `${SB_URL}/rest/v1/echl_team_seasons?team_id=eq.${teamId}&season_id=in.(${seasons.join(',')})` +
+      `&select=season_id,season_type,gp,wins,losses,ot_losses,shootout_losses,points,goals_for,goals_against,pp_pct,pk_pct`,
+      { headers: sbH }
+    );
+    if (!res.ok) return new Response(JSON.stringify({ error: `Supabase ${res.status}` }), { status: 502, headers: corsHeaders() });
+    const rows = await res.json();
+
+    await kvPut(env, kvKey, rows, 3600);
+    return json(rows);
+  }
+
+  // GET /echl/team-seasons/compare-teams?teamIds=8,99&season=73
+  // Two-team, same-season comparison. Mirrors /ahl/team-seasons/compare-teams.
+  if (url.pathname === '/echl/team-seasons/compare-teams') {
+    const teamIds = (url.searchParams.get('teamIds') || '').split(',').map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10));
+    const season = url.searchParams.get('season');
+    if (teamIds.length !== 2 || teamIds.some(id => !id) || !season) {
+      return new Response(JSON.stringify({ error: 'teamIds (exactly two, comma-separated) and season are required' }), { status: 400, headers: corsHeaders() });
+    }
+
+    const kvKey = `echl:team-seasons:compare-teams:${teamIds.slice().sort((a, b) => a - b).join(',')}:${season}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const res = await fetch(
+      `${SB_URL}/rest/v1/echl_team_seasons?team_id=in.(${teamIds.join(',')})&season_id=eq.${season}` +
+      `&select=team_id,season_id,season_type,gp,wins,losses,ot_losses,shootout_losses,points,goals_for,goals_against,pp_pct,pk_pct`,
+      { headers: sbH }
+    );
+    if (!res.ok) return new Response(JSON.stringify({ error: `Supabase ${res.status}` }), { status: 502, headers: corsHeaders() });
+    const rows = await res.json();
+
+    await kvPut(env, kvKey, rows, 3600);
+    return json(rows);
+  }
+
+  // GET /echl/team-seasons/head-to-head?teamIds=8,99
+  // All-time head-to-head between two teams, across every season on record.
+  // Mirrors /ahl/team-seasons/head-to-head exactly -- echl_game_log is the
+  // same one-row-per-game-with-both-teams-in-columns shape, and
+  // buildHeadToHeadPayload (shared.js) is fully sport-agnostic.
+  if (url.pathname === '/echl/team-seasons/head-to-head') {
+    const teamIds = (url.searchParams.get('teamIds') || '').split(',').map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10));
+    if (teamIds.length !== 2 || teamIds.some(id => !id)) {
+      return new Response(JSON.stringify({ error: 'teamIds (exactly two, comma-separated) are required' }), { status: 400, headers: corsHeaders() });
+    }
+    const [teamA, teamB] = teamIds;
+
+    const kvKey = `echl:team-seasons:head-to-head:${teamIds.slice().sort((a, b) => a - b).join(',')}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const res = await fetch(
+      `${SB_URL}/rest/v1/echl_game_log?game_state=eq.Final` +
+      `&or=(and(home_team_id.eq.${teamA},away_team_id.eq.${teamB}),and(home_team_id.eq.${teamB},away_team_id.eq.${teamA}))` +
+      `&select=game_id,season_id,game_date,home_team_id,away_team_id,home_score,away_score` +
+      `&order=season_id.asc,game_id.asc`,
+      { headers: sbH }
+    );
+    if (!res.ok) return new Response(JSON.stringify({ error: `Supabase ${res.status}` }), { status: 502, headers: corsHeaders() });
+    const rows = await res.json();
+
+    const payload = buildHeadToHeadPayload(teamA, teamB, rows.map(g => {
+      const aIsHome = g.home_team_id === teamA;
+      const teamAScore = aIsHome ? g.home_score : g.away_score;
+      const teamBScore = aIsHome ? g.away_score : g.home_score;
+      return {
+        gameId: g.game_id, season: g.season_id, gameDate: g.game_date,
+        teamAWon: teamAScore > teamBScore,
+        teamAScore, teamBScore, homeTeam: aIsHome ? teamA : teamB,
+      };
+    }));
+
+    await kvPut(env, kvKey, payload, 3600);
+    return json(payload);
+  }
+
+  // POST /echl/team-seasons/head-to-head/narrative
+  // AI narrative layer on top of the head-to-head stats above. Mirrors
+  // /ahl/team-seasons/head-to-head/narrative's prompt structure exactly
+  // (hand-rolled per-league, not cross-imported) -- client posts the
+  // payload it already fetched from /echl/team-seasons/head-to-head plus
+  // display names (this Worker has no ECHL team-name map of its own --
+  // echlConfig.js on the frontend does).
+  if (url.pathname === '/echl/team-seasons/head-to-head/narrative' && request.method === 'POST') {
+    const limited = await checkAiRateLimit(env, request, 'echl-h2h-narrative');
+    if (limited) return limited;
+
+    let body;
+    try { body = await request.json(); } catch {
+      return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: corsHeaders() });
+    }
+    const {
+      teamA, teamB, teamADisplay, teamBDisplay,
+      totalMeetings, allTimeRecord, recentWindow, currentStreak, isThinSample,
+    } = body || {};
+    if (!teamA || !teamB || !totalMeetings || !allTimeRecord || !recentWindow) {
+      return json({ narrative: null });
+    }
+
+    const kvKey = `echl:h2h-narrative:${[teamA, teamB].slice().sort((a, b) => a - b).join(',')}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const aDisplay = teamADisplay || String(teamA);
+    const bDisplay = teamBDisplay || String(teamB);
+    const streakLine = currentStreak
+      ? `Current streak: ${currentStreak.holder === 'A' ? aDisplay : bDisplay} has won ${currentStreak.count} straight.`
+      : 'No active streak.';
+    const thinSampleNote = isThinSample
+      ? `\nIMPORTANT: Only ${totalMeetings} meeting${totalMeetings === 1 ? '' : 's'} exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.`
+      : '';
+
+    const prompt = `You are Sticks, EyeWall's hockey analyst. Write a punchy 2-3 sentence head-to-head summary for ${aDisplay} vs ${bDisplay}.
+
+All-time record (since 2025-26): ${aDisplay} ${allTimeRecord.teamAWins}-${allTimeRecord.teamBWins} ${bDisplay}, across ${totalMeetings} meeting${totalMeetings === 1 ? '' : 's'}.
+Last ${recentWindow.size}: ${aDisplay} ${recentWindow.teamAWins}-${recentWindow.teamBWins} ${bDisplay}.
+${streakLine}
+${thinSampleNote}
+Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.`;
+
+    try {
+      const aiResponse = await generateText(env, {
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 100,
+      });
+      const narrative = (aiResponse.response || '').trim();
+      if (!narrative) return json({ narrative: null });
+
+      const result = { narrative };
+      await kvPut(env, kvKey, result, 24 * 3600);
+      return json(result);
+    } catch (e) {
+      console.error('[ECHL] head-to-head narrative AI error:', e);
+      return new Response(JSON.stringify({ error: 'AI generation failed' }), { status: 502, headers: corsHeaders() });
+    }
   }
 
   return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: corsHeaders() });
