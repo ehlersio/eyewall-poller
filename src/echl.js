@@ -7,11 +7,14 @@
  * and conventions closely (same Supabase-REST-direct pattern, same KV
  * caching shape) -- see that file for the conventions this one reuses.
  *
+ * player/landing, player/career, and player-shots (parity plan Phase 2
+ * equivalent) were added 2026-08-30 -- mirrors ahl.js's own 3 routes
+ * exactly, see those for the shared conventions.
+ *
  * Not in this pass (deferred to a later parity pass, matching AHL's own
- * two-pass history): player/landing, player/career, player-shots,
- * lastgame, summary, preview, game-box, player-game-log, prediction,
- * team-seasons compare/compare-teams/head-to-head(+narrative), news
- * routes, today/live routes.
+ * two-pass history): lastgame, summary, preview, game-box,
+ * player-game-log, prediction, team-seasons compare/compare-teams/
+ * head-to-head(+narrative), news routes, today/live routes.
  *
  * Real differences from AHL, all confirmed live 2026-08-30 against
  * production data (see eyewall-pipeline's docs/hockeytech-ahl-api-notes.md
@@ -30,8 +33,8 @@
  *     network-tab hunt (see seasons.js's ECHL_HT_KEY comment).
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON } from './shared.js';
-import { resolveECHLSeason, getAllECHLSeasonTypes } from './seasons.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto } from './shared.js';
+import { resolveECHLSeason, getAllECHLSeasonTypes, ECHL_HT_BASE, ECHL_HT_KEY, ECHL_HT_HDR } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
 // when the param is omitted. Mirrors ahl.js's seasonParam() exactly.
@@ -360,6 +363,126 @@ export async function handleECHL(request, env, ctx, url) {
     await kvPut(env, kvKey, data, 3600);
     console.log(`ECHL team-season-summary: teamId=${teamId} season=${season} games=${gameIds.length}`);
     return json(data);
+  }
+
+  // GET /echl/player/landing?id=6681&season=73
+  // Player detail lookup for ECHLPlayerPopup -- self-fetches identity + a
+  // season's stat line by id. Mirrors /ahl/player/landing exactly
+  // (echl_players/echl_player_seasons/echl_goalie_seasons are the same
+  // shape as their AHL counterparts) -- Supabase-only, no HockeyTech call.
+  if (url.pathname === '/echl/player/landing') {
+    const playerId = url.searchParams.get('id');
+    const seasonQ = url.searchParams.get('season');
+    if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey = `echl:player:landing:${playerId}:${seasonQ || 'latest'}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const playerRes = await fetch(`${SB_URL}/rest/v1/echl_players?player_id=eq.${playerId}&select=*`, { headers: sbH });
+    if (!playerRes.ok) return new Response(JSON.stringify({ error: `Supabase ${playerRes.status}` }), { status: 502, headers: corsHeaders() });
+    const playerRows = await playerRes.json();
+    if (!playerRows.length) return new Response(JSON.stringify({ error: 'Player not found' }), { status: 404, headers: corsHeaders() });
+
+    const player = playerRows[0];
+    const statsTable = player.position === 'G' ? 'echl_goalie_seasons' : 'echl_player_seasons';
+    const statsQuery = seasonQ
+      ? `player_id=eq.${playerId}&season_id=eq.${seasonQ}&season_type=eq.regular&limit=1&select=*`
+      : `player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc&limit=1&select=*`;
+
+    const statsRes = await fetch(`${SB_URL}/rest/v1/${statsTable}?${statsQuery}`, { headers: sbH });
+    const statsRows = statsRes.ok ? await statsRes.json() : [];
+    const stats = statsRows[0] || {};
+
+    const data = { ...player, ...stats };
+    await kvPut(env, kvKey, data, 3600);
+    return json(data);
+  }
+
+  // GET /echl/player/career?id=6681
+  // Live proxy for HockeyTech's view=player careerStats Total rows, same
+  // shape/role as /ahl/player/career -- reuses shared.js's
+  // extractCareerTotal/extractRows/extractBioPoints/extractPhoto
+  // unmodified, same "identical statviewfeed view=player shape across the
+  // whole vendor" reasoning already confirmed for AHL/PWHL.
+  // No ?season= param -- careerStats is season-independent.
+  if (url.pathname === '/echl/player/career') {
+    const playerId = url.searchParams.get('id');
+    if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey = `echl:player:career:${playerId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const htRes = await fetch(
+      `${ECHL_HT_BASE}?feed=statviewfeed&view=player&player_id=${playerId}&site_id=0&key=${ECHL_HT_KEY}&client_code=echl&lang=en&league_id=&statsType=standard`,
+      { headers: ECHL_HT_HDR }
+    );
+    if (!htRes.ok) return new Response(JSON.stringify({ error: `HockeyTech ${htRes.status}` }), { status: 502, headers: corsHeaders() });
+
+    let raw;
+    try {
+      const parsed = unwrapJsonp(await htRes.text());
+      raw = Array.isArray(parsed) ? parsed[0] : parsed;
+    } catch (e) {
+      return new Response(JSON.stringify({ error: 'player career parse failed', detail: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    const sections = raw?.careerStats?.[0]?.sections || [];
+    const draftRows = extractRows(raw?.draftInfo?.[0]?.sections, '');
+    const draft = (raw?.info?.display_drafts === true && draftRows.length > 0) ? draftRows[0] : null;
+
+    const gameRows = extractRows(raw?.gameByGame?.[0]?.sections, '');
+    const recentGames = gameRows.slice(-5).reverse();
+
+    const data = {
+      player_id:     parseInt(playerId, 10),
+      regularSeason: extractCareerTotal(sections, 'Regular Season'),
+      playoffs:      extractCareerTotal(sections, 'Playoffs'),
+      bioPoints:     extractBioPoints(raw?.info?.bio),
+      photo:         extractPhoto(raw?.media?.images),
+      draft,
+      recentGames,
+    };
+
+    await kvPut(env, kvKey, data, 24 * 3600);
+    return json(data);
+  }
+
+  // GET /echl/player-shots?playerId=6681&season=73
+  // Shot-map heat map data for a single skater. Mirrors /ahl/player-shots
+  // exactly (echl_shot_events has the same x_norm/y_norm shape) -- skaters
+  // only. No /echl/goalie-shots equivalent: ECHL's PBP goal events also
+  // carry goalie_id: null (echl_shot_events.py's own comment, confirmed
+  // 2026-08-30 -- same structural gap as AHL's feed). Shown as an honest
+  // "not available" state in ECHLPlayerPopup instead of a heat map that
+  // would silently under-count goals.
+  if (url.pathname === '/echl/player-shots') {
+    const playerId = parseInt(url.searchParams.get('playerId') || '0', 10);
+    const season = await seasonParam(url, env);
+    if (!playerId) return new Response(JSON.stringify({ error: 'playerId required' }), { status: 400, headers: corsHeaders() });
+    const kvKey = `echl:pshots:${playerId}:${season}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+    const r = await fetch(
+      `${SB_URL}/rest/v1/echl_shot_events?shooter_id=eq.${playerId}&season_id=eq.${season}&select=event_type,period_id,time_seconds,x_norm,y_norm&limit=500`,
+      { headers: sbH }
+    );
+    if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
+    const rows = await r.json();
+    const shots = rows.map(row => {
+      let x = parseFloat(row.x_norm), y = parseFloat(row.y_norm);
+      if (x < 0) { x = -x; y = -y; }
+      return {
+        x: Math.min(Math.abs(x), 99),
+        y: Math.max(-42, Math.min(42, y)),
+        t: row.event_type === 'goal' ? 'g' : 's',
+        p: row.period_id,
+      };
+    }).filter(s => !isNaN(s.x) && !isNaN(s.y));
+    const result = { shots, total: shots.length };
+    await kvPut(env, kvKey, result, 3600 * 6);
+    return json(result);
   }
 
   return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: corsHeaders() });
