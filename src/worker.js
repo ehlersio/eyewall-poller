@@ -20,6 +20,7 @@
 import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.js';
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL } from './ahl.js';
+import { handleECHL } from './echl.js';
 import { corsHeaders, json, kvGet, kvPut, sbError, badRequest, sbHeaders, SB_URL, SB_ANON } from './shared.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
@@ -411,6 +412,11 @@ async function handleRequest(request, env, ctx) {
   // Route AHL endpoints
   if (url.pathname.startsWith('/ahl/')) {
     return handleAHL(request, env, ctx, url);
+  }
+
+  // Route ECHL endpoints
+  if (url.pathname.startsWith('/echl/')) {
+    return handleECHL(request, env, ctx, url);
   }
 
   // Route everything else to NHL handler

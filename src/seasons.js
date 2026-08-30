@@ -355,23 +355,118 @@ export async function getAllAHLSeasonTypes(env) {
   }
 }
 
+// ── ECHL ──────────────────────────────────────────────────────
+// Same HockeyTech/LeagueStat vendor as AHL, different client
+// (client_code=echl, key=2c2b89ea7345cae8, site_id=0, league_id=1 --
+// see eyewall-pipeline's ECHL_BUILD_BRIEF.md/hockeytech-ahl-api-notes.md).
+// Structurally identical to AHL's block above -- same modulekit/seasons
+// feed shape, same career=1/start_date-not-future resolution logic,
+// confirmed live 2026-08-30.
+//
+// One real operational difference from AHL (and PWHL/OHL/WHL/QMJHL):
+// this key is NOT exposed on echl.com's own site -- it was rebuilt on
+// Laravel/Livewire and renders stats server-side, so the usual
+// "open the network tab" recovery path doesn't work here. This key was
+// recovered from sportsdataverse-py's league registry
+// (sportsdataverse/hockeytech/_leagues.py) and independently re-verified
+// live against the real feed. If this key ever stops working, re-check
+// that registry first -- a network-tab hunt on echl.com will not work,
+// for the same reason it didn't during the original investigation.
+export const ECHL_HT_BASE = 'https://lscluster.hockeytech.com/feed/index.php';
+export const ECHL_HT_KEY = '2c2b89ea7345cae8';
+export const ECHL_HT_HDR = { 'User-Agent': 'Mozilla/5.0', Referer: 'https://echl.com/' };
+
+const FALLBACK_ECHL = { seasonId: 73, seasonType: 'regular' };
+
+function echlSeasonTypeFromName(name, playoff, career) {
+  const n = (name || '').toLowerCase();
+  if (playoff === '1' || n.includes('playoffs')) return 'playoffs';
+  if (n.includes('preseason')) return 'preseason';
+  if (n.includes('all-star')) return 'allstar';
+  if (career === '1') return 'regular';
+  return 'other';
+}
+
+async function fetchECHLSeasons(env) {
+  const cached = await kvGet(env, 'config:season:echl:seasons');
+  if (cached) return cached;
+  const url = `${ECHL_HT_BASE}?feed=modulekit&view=seasons&key=${ECHL_HT_KEY}&client_code=echl&site_id=0&lang=en`;
+  const res = await fetch(url, { headers: ECHL_HT_HDR });
+  if (!res.ok) throw new Error(`ECHL seasons ${res.status}`);
+  const data = unwrapJsonp(await res.text());
+  const seasons = data?.SiteKit?.Seasons || [];
+  await kvPut(env, 'config:season:echl:seasons', seasons, TTL_SECONDS);
+  return seasons;
+}
+
+export async function resolveECHLSeason(env) {
+  const override = await kvGet(env, 'config:season:echl:override');
+  if (override) return override;
+
+  const cached = await kvGet(env, 'config:season:echl');
+  if (cached) return cached;
+
+  try {
+    const seasons = await fetchECHLSeasons(env);
+    const today = new Date().toISOString().slice(0, 10);
+    const started = seasons.filter(s => s.career === '1' && (s.start_date || '9999') <= today);
+    if (!started.length) {
+      console.warn('ECHL season resolve: no started career season in feed — using fallback');
+      return FALLBACK_ECHL;
+    }
+    const latest = started.reduce((a, b) => (Number(b.season_id) > Number(a.season_id) ? b : a));
+    const resolved = {
+      seasonId: Number(latest.season_id),
+      seasonType: echlSeasonTypeFromName(latest.season_name, latest.playoff, latest.career),
+      resolvedAt: new Date().toISOString(),
+      source: 'live',
+    };
+    await kvPut(env, 'config:season:echl', resolved, TTL_SECONDS);
+    return resolved;
+  } catch (e) {
+    console.warn(`ECHL season resolve failed: ${e.message} — using fallback`);
+    return FALLBACK_ECHL;
+  }
+}
+
+// ECHL equivalent of getAllAHLSeasonTypes() -- id -> seasonType for every
+// season ECHL's feed knows about (current + historical).
+export async function getAllECHLSeasonTypes(env) {
+  try {
+    const seasons = await fetchECHLSeasons(env);
+    const map = {};
+    for (const s of seasons) map[String(s.season_id)] = echlSeasonTypeFromName(s.season_name, s.playoff, s.career);
+    return map;
+  } catch (e) {
+    console.warn(`ECHL season-type map resolve failed: ${e.message}`);
+    return null;
+  }
+}
+
 // ── Combined config endpoint ──────────────────────────────────
 
 export async function getSeasonsConfig(env) {
-  const [nhl, pwhl, ahl] = await Promise.all([
+  const [nhl, pwhl, ahl, echl] = await Promise.all([
     resolveNHLSeason(env),
     resolvePWHLSeason(env),
     resolveAHLSeason(env),
+    resolveECHLSeason(env),
   ]);
-  return { nhl: { seasonId: nhl }, pwhl, ahl };
+  return { nhl: { seasonId: nhl }, pwhl, ahl, echl };
 }
 
 // Called from scheduled() (runs every ~60s). This does NOT force a
 // network re-fetch on every tick — resolveNHLSeason/resolvePWHLSeason/
-// resolveAHLSeason already check the KV cache first and only hit the
-// network when the 6-hour TTL has actually lapsed. Calling them here just
-// means the cache gets warmed automatically shortly after expiry, instead
-// of on whatever unlucky user request happens to hit it first.
+// resolveAHLSeason/resolveECHLSeason already check the KV cache first and
+// only hit the network when the 6-hour TTL has actually lapsed. Calling
+// them here just means the cache gets warmed automatically shortly after
+// expiry, instead of on whatever unlucky user request happens to hit it
+// first.
 export async function refreshSeasonsCache(env) {
-  await Promise.all([resolveNHLSeason(env), resolvePWHLSeason(env), resolveAHLSeason(env)]);
+  await Promise.all([
+    resolveNHLSeason(env),
+    resolvePWHLSeason(env),
+    resolveAHLSeason(env),
+    resolveECHLSeason(env),
+  ]);
 }
