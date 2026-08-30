@@ -25,8 +25,13 @@
  * getAllECHLSeasons() comment -- it fixes a matching, already-shipped gap
  * in AHL's own entry at the same time).
  *
+ * news/news/ingest/news/bust (Phase 5 equivalent) were added 2026-08-30
+ * -- mirrors ahl.js's own 3 routes exactly, with only 2 real sources
+ * instead of AHL's 3 (see ECHL_NEWS_SOURCES's own comment -- echl.com has
+ * no RSS feed at all).
+ *
  * Not in this pass (deferred to a later parity pass, matching AHL's own
- * two-pass history): news routes, today/live routes.
+ * two-pass history): today/live routes.
  *
  * Real differences from AHL, all confirmed live 2026-08-30 against
  * production data (see eyewall-pipeline's docs/hockeytech-ahl-api-notes.md
@@ -45,8 +50,84 @@
  *     network-tab hunt (see seasons.js's ECHL_HT_KEY comment).
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS } from './shared.js';
 import { resolveECHLSeason, getAllECHLSeasonTypes, ECHL_HT_BASE, ECHL_HT_KEY, ECHL_HT_HDR } from './seasons.js';
+
+// ECHL news sources -- only 2, not AHL's 3: echl.com has no discoverable
+// RSS feed at all (confirmed live 2026-08-30, /feed and /rss both 404 --
+// consistent with this site being the same Laravel/Livewire rebuild that
+// keeps its HockeyTech key off the network tab too, see seasons.js's
+// ECHL_HT_KEY comment). The two that do exist are both ECHL-scoped by
+// construction, so neither needs keyword filtering.
+const ECHL_NEWS_SOURCES = [
+  {
+    // Hockey Writers' dedicated ECHL category feed (not its general site
+    // feed) -- every item here is already ECHL-tagged, no filter needed.
+    id:     'hockeywriters-echl',
+    name:   'The Hockey Writers',
+    color:  '#FFFFFF',
+    bg:     '#1a1a1a',
+    url:    'https://thehockeywriters.com/category/echl/feed/',
+    type:   'rss',
+    filter: null,
+  },
+  {
+    // OurSportsCentral's ECHL press-release feed -- league id 18 on that
+    // site, NOT 17 like AHL's (searched for it live rather than assumed;
+    // league ids on this site aren't sequential-by-launch-date).
+    id:     'osc-echl',
+    name:   'OurSports Central',
+    color:  '#FFFFFF',
+    bg:     '#8b0000',
+    url:    'https://www.oursportscentral.com/feeds/l18.xml',
+    type:   'rss',
+    filter: null,
+  },
+];
+
+export async function fetchECHLNews(env) {
+  const allItems = [];
+  for (const source of ECHL_NEWS_SOURCES) {
+    try {
+      console.log(`ECHL news: fetching ${source.id} from ${source.url}`);
+      const res = await fetch(source.url, {
+        headers: { 'User-Agent': 'EyeWall-Analytics/1.0', 'Accept': 'application/rss+xml,text/xml,*/*' },
+        cf: { cacheTtl: 0 },
+      });
+      console.log(`ECHL news: ${source.id} status=${res.status}`);
+      if (!res.ok) { console.warn(`ECHL news: ${source.id} failed ${res.status}`); continue; }
+      const xml = await res.text();
+      let parsed = parseRSS(xml, source);
+      if (source.filter?.length) {
+        parsed = parsed.filter(item => {
+          const text = (item.title + ' ' + (item.excerpt || '')).toLowerCase();
+          return source.filter.some(kw => text.includes(kw));
+        });
+      }
+      allItems.push(...parsed);
+      console.log(`ECHL news: ${source.id} → ${parsed.length} items`);
+    } catch (err) {
+      console.warn(`ECHL news: ${source.id} error: ${err.message}`);
+    }
+  }
+  const seenIds = new Set();
+  const deduped = allItems
+    .filter(item => { if (seenIds.has(item.id)) return false; seenIds.add(item.id); return true; })
+    .sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
+  // Merge with whatever's cached rather than overwriting -- same reasoning
+  // as fetchAHLNews: this runs on a cold user request, but /echl/news/ingest
+  // (eyewall-pipeline's nightly echl_news.py, GH Actions IPs) also writes
+  // this key, and a thin live-fallback result shouldn't wipe out a fuller
+  // nightly one.
+  const existing = (await kvGet(env, 'echl:news')) || [];
+  const merged = [
+    ...deduped,
+    ...existing.filter(item => !deduped.find(d => d.id === item.id)),
+  ].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
+    .slice(0, 60);
+  await kvPut(env, 'echl:news', merged, merged.length > 0 ? 25 * 3600 : 300);
+  return merged;
+}
 
 // Resolve the ?season= query param, live-resolving the current season
 // when the param is omitted. Mirrors ahl.js's seasonParam() exactly.
@@ -1072,6 +1153,47 @@ Only reference the two teams named above and the numbers given -- no player name
       console.error('[ECHL] head-to-head narrative AI error:', e);
       return new Response(JSON.stringify({ error: 'AI generation failed' }), { status: 502, headers: corsHeaders() });
     }
+  }
+
+  // GET /echl/news
+  if (url.pathname === '/echl/news' && request.method === 'GET') {
+    const cached = await kvGet(env, 'echl:news');
+    if (cached) return json(cached);
+    ctx.waitUntil(fetchECHLNews(env).catch(e => console.warn('ECHL news bg fetch:', e.message)));
+    return json([]);
+  }
+
+  // POST /echl/news/bust — invalidate news cache so next GET triggers fresh fetch
+  if (url.pathname === '/echl/news/bust' && request.method === 'POST') {
+    const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
+    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    await env.CACHE.delete('echl:news');
+    console.log('ECHL news cache busted');
+    return json({ ok: true, busted: ['echl:news'] });
+  }
+
+  // POST /echl/news/ingest — accepts ECHL articles from GitHub Actions
+  // (eyewall-pipeline's echl_news.py, run nightly via echl-nightly.yml).
+  // Mirrors /ahl/news/ingest exactly.
+  if (url.pathname === '/echl/news/ingest' && request.method === 'POST') {
+    const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
+    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    let articles;
+    try {
+      articles = await request.json();
+      if (!Array.isArray(articles)) throw new Error('Expected array');
+    } catch (e) {
+      return new Response(`Bad request: ${e.message}`, { status: 400 });
+    }
+    const existing = (await kvGet(env, 'echl:news')) || [];
+    const merged = [
+      ...articles,
+      ...existing.filter(a => !articles.find(n => n.id === a.id)),
+    ].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
+      .slice(0, 60);
+    await kvPut(env, 'echl:news', merged, 25 * 3600);
+    console.log(`ECHL news ingest: ${articles.length} new → ${merged.length} total`);
+    return json({ ok: true, received: articles.length, total: merged.length });
   }
 
   return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: corsHeaders() });
