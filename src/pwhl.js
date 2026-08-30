@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -217,7 +217,7 @@ export async function pollPWHL(env) {
     // Find today's games
     const schedRes = await fetch(
       `${SB_URL}/rest/v1/pwhl_game_log?game_date=eq.${todayStr}&season_id=eq.${pwhlSeason}` +
-      `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state&limit=10`,
+      `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10`,
       { headers: sbH }
     );
     if (!schedRes.ok) return;
@@ -225,10 +225,7 @@ export async function pollPWHL(env) {
     if (!games?.length) return;
 
     // Only process in-progress games
-    const liveGames = games.filter(g => {
-      const gs = (g.game_state || '').toLowerCase();
-      return gs.includes('progress') || gs.includes('live') || gs.includes('intermission');
-    });
+    const liveGames = games.filter(g => deriveGameStatus(g) === 'live');
     if (!liveGames.length) return;
 
     for (const game of liveGames) {
@@ -416,8 +413,7 @@ async function pollPWHLGame(env, game) {
   }
 
   // ── Game over ────────────────────────────────────────────
-  const gs = (game.game_state || '').toLowerCase();
-  if (gs === 'final' || gs === 'official') {
+  if (deriveGameStatus(game) === 'final') {
     const finalKey = `pwhl:push:final:${gameId}`;
     if (!(await kvGet(env, finalKey))) {
       await kvPut(env, finalKey, true, 48 * 3600);
@@ -1781,7 +1777,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
 
     const r = await fetch(
       `${SB_URL}/rest/v1/pwhl_game_log?game_date=eq.${todayStr}&season_id=eq.${season}` +
-      `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_date&limit=10`,
+      `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&limit=10`,
       { headers: sbH }
     );
     if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
@@ -1789,13 +1785,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
 
     const rows  = await r.json();
     const games = rows.map(g => {
-      // Derive status from game_state string HockeyTech uses.
-      // Known values from pwhl_game_log: "Final", "Pre-Game".
-      // "InProgress" / "Intermission" assumed for live — verify against a live game.
-      const gs = (g.game_state || '').toLowerCase();
-      let status = 'pre';
-      if (gs === 'final' || gs === 'official')                                   status = 'final';
-      else if (gs.includes('progress') || gs.includes('live') || gs.includes('intermission')) status = 'live';
+      const status = deriveGameStatus(g);
 
       return {
         gameId:       g.game_id,
@@ -1965,7 +1955,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
     // Derive live score + game status from Supabase (home/away team IDs needed to split goals)
     const sbH     = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
     const gameRows = await fetch(
-      `${SB_URL}/rest/v1/pwhl_game_log?game_id=eq.${gameId}&select=home_team_id,away_team_id,game_state&limit=1`,
+      `${SB_URL}/rest/v1/pwhl_game_log?game_id=eq.${gameId}&select=home_team_id,away_team_id,game_state,game_status_code&limit=1`,
       { headers: sbH }
     ).then(r => r.ok ? r.json() : []).catch(() => []);
     const gameRow = gameRows[0] || null;
@@ -1976,9 +1966,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
         if (g.teamId === gameRow.home_team_id) homeScore++;
         else awayScore++;
       }
-      const gs = (gameRow.game_state || '').toLowerCase();
-      if (gs === 'final' || gs === 'official')                                          gameStatus = 'final';
-      else if (gs.includes('progress') || gs.includes('live') || gs.includes('intermission')) gameStatus = 'live';
+      gameStatus = deriveGameStatus(gameRow);
     }
 
     // Parse gameSummary for goalie stats + faceoff pcts (best-effort, non-fatal)
@@ -2015,7 +2003,13 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       } catch { /* gameSummary parse failure — non-fatal */ }
     }
 
-    const ttl     = gameStatus === 'final' ? 3600 : 30;
+    // 60, not 30 -- Cloudflare KV's minimum expiration_ttl is 60s; a
+    // shorter value throws "KV PUT failed: 400 Invalid expiration_ttl"
+    // (confirmed live 2026-08-29 while building AHL's equivalent route --
+    // this exact line has apparently never actually been hit with a
+    // non-final game_status before, since no live game has existed to
+    // exercise it this session).
+    const ttl     = gameStatus === 'final' ? 3600 : 60;
     const payload = {
       gameId,
       homeTeamId: gameRow?.home_team_id ?? null,
