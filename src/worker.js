@@ -20,7 +20,7 @@
 import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.js';
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES } from './ahl.js';
-import { handleECHL, ECHL_TEAM_CODES } from './echl.js';
+import { handleECHL, ECHL_TEAM_CODES, fetchECHLNews } from './echl.js';
 import { corsHeaders, json, kvGet, kvPut, sbError, badRequest, sbHeaders, SB_URL, SB_ANON } from './shared.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
@@ -410,13 +410,13 @@ async function handleRequest(request, env, ctx) {
   // fetch logic.
   if (url.pathname === '/news/latest') {
     const sport = url.searchParams.get('sport')?.toLowerCase();
-    if (!sport || !['nhl', 'pwhl', 'ahl'].includes(sport)) {
-      return badRequest('sport must be nhl, pwhl, or ahl');
+    if (!sport || !['nhl', 'pwhl', 'ahl', 'echl'].includes(sport)) {
+      return badRequest('sport must be nhl, pwhl, ahl, or echl');
     }
 
-    if (sport === 'pwhl' || sport === 'ahl') {
-      const kvKey = sport === 'pwhl' ? 'pwhl:news' : 'ahl:news';
-      const fetchFn = sport === 'pwhl' ? fetchPWHLNews : fetchAHLNews;
+    if (sport === 'pwhl' || sport === 'ahl' || sport === 'echl') {
+      const kvKey = sport === 'pwhl' ? 'pwhl:news' : sport === 'ahl' ? 'ahl:news' : 'echl:news';
+      const fetchFn = sport === 'pwhl' ? fetchPWHLNews : sport === 'ahl' ? fetchAHLNews : fetchECHLNews;
       const cached = await kvGet(env, kvKey);
       if (!cached) {
         ctx.waitUntil(fetchFn(env).catch(e => console.warn(`${sport.toUpperCase()} news bg fetch:`, e.message)));
