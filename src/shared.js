@@ -584,9 +584,9 @@ export async function encryptPushPayload(sub, payloadObj) {
   // PRK = HKDF-Extract(auth, IKM=sharedSecret)
   const ikmKey = await crypto.subtle.importKey('raw', sharedBits, 'HKDF', false, ['deriveKey', 'deriveBits']);
 
-  // auth_info = "WebPush: info " || receiverKey || senderKey
+  // auth_info = "WebPush: info " || receiverKey || senderKey
   const authInfo = new Uint8Array([
-    ...new TextEncoder().encode('WebPush: info '),
+    ...new TextEncoder().encode('WebPush: info '),
     ...p256dh, ...ephPub
   ]);
 
@@ -597,14 +597,14 @@ export async function encryptPushPayload(sub, payloadObj) {
 
   const prkKey = await crypto.subtle.importKey('raw', prkBits, 'HKDF', false, ['deriveBits']);
 
-  // CEK = HKDF(salt=salt, IKM=PRK, info="Content-Encoding: aes128gcm ", length=16)
-  const cekInfo = new TextEncoder().encode('Content-Encoding: aes128gcm ');
+  // CEK = HKDF(salt=salt, IKM=PRK, info="Content-Encoding: aes128gcm ", length=16)
+  const cekInfo = new TextEncoder().encode('Content-Encoding: aes128gcm ');
   const cekBits = await crypto.subtle.deriveBits(
     { name: 'HKDF', hash: 'SHA-256', salt, info: cekInfo }, prkKey, 128
   );
 
-  // Nonce = HKDF(salt=salt, IKM=PRK, info="Content-Encoding: nonce ", length=12)
-  const nonceInfo = new TextEncoder().encode('Content-Encoding: nonce ');
+  // Nonce = HKDF(salt=salt, IKM=PRK, info="Content-Encoding: nonce ", length=12)
+  const nonceInfo = new TextEncoder().encode('Content-Encoding: nonce ');
   const nonceBits = await crypto.subtle.deriveBits(
     { name: 'HKDF', hash: 'SHA-256', salt, info: nonceInfo }, prkKey, 96
   );
