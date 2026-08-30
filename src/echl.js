@@ -11,10 +11,16 @@
  * equivalent) were added 2026-08-30 -- mirrors ahl.js's own 3 routes
  * exactly, see those for the shared conventions.
  *
+ * lastgame, summary, preview, game-box, and prediction (Phase 3
+ * equivalent) were added 2026-08-30 -- mirrors ahl.js's own routes
+ * exactly. No player-game-log route: confirmed AHL's own equivalent
+ * (/ahl/player-game-log) has zero frontend consumers anywhere in
+ * eyewallanalytics -- a real pre-existing gap (built for a "Compare"
+ * feature that was never wired up), not something worth reproducing here.
+ *
  * Not in this pass (deferred to a later parity pass, matching AHL's own
- * two-pass history): lastgame, summary, preview, game-box,
- * player-game-log, prediction, team-seasons compare/compare-teams/
- * head-to-head(+narrative), news routes, today/live routes.
+ * two-pass history): team-seasons compare/compare-teams/head-to-head
+ * (+narrative), news routes, today/live routes.
  *
  * Real differences from AHL, all confirmed live 2026-08-30 against
  * production data (see eyewall-pipeline's docs/hockeytech-ahl-api-notes.md
@@ -33,7 +39,7 @@
  *     network-tab hunt (see seasons.js's ECHL_HT_KEY comment).
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText } from './shared.js';
 import { resolveECHLSeason, getAllECHLSeasonTypes, ECHL_HT_BASE, ECHL_HT_KEY, ECHL_HT_HDR } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -482,6 +488,431 @@ export async function handleECHL(request, env, ctx, url) {
     }).filter(s => !isNaN(s.x) && !isNaN(s.y));
     const result = { shots, total: shots.length };
     await kvPut(env, kvKey, result, 3600 * 6);
+    return json(result);
+  }
+
+  // GET /echl/lastgame?teamId=8&season=73
+  // Most recent completed game with opponent abbr resolved. Thin port of
+  // /ahl/lastgame -- echl_game_log has no ot/shootout columns either, so
+  // those fields are just omitted from the result.
+  if (url.pathname === '/echl/lastgame') {
+    const season = await seasonParam(url, env);
+    const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+    if (!teamId) return new Response(JSON.stringify({ error: 'teamId param required' }), { status: 400, headers: corsHeaders() });
+    const kvKey = `echl:lastgame:${teamId}:${season}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+    const r = await fetch(
+      `${SB_URL}/rest/v1/echl_game_log?season_id=eq.${season}&game_state=eq.Final&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&order=game_id.desc&limit=1`,
+      { headers: sbH }
+    );
+    if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
+    const rows = await r.json();
+    if (!rows.length) return json(null);
+    const g = rows[0];
+    const isHome = g.home_team_id === teamId;
+    const oppId = isHome ? g.away_team_id : g.home_team_id;
+    const teamScore = isHome ? g.home_score : g.away_score;
+    const oppScore = isHome ? g.away_score : g.home_score;
+    const result = {
+      gameId: g.game_id,
+      gameDate: g.game_date,
+      opponentId: oppId,
+      opponentAbbr: ECHL_TEAM_CODES[oppId] || String(oppId),
+      isHome,
+      teamScore,
+      oppScore,
+      won: teamScore > oppScore,
+    };
+    await kvPut(env, kvKey, result, 3600);
+    return json(result);
+  }
+
+  // GET /echl/summary?gameId=24296
+  // Live proxy for HockeyTech's gameSummary view -- period-by-period
+  // scoring, three stars, officials/coaches, venue. Mirrors /ahl/summary
+  // exactly -- confirmed live 2026-08-30 that ECHL's gameSummary has the
+  // identical periods/mostValuablePlayers/referees/linesmen/coaches/
+  // details/homeTeam+visitingTeam.stats shape as AHL's, including the
+  // same fake hits/faceoffAttempts/faceoffWins/faceoffWinPercentage
+  // fields (always 0 regardless of the real game) -- stripped here for
+  // the same reason AHL's route strips them.
+  if (url.pathname === '/echl/summary') {
+    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+
+    const kvKey = `echl:gamesummary:${gameId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const htRes = await fetch(
+      `${ECHL_HT_BASE}?feed=statviewfeed&view=gameSummary&game_id=${gameId}&key=${ECHL_HT_KEY}&client_code=echl&lang=en&league_id=`,
+      { headers: ECHL_HT_HDR }
+    );
+    if (!htRes.ok) return new Response(JSON.stringify({ error: `HockeyTech ${htRes.status}` }), { status: 502, headers: corsHeaders() });
+
+    let raw;
+    try {
+      raw = unwrapJsonp(await htRes.text());
+    } catch (e) {
+      return new Response(JSON.stringify({ error: 'gameSummary parse failed', detail: e.message }), { status: 502, headers: corsHeaders() });
+    }
+
+    const normAbbr = (abbr) => (abbr || '').replace(/^[a-z]+ - /i, '').trim();
+
+    const periods = (raw.periods || []).map(p => ({
+      info: {
+        id: parseInt(p.info?.id, 10) || 1,
+        shortName: p.info?.shortName || '',
+        longName: p.info?.longName || '',
+      },
+      stats: {
+        homeGoals: parseInt(p.stats?.homeGoals || 0),
+        homeShots: parseInt(p.stats?.homeShots || 0),
+        visitingGoals: parseInt(p.stats?.visitingGoals || 0),
+        visitingShots: parseInt(p.stats?.visitingShots || 0),
+      },
+      goals: (p.goals || []).map(g => ({
+        game_goal_id: g.game_goal_id || null,
+        time: g.time || '0:00',
+        team: {
+          id: parseInt(g.team?.id, 10) || null,
+          abbreviation: normAbbr(g.team?.abbreviation),
+        },
+        scoredBy: g.scoredBy ? {
+          id: parseInt(g.scoredBy.id, 10) || null,
+          firstName: g.scoredBy.firstName || '',
+          lastName: g.scoredBy.lastName || '',
+          playerImageURL: g.scoredBy.playerImageURL || null,
+        } : null,
+        assists: (g.assists || []).map(a => ({
+          id: parseInt(a.id, 10) || null,
+          firstName: a.firstName || '',
+          lastName: a.lastName || '',
+        })),
+        properties: {
+          isPowerPlay: g.properties?.isPowerPlay || '0',
+          isShortHanded: g.properties?.isShortHanded || '0',
+          isEmptyNet: g.properties?.isEmptyNet || '0',
+          isPenaltyShot: g.properties?.isPenaltyShot || '0',
+          isGameWinningGoal: g.properties?.isGameWinningGoal || '0',
+        },
+      })),
+    }));
+
+    const mvps = (raw.mostValuablePlayers || []).map(mvp => ({
+      team: {
+        id: parseInt(mvp.team?.id, 10) || null,
+        abbreviation: normAbbr(mvp.team?.abbreviation),
+        name: mvp.team?.name || '',
+      },
+      player: {
+        info: {
+          id: parseInt(mvp.player?.info?.id, 10) || null,
+          firstName: mvp.player?.info?.firstName || '',
+          lastName: mvp.player?.info?.lastName || '',
+          jerseyNumber: mvp.player?.info?.jerseyNumber || null,
+          position: mvp.player?.info?.position || '',
+          playerImageURL: mvp.player?.info?.playerImageURL || null,
+        },
+        stats: mvp.player?.stats || {},
+      },
+      isGoalie: !!mvp.isGoalie,
+      playerImage: mvp.playerImage || mvp.player?.info?.playerImageURL?.replace('/120x160/', '/240x240/') || null,
+      homeTeam: mvp.homeTeam === 1 || mvp.homeTeam === true,
+    }));
+
+    const official = (o) => ({
+      firstName: o.firstName || '',
+      lastName: o.lastName || '',
+      jerseyNumber: o.jerseyNumber != null ? parseInt(o.jerseyNumber, 10) : null,
+    });
+    const headCoach = (coaches) => {
+      const c = (coaches || []).find(c => c.role === 'Head Coach');
+      return c ? { firstName: c.firstName || '', lastName: c.lastName || '' } : null;
+    };
+
+    // Strips hits/faceoffAttempts/faceoffWins/faceoffWinPercentage -- see
+    // route comment above for why.
+    const stripFakeStats = (stats) => {
+      if (!stats) return {};
+      const rest = { ...stats };
+      delete rest.hits;
+      delete rest.faceoffAttempts;
+      delete rest.faceoffWins;
+      delete rest.faceoffWinPercentage;
+      return rest;
+    };
+
+    const payload = {
+      periods,
+      mvps,
+      venue: raw.details?.venue || null,
+      officials: {
+        referees: (raw.referees || []).map(official),
+        linesmen: (raw.linesmen || []).map(official),
+      },
+      coaches: {
+        home: headCoach(raw.homeTeam?.coaches),
+        away: headCoach(raw.visitingTeam?.coaches),
+      },
+      homeTeamStats: stripFakeStats(raw.homeTeam?.stats),
+      visitingTeamStats: stripFakeStats(raw.visitingTeam?.stats),
+    };
+    await kvPut(env, kvKey, payload, 3600);
+    return json(payload);
+  }
+
+  // GET /echl/preview?gameId=24296
+  // Live proxy for HockeyTech's gameCenterPreview view -- season series/
+  // H2H/streaks/leaders/special teams for an upcoming game. Mirrors
+  // /ahl/preview exactly: returns the raw HockeyTech payload as-is, no
+  // server-side reshaping. Confirmed live 2026-08-30 against a real ECHL
+  // game that this view responds with the identical homeTeam/
+  // visitingTeam/headToHeadRecords/previousMeetings shape as AHL's --
+  // teamRecord.overall/past_10_games, powerPlayStats/penaltyKillStats
+  // nested per-team, same as AHL (see ECHLGamePreviewPopup.jsx).
+  // 30min TTL -- pre-game data (records, streaks) shifts daily.
+  if (url.pathname === '/echl/preview') {
+    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+    const kvKey = `echl:gcpreview:${gameId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+    const htRes = await fetch(
+      `${ECHL_HT_BASE}?feed=statviewfeed&view=gameCenterPreview&game_id=${gameId}&key=${ECHL_HT_KEY}&client_code=echl&lang=en&league_id=`,
+      { headers: ECHL_HT_HDR }
+    );
+    if (!htRes.ok) return new Response(JSON.stringify({ error: `HockeyTech ${htRes.status}` }), { status: 502, headers: corsHeaders() });
+    let raw;
+    try {
+      raw = unwrapJsonp(await htRes.text());
+    } catch (e) {
+      return new Response(JSON.stringify({ error: 'gameCenterPreview parse failed', detail: e.message }), { status: 502, headers: corsHeaders() });
+    }
+    await kvPut(env, kvKey, raw, 1800);
+    return json(raw);
+  }
+
+  // GET /echl/game-box?gameId=24296
+  // Per-game player box score, from echl_skater_game_box/echl_goalie_game_box
+  // (already ingested in the foundation pass's echl_game_boxscore.py, both
+  // season 73 and 76 fully backfilled). No hits/faceoff/blocked-shots/
+  // skater-TOI columns at all -- same as AHL's table.
+  if (url.pathname === '/echl/game-box') {
+    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+    const kvKey = `echl:gamebox:${gameId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const [skaterRes, goalieRes, gameRes] = await Promise.all([
+      fetch(`${SB_URL}/rest/v1/echl_skater_game_box?game_id=eq.${gameId}&order=points.desc`, { headers: sbH }),
+      fetch(`${SB_URL}/rest/v1/echl_goalie_game_box?game_id=eq.${gameId}`, { headers: sbH }),
+      fetch(`${SB_URL}/rest/v1/echl_game_log?game_id=eq.${gameId}&select=home_team_id,away_team_id`, { headers: sbH }),
+    ]);
+    if (!skaterRes.ok || !goalieRes.ok) {
+      return new Response(JSON.stringify({ error: 'Supabase error' }), { status: 502, headers: corsHeaders() });
+    }
+    const [skaters, goalies, gameRows] = await Promise.all([skaterRes.json(), goalieRes.json(), gameRes.ok ? gameRes.json() : []]);
+    const gameTeamIds = gameRows[0] ? [gameRows[0].home_team_id, gameRows[0].away_team_id] : [];
+
+    const playerIds = [...new Set([...skaters, ...goalies].map(r => r.player_id))];
+    const nameMap = {};
+    if (playerIds.length) {
+      const nameRes = await fetch(
+        `${SB_URL}/rest/v1/echl_players?player_id=in.(${playerIds.join(',')})&select=player_id,first_name,last_name`,
+        { headers: sbH }
+      );
+      if (nameRes.ok) {
+        for (const p of await nameRes.json()) {
+          nameMap[p.player_id] = `${p.first_name || ''} ${p.last_name || ''}`.trim();
+        }
+      }
+    }
+
+    const withName = (r) => ({ ...r, player_name: nameMap[r.player_id] || null });
+    const result = {
+      gameId,
+      homeTeamId: gameTeamIds[0] ?? null,
+      awayTeamId: gameTeamIds[1] ?? null,
+      skaters: skaters.map(withName),
+      goalies: goalies.map(withName),
+    };
+    await kvPut(env, kvKey, result, 3600);
+    return json(result);
+  }
+
+  // GET /echl/prediction?gameId=24296
+  // Heuristic win-probability model + AI narrative, ported from
+  // /ahl/prediction with the same Corsi-term omission -- echl_team_seasons
+  // has no corsi_for_pct[_5v5] columns either. echl_game_log also has no
+  // ot/shootout columns, so the streak calc can't distinguish an OT/SO
+  // result -- every non-win just counts as a loss, same simplification
+  // /echl/standings' own streak calc already uses.
+  if (url.pathname === '/echl/prediction') {
+    const limited = await checkAiRateLimit(env, request, 'echl-prediction');
+    if (limited) return limited;
+
+    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+    const forceRegen = url.searchParams.get('force') === '1';
+
+    const kvKey = `echl:prediction:${gameId}`;
+    if (!forceRegen) {
+      const cached = await kvGet(env, kvKey);
+      if (cached) return json(cached);
+    }
+
+    const gameRes = await fetch(
+      `${SB_URL}/rest/v1/echl_game_log?game_id=eq.${gameId}&select=game_id,season_id,home_team_id,away_team_id`,
+      { headers: sbH }
+    );
+    if (!gameRes.ok) return new Response(JSON.stringify({ error: `Supabase ${gameRes.status}` }), { status: 502, headers: corsHeaders() });
+    const [game] = await gameRes.json();
+    if (!game || !game.home_team_id || !game.away_team_id) {
+      return new Response(JSON.stringify({ error: 'Game not found in echl_game_log' }), { status: 404, headers: corsHeaders() });
+    }
+
+    const seasonId = game.season_id;
+    const homeId = game.home_team_id;
+    const awayId = game.away_team_id;
+
+    const seasonType = await resolveSeasonType(env, seasonId);
+    const isPlayoff = seasonType === 'playoffs';
+
+    const [teamsRes, logRes] = await Promise.all([
+      fetch(`${SB_URL}/rest/v1/echl_team_seasons?team_id=in.(${homeId},${awayId})&season_id=eq.${seasonId}&season_type=eq.${seasonType}`, { headers: sbH }),
+      fetch(`${SB_URL}/rest/v1/echl_game_log?season_id=eq.${seasonId}&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score`, { headers: sbH }),
+    ]);
+    if (!teamsRes.ok) return new Response(JSON.stringify({ error: `Supabase ${teamsRes.status}` }), { status: 502, headers: corsHeaders() });
+    const teamRows = await teamsRes.json();
+    const games = logRes.ok ? await logRes.json() : [];
+
+    const home = teamRows.find(t => t.team_id === homeId);
+    const away = teamRows.find(t => t.team_id === awayId);
+    if (!home || !away) {
+      return new Response(JSON.stringify({ error: 'echl_team_seasons rows not found for both teams' }), { status: 404, headers: corsHeaders() });
+    }
+
+    // Streak -- every non-win counts as a plain loss, no OT/SO split (see
+    // route comment above).
+    const streakFor = (teamId) => {
+      const results = games
+        .filter(g => g.home_team_id === teamId || g.away_team_id === teamId)
+        .map(g => {
+          const isHomeG = g.home_team_id === teamId;
+          const my = isHomeG ? g.home_score : g.away_score;
+          const opp = isHomeG ? g.away_score : g.home_score;
+          return my > opp ? 'W' : 'L';
+        });
+      let streak = 0, streakType = '';
+      for (const res of results) {
+        if (!streakType) { streakType = res; streak = 1; }
+        else if (res === streakType) streak++;
+        else break;
+      }
+      return streak ? `${streakType}${streak}` : 'unknown';
+    };
+    const homeStreak = streakFor(homeId);
+    const awayStreak = streakFor(awayId);
+
+    const h2hGames = games.filter(g =>
+      (g.home_team_id === homeId && g.away_team_id === awayId) ||
+      (g.home_team_id === awayId && g.away_team_id === homeId)
+    );
+    const h2hHomeWins = h2hGames.filter(g => {
+      const homeWasHome = g.home_team_id === homeId;
+      const myScore = homeWasHome ? g.home_score : g.away_score;
+      const oppScore = homeWasHome ? g.away_score : g.home_score;
+      return myScore > oppScore;
+    }).length;
+    const h2hRecord = h2hGames.length > 0
+      ? `${h2hHomeWins}-${h2hGames.length - h2hHomeWins}`
+      : 'no prior meetings';
+
+    const homeAbbr = ECHL_TEAM_CODES[homeId] || `T${homeId}`;
+    const awayAbbr = ECHL_TEAM_CODES[awayId] || `T${awayId}`;
+
+    const hGp = home.gp || 1, aGp = away.gp || 1;
+    const hGpg = (home.goals_for ?? 0) / hGp, aGpg = (away.goals_for ?? 0) / aGp;
+    const hGag = (home.goals_against ?? 0) / hGp, aGag = (away.goals_against ?? 0) / aGp;
+    const hPP = (home.pp_pct ?? 0) * 100, aPP = (away.pp_pct ?? 0) * 100;
+    const hPK = (home.pk_pct ?? 0) * 100, aPK = (away.pk_pct ?? 0) * 100;
+
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    const expHome = clamp(Math.sqrt(Math.max(hGpg, 0.5) * Math.max(aGag, 0.5)) + 0.12, 1.5, 5.0).toFixed(1);
+    const expAway = clamp(Math.sqrt(Math.max(aGpg, 0.5) * Math.max(hGag, 0.5)) - 0.12, 1.5, 5.0).toFixed(1);
+
+    // Win probability -- same additive heuristic as /ahl/prediction, minus
+    // the Corsi term (no data source for it -- see route comment above).
+    let homeScore = 0, awayScore = 0;
+    if (!isPlayoff) {
+      const ptsDiff = (home.points ?? 0) - (away.points ?? 0);
+      homeScore += ptsDiff > 0 ? Math.min(ptsDiff / 20, 1) : 0;
+      awayScore += ptsDiff < 0 ? Math.min(-ptsDiff / 20, 1) : 0;
+    }
+    if (hGpg > aGpg) homeScore += 0.6; else awayScore += 0.6;
+    if (hGag < aGag) homeScore += 0.6; else awayScore += 0.6;
+    if (hPP > aPP) homeScore += 0.4; else awayScore += 0.4;
+    if (homeStreak.startsWith('W')) homeScore += 0.3;
+    if (awayStreak.startsWith('W')) awayScore += 0.3;
+    const totalScore = homeScore + awayScore || 1;
+    const homeWinPct = Math.round((homeScore / totalScore) * 100);
+
+    const prompt = `You are EyeWall Analytics, an ECHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. Shot-attempt/possession data is not available for ECHL -- do not reference Corsi, possession, or shot-attempt share.
+
+Game: ${homeAbbr} (HOME) vs ${awayAbbr} (AWAY)
+Context: ${isPlayoff ? 'PLAYOFFS' : 'Regular Season'}
+
+${homeAbbr} stats:
+- Record: ${home.wins}-${home.losses}-${home.ot_losses}-${home.shootout_losses ?? 0} (${home.points} pts)
+- GF/GA per game: ${hGpg.toFixed(2)} / ${hGag.toFixed(2)}
+- PP%: ${hPP.toFixed(1)}% · PK%: ${hPK.toFixed(1)}%
+- Current streak: ${homeStreak}
+
+${awayAbbr} stats:
+- Record: ${away.wins}-${away.losses}-${away.ot_losses}-${away.shootout_losses ?? 0} (${away.points} pts)
+- GF/GA per game: ${aGpg.toFixed(2)} / ${aGag.toFixed(2)}
+- PP%: ${aPP.toFixed(1)}% · PK%: ${aPK.toFixed(1)}%
+- Current streak: ${awayStreak}
+
+Head-to-head this season: ${homeAbbr} ${h2hRecord}
+Expected score (Pythagorean): ${homeAbbr} ${expHome} - ${awayAbbr} ${expAway}
+Model win probability: ${homeAbbr} ${homeWinPct}%${isPlayoff ? '\n\nNote: This is a playoff game. Ignore regular season points — focus on goaltending and recent form.' : ''}
+
+Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.`;
+
+    let narrative = '';
+    try {
+      const aiResponse = await generateText(env, {
+        messages: [{ role: 'user', content: prompt }],
+      });
+      narrative = aiResponse.response?.trim() || '';
+    } catch (e) {
+      console.error('ECHL prediction AI error:', e);
+    }
+    if (!narrative) return new Response(JSON.stringify({ error: 'Empty AI response' }), { status: 502, headers: corsHeaders() });
+
+    const result = {
+      gameId,
+      homeTeamId: homeId,
+      awayTeamId: awayId,
+      homeAbbr,
+      awayAbbr,
+      isPlayoff,
+      homeWinPct,
+      awayWinPct: 100 - homeWinPct,
+      expHome: parseFloat(expHome),
+      expAway: parseFloat(expAway),
+      narrative,
+      h2hRecord,
+      homeStreak,
+      awayStreak,
+      generatedAt: new Date().toISOString(),
+    };
+
+    await kvPut(env, kvKey, result, 1800);
     return json(result);
   }
 
