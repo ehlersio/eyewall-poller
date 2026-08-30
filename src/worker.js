@@ -20,7 +20,7 @@
 import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.js';
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES } from './ahl.js';
-import { handleECHL, ECHL_TEAM_CODES, fetchECHLNews } from './echl.js';
+import { handleECHL, ECHL_TEAM_CODES, fetchECHLNews, pollECHL } from './echl.js';
 import { corsHeaders, json, kvGet, kvPut, sbError, badRequest, sbHeaders, SB_URL, SB_ANON } from './shared.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
@@ -496,6 +496,7 @@ export default {
       poll(env, ctx),
       pollPWHL(env).catch(e => console.error('PWHL poll error:', e.message)),
       pollAHL(env).catch(e => console.error('AHL poll error:', e.message)),
+      pollECHL(env).catch(e => console.error('ECHL poll error:', e.message)),
       refreshPPUnits(env)
         .then(map => console.log(`PP units scheduled: ${Object.keys(map).length} teams`))
         .catch(e => console.error('PP units scheduled error:', e.message)),
