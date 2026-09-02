@@ -61,7 +61,7 @@
  *     network-tab hunt (see seasons.js's ECHL_HT_KEY comment).
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, normalizeLink } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, normalizeLink, recordHealth } from './shared.js';
 import { resolveECHLSeason, getAllECHLSeasonTypes, ECHL_HT_BASE, ECHL_HT_KEY, ECHL_HT_HDR } from './seasons.js';
 
 // ECHL news sources -- only 2, not AHL's 3: echl.com has no discoverable
@@ -106,7 +106,11 @@ export async function fetchECHLNews(env) {
         cf: { cacheTtl: 0 },
       });
       console.log(`ECHL news: ${source.id} status=${res.status}`);
-      if (!res.ok) { console.warn(`ECHL news: ${source.id} failed ${res.status}`); continue; }
+      if (!res.ok) {
+        console.warn(`ECHL news: ${source.id} failed ${res.status}`);
+        await recordHealth(env, `echl:${source.id}`, false, { error: `HTTP ${res.status}` });
+        continue;
+      }
       const xml = await res.text();
       let parsed = parseRSS(xml, source);
       if (source.filter?.length) {
@@ -117,8 +121,10 @@ export async function fetchECHLNews(env) {
       }
       allItems.push(...parsed);
       console.log(`ECHL news: ${source.id} → ${parsed.length} items`);
+      await recordHealth(env, `echl:${source.id}`, true, { itemCount: parsed.length });
     } catch (err) {
       console.warn(`ECHL news: ${source.id} error: ${err.message}`);
+      await recordHealth(env, `echl:${source.id}`, false, { error: err.message });
     }
   }
   const seenIds = new Set();
@@ -1489,6 +1495,7 @@ Only reference the two teams named above and the numbers given -- no player name
       .slice(0, 60);
     await kvPut(env, 'echl:news', merged, 25 * 3600);
     console.log(`ECHL news ingest: ${articles.length} new → ${merged.length} total`);
+    await recordHealth(env, 'echl:pipeline-ingest', true, { itemCount: articles.length });
     return json({ ok: true, received: articles.length, total: merged.length });
   }
 
