@@ -21,10 +21,10 @@ import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES } from './ahl.js';
 import { handleECHL, ECHL_TEAM_CODES, fetchECHLNews, pollECHL } from './echl.js';
-import { corsHeaders, json, kvGet, kvPut, sbError, badRequest, sbHeaders, SB_URL, SB_ANON } from './shared.js';
+import { corsHeaders, json, kvGet, kvPut, sbError, badRequest, sbHeaders, SB_URL, SB_ANON, verifyAdminUser } from './shared.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
-async function handleRequest(request, env, ctx) {
+export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
 
   // CORS preflight
@@ -469,6 +469,25 @@ async function handleRequest(request, env, ctx) {
     const result = { latestId: rows[0]?.id ?? null, gameDate: rows[0]?.game_date ?? null };
     await kvPut(env, kvKey, result, 3600); // 1hr — matches /milestones' own TTL
     return json(result);
+  }
+
+  // GET /admin/health — news-feed source health, gated to the app owner.
+  // Nothing like this existed before (Session: news feed monitoring) --
+  // fetch jobs only console.log'd, ephemeral and unqueryable after the
+  // fact. Auth is a Supabase session token in the Authorization header
+  // (the same one the browser's existing magic-link sign-in already
+  // holds), verified against Supabase's own Auth API and checked against
+  // a small email allowlist -- see verifyAdminUser() in shared.js for why
+  // this reuses existing auth rather than inventing a new mechanism.
+  if (url.pathname === '/admin/health') {
+    const user = await verifyAdminUser(request, env);
+    if (!user) return new Response('Unauthorized', { status: 401 });
+    const list = await env.CACHE.list({ prefix: 'health:' });
+    const records = await Promise.all(
+      list.keys.map(k => kvGet(env, k.name))
+    );
+    const sources = records.filter(Boolean).sort((a, b) => a.key.localeCompare(b.key));
+    return json({ sources, checkedAt: new Date().toISOString() });
   }
 
   // Route PWHL endpoints

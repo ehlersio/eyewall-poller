@@ -28,7 +28,7 @@
  *     see AHL_BUILD_BRIEF.md's explicit scope notes.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, normalizeLink } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, normalizeLink, recordHealth } from './shared.js';
 import { resolveAHLSeason, getAllAHLSeasonTypes, AHL_HT_BASE, AHL_HT_KEY, AHL_HT_HDR } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -95,7 +95,11 @@ export async function fetchAHLNews(env) {
         cf: { cacheTtl: 0 },
       });
       console.log(`AHL news: ${source.id} status=${res.status}`);
-      if (!res.ok) { console.warn(`AHL news: ${source.id} failed ${res.status}`); continue; }
+      if (!res.ok) {
+        console.warn(`AHL news: ${source.id} failed ${res.status}`);
+        await recordHealth(env, `ahl:${source.id}`, false, { error: `HTTP ${res.status}` });
+        continue;
+      }
       const xml = await res.text();
       let parsed = parseRSS(xml, source);
       if (source.filter?.length) {
@@ -106,8 +110,10 @@ export async function fetchAHLNews(env) {
       }
       allItems.push(...parsed);
       console.log(`AHL news: ${source.id} → ${parsed.length} items`);
+      await recordHealth(env, `ahl:${source.id}`, true, { itemCount: parsed.length });
     } catch (err) {
       console.warn(`AHL news: ${source.id} error: ${err.message}`);
+      await recordHealth(env, `ahl:${source.id}`, false, { error: err.message });
     }
   }
   const seenIds = new Set();
@@ -1526,6 +1532,7 @@ Only reference the two teams named above and the numbers given -- no player name
       .slice(0, 60);
     await kvPut(env, 'ahl:news', merged, 25 * 3600);
     console.log(`AHL news ingest: ${articles.length} new → ${merged.length} total`);
+    await recordHealth(env, 'ahl:pipeline-ingest', true, { itemCount: articles.length });
     return json({ ok: true, received: articles.length, total: merged.length });
   }
 

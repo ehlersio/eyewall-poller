@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth } from './shared.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
@@ -1433,6 +1433,7 @@ export async function fetchNews(env, teamAbbr = TEAM_ABBR) {
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         console.warn(`News: ${source.id} failed ${res.status}: ${body.slice(0,100)}`);
+        await recordHealth(env, `nhl:${source.id}`, false, { error: `HTTP ${res.status}` });
         continue;
       }
       let parsed = [];
@@ -1459,8 +1460,10 @@ export async function fetchNews(env, teamAbbr = TEAM_ABBR) {
       }
       allItems.push(...parsed);
       console.log(`News: ${source.id} → ${parsed.length} items`);
+      await recordHealth(env, `nhl:${source.id}`, true, { itemCount: parsed.length });
     } catch (err) {
       console.warn(`News: ${source.id} error: ${err.message} ${err.stack?.slice(0,100)}`);
+      await recordHealth(env, `nhl:${source.id}`, false, { error: err.message });
     }
   }
 
@@ -2857,6 +2860,8 @@ Only reference the two teams named above and the numbers given -- no player name
       try {
         const isTrueAtom = /<feed[\s>]/.test(xml.slice(0, 500));
         const parsed = isTrueAtom ? parseAtom(xml, src) : parseRSS(xml, src);
+        results[sourceId] = parsed.length;
+        await recordHealth(env, `nhl:${sourceId}`, true, { itemCount: parsed.length });
         if (!parsed.length) continue;
         // Merge with existing news — keep non-atom items intact
         const existing = (await kvGet(env, `news:${abbr}`)) || [];
@@ -2865,10 +2870,10 @@ Only reference the two teams named above and the numbers given -- no player name
           .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
           .slice(0, 30);
         await kvPut(env, `news:${abbr}`, merged, TTL);
-        results[sourceId] = parsed.length;
       } catch (e) {
         console.warn(`Atom ingest: ${sourceId} parse error: ${e.message}`);
         results[sourceId] = 0;
+        await recordHealth(env, `nhl:${sourceId}`, false, { error: e.message });
       }
     }
     const total = Object.values(results).reduce((s, n) => s + n, 0);

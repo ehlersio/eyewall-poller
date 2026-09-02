@@ -22,6 +22,72 @@ export async function kvGet(env, key) {
   return raw ? JSON.parse(raw) : null;
 }
 
+// ── News-feed health tracking ────────────────────────────────
+// Nothing recorded success/failure/timestamps for a news fetch before this
+// (added 2026-09) -- fetch loops only console.log'd, ephemeral and
+// unqueryable after the fact. A tester's "news feeds are notoriously
+// difficult, can we monitor them" prompted this. One record per source
+// (`health:<league>:<sourceId>`), updated after every fetch attempt --
+// whether a direct RSS fetch (nhl.js/pwhl.js/ahl.js/echl.js's fetch*News())
+// or a GitHub-Actions-fed /ingest route (atom blogs, nightly pipeline
+// posts). Read by GET /admin/health (worker.js), gated to the app owner.
+const HEALTH_TTL = 30 * 24 * 3600; // 30 days -- long enough that a source
+// that's been silently dead for weeks still shows up as "stale", rather
+// than the key just expiring and disappearing from the panel entirely.
+
+export async function recordHealth(env, key, ok, meta = {}) {
+  const now = new Date().toISOString();
+  const prevKey = `health:${key}`;
+  const prev = (await kvGet(env, prevKey)) || {};
+  const next = {
+    key,
+    ...meta,
+    lastAttemptAt: now,
+    lastSuccessAt: ok ? now : (prev.lastSuccessAt || null),
+    lastError: ok ? null : (meta.error || 'unknown error'),
+    lastErrorAt: ok ? (prev.lastErrorAt || null) : now,
+    consecutiveFailures: ok ? 0 : (prev.consecutiveFailures || 0) + 1,
+  };
+  await kvPut(env, prevKey, next, HEALTH_TTL);
+}
+
+// ── Admin auth ────────────────────────────────────────────────
+// No admin/owner concept existed anywhere in this stack before this --
+// only end-user magic-link sign-in (Session 90/91, eyewall-analytics).
+// Rather than invent a new auth mechanism, this verifies the SAME
+// Supabase session token the browser already holds by asking Supabase's
+// own Auth API whose it is (no JWT secret/signature verification needed
+// here, no new secret shipped to client JS either) and checks the email
+// against an allowlist. Not exported with the token itself logged
+// anywhere -- only the verified user object.
+//
+// Allowlist is env.ADMIN_EMAILS (comma-separated, set as a Worker secret)
+// falling back to a single hardcoded default -- config like "who's an
+// admin" shouldn't require a source change + deploy to update, but this
+// still works with zero setup if that var is never configured.
+const DEFAULT_ADMIN_EMAILS = ['matt@ehlers.io'];
+
+export async function verifyAdminUser(request, env) {
+  const auth = request.headers.get('Authorization');
+  if (!auth?.startsWith('Bearer ')) return null;
+  const token = auth.slice(7).trim();
+  if (!token) return null;
+  const allowlist = env.ADMIN_EMAILS
+    ? env.ADMIN_EMAILS.split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+    : DEFAULT_ADMIN_EMAILS;
+  try {
+    const res = await fetch(`${SB_URL}/auth/v1/user`, {
+      headers: { apikey: SB_ANON, Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const user = await res.json();
+    if (!user?.email || !allowlist.includes(user.email.toLowerCase())) return null;
+    return user;
+  } catch {
+    return null;
+  }
+}
+
 // Derive 'pre' | 'live' | 'final' from a pwhl_game_log/ahl_game_log row.
 // game_status_code (HockeyTech's numeric GameStatus, added Phase 6 --
 // see eyewall-pipeline's docs/live_score_refresh_ddl.sql) is preferred
@@ -57,7 +123,7 @@ export function corsHeaders() {
   return {
     'Access-Control-Allow-Origin':  '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };
 }
 

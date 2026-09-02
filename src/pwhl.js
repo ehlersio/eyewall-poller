@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink, recordHealth } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -123,7 +123,11 @@ export async function fetchPWHLNews(env) {
         cf: { cacheTtl: 0 },
       });
       console.log(`PWHL news: ${source.id} status=${res.status}`);
-      if (!res.ok) { console.warn(`PWHL news: ${source.id} failed ${res.status}`); continue; }
+      if (!res.ok) {
+        console.warn(`PWHL news: ${source.id} failed ${res.status}`);
+        await recordHealth(env, `pwhl:${source.id}`, false, { error: `HTTP ${res.status}` });
+        continue;
+      }
       const xml = await res.text();
       let parsed = source.type === 'espn' ? parseESPN(xml, source) : parseRSS(xml, source);
       if (source.filter?.length) {
@@ -134,8 +138,10 @@ export async function fetchPWHLNews(env) {
       }
       allItems.push(...parsed);
       console.log(`PWHL news: ${source.id} → ${parsed.length} items`);
+      await recordHealth(env, `pwhl:${source.id}`, true, { itemCount: parsed.length });
     } catch (err) {
       console.warn(`PWHL news: ${source.id} error: ${err.message}`);
+      await recordHealth(env, `pwhl:${source.id}`, false, { error: err.message });
     }
   }
   const seenIds = new Set();
@@ -1592,6 +1598,7 @@ Only reference the two teams named above and the numbers given -- no player name
     // PWHL articles every night.
     await kvPut(env, 'pwhl:news', merged, 25 * 3600);
     console.log(`PWHL news ingest: ${articles.length} new → ${merged.length} total`);
+    await recordHealth(env, 'pwhl:pipeline-ingest', true, { itemCount: articles.length });
     return json({ ok: true, received: articles.length, total: merged.length });
   }
 

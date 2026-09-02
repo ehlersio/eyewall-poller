@@ -35,6 +35,14 @@ export function makeFakeCache(initial = {}) {
     async getWithMetadata(key) {
       return { value: store.has(key) ? store.get(key) : null, metadata: null }
     },
+    // Real KV's list({ prefix }) — GET /admin/health enumerates health:*
+    // keys this way. Real KV paginates via cursor/list_complete; this fake
+    // always returns everything in one page, which is all any current
+    // caller needs.
+    async list({ prefix = '' } = {}) {
+      const keys = [...store.keys()].filter(k => k.startsWith(prefix)).map(name => ({ name }))
+      return { keys, list_complete: true, cursor: '' }
+    },
     _store: store, // test-only escape hatch for asserting on raw cache state
   }
 }
