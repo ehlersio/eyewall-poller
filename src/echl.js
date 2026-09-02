@@ -61,7 +61,7 @@
  *     network-tab hunt (see seasons.js's ECHL_HT_KEY comment).
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, normalizeLink } from './shared.js';
 import { resolveECHLSeason, getAllECHLSeasonTypes, ECHL_HT_BASE, ECHL_HT_KEY, ECHL_HT_HDR } from './seasons.js';
 
 // ECHL news sources -- only 2, not AHL's 3: echl.com has no discoverable
@@ -133,7 +133,7 @@ export async function fetchECHLNews(env) {
   const existing = (await kvGet(env, 'echl:news')) || [];
   const merged = [
     ...deduped,
-    ...existing.filter(item => !deduped.find(d => d.id === item.id)),
+    ...existing.filter(item => !deduped.find(d => d.id === item.id || normalizeLink(d.url) === normalizeLink(item.url))),
   ].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
     .slice(0, 60);
   await kvPut(env, 'echl:news', merged, merged.length > 0 ? 25 * 3600 : 300);
@@ -1484,7 +1484,7 @@ Only reference the two teams named above and the numbers given -- no player name
     const existing = (await kvGet(env, 'echl:news')) || [];
     const merged = [
       ...articles,
-      ...existing.filter(a => !articles.find(n => n.id === a.id)),
+      ...existing.filter(a => !articles.find(n => n.id === a.id || normalizeLink(n.url) === normalizeLink(a.url))),
     ].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
       .slice(0, 60);
     await kvPut(env, 'echl:news', merged, 25 * 3600);

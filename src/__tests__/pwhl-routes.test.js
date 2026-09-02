@@ -762,6 +762,33 @@ describe('POST /pwhl/news/ingest', () => {
     // Incoming's copy of 'old-1' wins over the stale existing one (articles spread first, existing filtered to exclude any id already in articles)
     expect(merged.find(a => a.id === 'old-1').publishedAt).toBe('2026-01-01T00:00:00Z')
   })
+
+  // Regression: eyewall-pipeline's pwhl_news.py mints article ids via
+  // Python's hashlib.md5, while this Worker's own safeId() (shared.js) uses
+  // a JS rolling hash -- the same article link produces two different ids
+  // depending on which side saw it first. An id-only dedupe let the same
+  // story through twice whenever the nightly pipeline ingest and this
+  // Worker's own live fetch both picked up the same article (confirmed
+  // live as a duplicate-story bug reported 2026-09, ECHL specifically but
+  // the same merge pattern exists here and in ahl.js). Same link, different
+  // id, must still be recognized as a duplicate.
+  it('dedupes by normalized link even when ids differ (cross-language id mismatch)', async () => {
+    const existing = [{ id: 'py-abc123', url: 'https://example.com/story?utm_source=rss', publishedAt: '2026-07-08T00:00:00Z' }]
+    const incoming = [
+      { id: 'js-xyz789', url: 'https://example.com/story/', publishedAt: '2026-07-08T01:00:00Z' },
+    ]
+    const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:news': existing }) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/news/ingest?secret=test-poll-secret', { method: 'POST', body: incoming }),
+      env, makeCtx(), new URL('https://example.com/pwhl/news/ingest?secret=test-poll-secret')
+    )
+
+    expect(res.status).toBe(200)
+    const merged = JSON.parse(await env.CACHE.get('pwhl:news'))
+    expect(merged).toHaveLength(1)
+    expect(merged[0].id).toBe('js-xyz789')
+  })
 })
 
 describe('fetchPWHLNews() TTL', () => {

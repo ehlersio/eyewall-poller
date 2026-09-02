@@ -28,7 +28,7 @@
  *     see AHL_BUILD_BRIEF.md's explicit scope notes.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, normalizeLink } from './shared.js';
 import { resolveAHLSeason, getAllAHLSeasonTypes, AHL_HT_BASE, AHL_HT_KEY, AHL_HT_HDR } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -122,7 +122,7 @@ export async function fetchAHLNews(env) {
   const existing = (await kvGet(env, 'ahl:news')) || [];
   const merged = [
     ...deduped,
-    ...existing.filter(item => !deduped.find(d => d.id === item.id)),
+    ...existing.filter(item => !deduped.find(d => d.id === item.id || normalizeLink(d.url) === normalizeLink(item.url))),
   ].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
     .slice(0, 60);
   await kvPut(env, 'ahl:news', merged, merged.length > 0 ? 25 * 3600 : 300);
@@ -1521,7 +1521,7 @@ Only reference the two teams named above and the numbers given -- no player name
     const existing = (await kvGet(env, 'ahl:news')) || [];
     const merged = [
       ...articles,
-      ...existing.filter(a => !articles.find(n => n.id === a.id)),
+      ...existing.filter(a => !articles.find(n => n.id === a.id || normalizeLink(n.url) === normalizeLink(a.url))),
     ].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
       .slice(0, 60);
     await kvPut(env, 'ahl:news', merged, 25 * 3600);

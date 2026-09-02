@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -153,7 +153,7 @@ export async function fetchPWHLNews(env) {
   const existing = (await kvGet(env, 'pwhl:news')) || [];
   const merged = [
     ...deduped,
-    ...existing.filter(item => !deduped.find(d => d.id === item.id)),
+    ...existing.filter(item => !deduped.find(d => d.id === item.id || normalizeLink(d.url) === normalizeLink(item.url))),
   ].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
     .slice(0, 60);
   // Always write, even when empty (previously this only wrote on a
@@ -1579,7 +1579,7 @@ Only reference the two teams named above and the numbers given -- no player name
     const existing = (await kvGet(env, 'pwhl:news')) || [];
     const merged = [
       ...articles,
-      ...existing.filter(a => !articles.find(n => n.id === a.id)),
+      ...existing.filter(a => !articles.find(n => n.id === a.id || normalizeLink(n.url) === normalizeLink(a.url))),
     ].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
       .slice(0, 60);
     // 25hr, not 30min (Session: news ingestion investigation) -- this is
