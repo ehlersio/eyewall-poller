@@ -284,6 +284,24 @@ export function safeId(sourceId, link) {
   return sourceId + '-' + Math.abs(h).toString(36);
 }
 
+// Two different pieces of code independently mint news-item ids from the
+// same article link -- this Worker's own safeId() above (a JS rolling
+// hash), and eyewall-pipeline's echl_news.py/ahl_news.py/pwhl_news.py
+// (Python's hashlib.md5). Same article, different id, so an id-only dedupe
+// (as every news merge used to do) let both copies of the same story
+// through whenever the nightly pipeline ingest and this Worker's own live
+// fetch both picked it up -- confirmed live as the ECHL "duplicate story"
+// bug reported 2026-09. Comparing normalized links closes that gap without
+// having to keep two languages' hash functions in sync.
+export function normalizeLink(url) {
+  if (!url) return '';
+  return url.trim().toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/[?#].*$/, '')
+    .replace(/\/+$/, '');
+}
+
 // ── RSS/ESPN news parsers (used by NHL and PWHL news fetchers) ──
 
 export function parseRSS(xml, source) {
