@@ -1243,6 +1243,23 @@ const NHL_NEWS_SOURCES = [
     type:      'rss',
     filterKey: 'team',
   },
+  {
+    // RotoWire — league-wide transaction/injury feed, filtered per team at
+    // runtime. Added 2026-09 after a tester reported a real trade (Devils
+    // acquiring Luke Evangelista) missing from news: NHL.com's own RSS
+    // feeds are dead (redirect to a 404 page, confirmed live), and this
+    // was the only candidate of several checked whose live feed actually
+    // carried that exact trade within hours -- it's built for fast,
+    // granular per-player transaction items (trades/injuries/roster
+    // moves), which is exactly the gap the other sources (built for full
+    // articles, not one-line transaction bites) had.
+    id:        'rotowire',
+    name:      'RotoWire',
+    color:     '#1a5fb4',
+    url:       'https://www.rotowire.com/rss/news.php?sport=NHL',
+    type:      'rss',
+    filterKey: 'team',
+  },
 ];
 
 // Team-specific news sources — keyed by team abbrev. One beat/fan-blog per
