@@ -280,7 +280,7 @@ describe('GET /milestones/latest', () => {
 })
 
 describe('GET /players-search-index', () => {
-  function mockSupabaseFetch({ players, teamRows, pwhlRows }) {
+  function mockSupabaseFetch({ players, teamRows, pwhlRows, ahlRows = [], echlRows = [] }) {
     globalThis.fetch = vi.fn((url) => {
       const u = String(url)
       if (u.includes('/rest/v1/players?')) {
@@ -291,6 +291,12 @@ describe('GET /players-search-index', () => {
       }
       if (u.includes('/rest/v1/pwhl_players?')) {
         return Promise.resolve({ ok: true, json: async () => pwhlRows })
+      }
+      if (u.includes('/rest/v1/ahl_players?')) {
+        return Promise.resolve({ ok: true, json: async () => ahlRows })
+      }
+      if (u.includes('/rest/v1/echl_players?')) {
+        return Promise.resolve({ ok: true, json: async () => echlRows })
       }
       throw new Error(`unexpected fetch: ${u}`)
     })
@@ -307,7 +313,7 @@ describe('GET /players-search-index', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
-  it('joins NHL players with their most-recently-updated current-season team, unions PWHL, and caches the result', async () => {
+  it('joins NHL players with their most-recently-updated current-season team, unions PWHL/AHL/ECHL, and caches the result', async () => {
     mockSupabaseFetch({
       players: [
         { id: 1, name: 'Sebastian Aho', position: 'C' },
@@ -323,6 +329,13 @@ describe('GET /players-search-index', () => {
         { player_id: 100, first_name: 'Marie-Philip', last_name: 'Poulin', position: 'F', team_id: 2 },
         { player_id: 101, first_name: null, last_name: null, position: null, team_id: null }, // no name -> filtered out
       ],
+      ahlRows: [
+        { player_id: 200, first_name: 'Some', last_name: 'Prospect', position: 'C', team_id: 307 },
+        { player_id: 201, first_name: null, last_name: null, position: null, team_id: null }, // no name -> filtered out
+      ],
+      echlRows: [
+        { player_id: 300, first_name: 'Some', last_name: 'Depth Player', position: 'D', team_id: 74 },
+      ],
     })
 
     const env = makeEnv()
@@ -334,6 +347,8 @@ describe('GET /players-search-index', () => {
       { id: 1, name: 'Sebastian Aho', team: 'NYR', position: 'C', sport: 'nhl' },
       { id: 2, name: 'Retired Guy', team: null, position: 'D', sport: 'nhl' },
       { id: 100, name: 'Marie-Philip Poulin', team: 'MIN', position: 'F', sport: 'pwhl' },
+      { id: 200, name: 'Some Prospect', team: 'HFD', position: 'C', sport: 'ahl' },
+      { id: 300, name: 'Some Depth Player', team: 'ADK', position: 'D', sport: 'echl' },
     ])
 
     const cached = await env.CACHE.get('players-search-index')
@@ -368,6 +383,9 @@ describe('GET /players-search-index', () => {
         }
         if (u.includes('/rest/v1/pwhl_players?')) {
           return Promise.resolve({ ok: true, json: async () => pwhlRows })
+        }
+        if (u.includes('/rest/v1/ahl_players?') || u.includes('/rest/v1/echl_players?')) {
+          return Promise.resolve({ ok: true, json: async () => [] })
         }
         throw new Error(`unexpected fetch: ${u}`)
       })

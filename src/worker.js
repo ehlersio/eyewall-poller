@@ -323,7 +323,44 @@ export async function handleRequest(request, env, ctx) {
         sport: 'pwhl',
       }));
 
-    const index = [...nhlIndex, ...pwhlIndex];
+    // AHL/ECHL players — same shape as pwhl_players (no season dimension,
+    // one row per player reflecting current team assignment). limit=1500,
+    // not 500 like PWHL above -- both tables have 1250+ rows today
+    // (confirmed live), comfortably past PWHL's much smaller current roster
+    // count.
+    const ahlRes = await fetch(
+      `${SB_URL}/rest/v1/ahl_players?select=player_id,first_name,last_name,position,team_id&limit=1500`,
+      { headers: sbH }
+    );
+    if (!ahlRes.ok) return sbError(ahlRes.status);
+    const ahlRows = await ahlRes.json();
+    const ahlIndex = ahlRows
+      .filter(p => p.first_name || p.last_name)
+      .map(p => ({
+        id: p.player_id,
+        name: `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+        team: AHL_TEAM_CODES[p.team_id] || null,
+        position: p.position,
+        sport: 'ahl',
+      }));
+
+    const echlRes = await fetch(
+      `${SB_URL}/rest/v1/echl_players?select=player_id,first_name,last_name,position,team_id&limit=1500`,
+      { headers: sbH }
+    );
+    if (!echlRes.ok) return sbError(echlRes.status);
+    const echlRows = await echlRes.json();
+    const echlIndex = echlRows
+      .filter(p => p.first_name || p.last_name)
+      .map(p => ({
+        id: p.player_id,
+        name: `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+        team: ECHL_TEAM_CODES[p.team_id] || null,
+        position: p.position,
+        sport: 'echl',
+      }));
+
+    const index = [...nhlIndex, ...pwhlIndex, ...ahlIndex, ...echlIndex];
     await kvPut(env, kvKey, index, 21600); // 6hr
     return json(index);
   }
