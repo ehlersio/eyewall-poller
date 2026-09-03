@@ -1868,6 +1868,32 @@ export async function handleNHL(request, env, ctx, url) {
     return json([]);
   }
 
+  // GET /nhl/today
+  // Returns all NHL games scheduled for today with status pre/live/final.
+  // Same normalized shape as /pwhl/today, /ahl/today, /echl/today, but
+  // sourced straight from the league-wide score/now scoreboard (poll()'s
+  // step 2 above) instead of a Supabase game_log table — the NHL API
+  // already returns real team abbrevs and scores, no team-code map needed.
+  if (url.pathname === '/nhl/today' && request.method === 'GET') {
+    const kvKey  = 'nhl:today';
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const scoreboard  = await nhlGet(`${NHL_BASE}/score/now`);
+    const todaysGames = scoreboard?.games || [];
+    const games = todaysGames.map(g => ({
+      gameId:       g.id,
+      homeTeamCode: g.homeTeam?.abbrev,
+      awayTeamCode: g.awayTeam?.abbrev,
+      homeScore:    g.homeTeam?.score,
+      awayScore:    g.awayTeam?.score,
+      status:       isCompleted(g) ? 'final' : (g.gameState === 'LIVE' || g.gameState === 'CRIT') ? 'live' : 'pre',
+    }));
+
+    await kvPut(env, kvKey, games, 60); // 60s TTL — matches poll()'s live cadence
+    return json(games);
+  }
+
   // ══════════════════════════════════════════════════════════════════════
   // Direct-Supabase-read proxies (Session 44) — replace
   // eyewall-analytics/src/utils/supabaseClient.js's direct-to-Supabase
