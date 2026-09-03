@@ -73,6 +73,53 @@ describe('GET /health', () => {
   })
 })
 
+describe('GET /nhl/today', () => {
+  it('normalizes the score/now scoreboard into the shared pre/live/final shape', async () => {
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('/score/now')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            games: [
+              { id: 2025020100, gameState: 'FUT', homeTeam: { abbrev: 'CAR', score: 0 }, awayTeam: { abbrev: 'BOS', score: 0 } },
+              { id: 2025020101, gameState: 'LIVE', homeTeam: { abbrev: 'TOR', score: 2 }, awayTeam: { abbrev: 'MTL', score: 1 } },
+              { id: 2025020102, gameState: 'FINAL', homeTeam: { abbrev: 'NYR', score: 4 }, awayTeam: { abbrev: 'NJD', score: 3 } },
+            ],
+          }),
+        })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+    const env = makeEnv()
+
+    const res = await handleNHL(makeRequest('/nhl/today'), env, makeCtx(), new URL('https://example.com/nhl/today'))
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toEqual([
+      { gameId: 2025020100, homeTeamCode: 'CAR', awayTeamCode: 'BOS', homeScore: 0, awayScore: 0, status: 'pre' },
+      { gameId: 2025020101, homeTeamCode: 'TOR', awayTeamCode: 'MTL', homeScore: 2, awayScore: 1, status: 'live' },
+      { gameId: 2025020102, homeTeamCode: 'NYR', awayTeamCode: 'NJD', homeScore: 4, awayScore: 3, status: 'final' },
+    ])
+  })
+
+  it('serves from KV on a warm cache without re-fetching upstream', async () => {
+    const fetchMock = vi.fn()
+    globalThis.fetch = fetchMock
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'nhl:today': [{ gameId: 1, homeTeamCode: 'CAR', awayTeamCode: 'BOS', homeScore: 1, awayScore: 0, status: 'live' }] }),
+    })
+
+    const res = await handleNHL(makeRequest('/nhl/today'), env, makeCtx(), new URL('https://example.com/nhl/today'))
+
+    expect(res.status).toBe(200)
+    expect(fetchMock).not.toHaveBeenCalled()
+    const body = await res.json()
+    expect(body[0].status).toBe('live')
+  })
+})
+
 describe('GET /cache/:key', () => {
   it('returns 404 for a cold, non-schedule key (no background fetch to trigger)', async () => {
     const env = makeEnv()
