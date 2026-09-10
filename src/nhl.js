@@ -2967,7 +2967,16 @@ Only reference the two teams named above and the numbers given -- no player name
     if (!gameId) return json({ error: 'gameId required' });
     const tc = await getTeamConfig(request, env);
 
-    const kvKey = `prediction:${gameId}`;
+    // Team-scoped: the same gameId can legitimately be requested from
+    // either side's perspective (e.g. a TOR fan and an NJD fan both
+    // viewing the same TOR-vs-NJD game), and the response itself is
+    // framed around tc.abbr (oppAbbr, isHome, carWinPct all relative to
+    // it) -- a bare `prediction:${gameId}` key would let whichever team
+    // requested it first silently determine what every other team's fan
+    // sees for that same game. Same fix /summary/narrative already has
+    // (`narrative:${period}:${gameId}:${carAbbrKey}`) -- this route just
+    // hadn't been updated to match when this app went multi-team.
+    const kvKey = `prediction:${gameId}:${tc.abbr}`;
 
     // Serve from cache if available and not forced
     if (!forceRegen) {
