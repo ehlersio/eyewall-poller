@@ -106,6 +106,34 @@ async function nhlGet(url) {
   return res.json();
 }
 
+// Current-season schedule for a team, fetching live and caching on a miss
+// instead of assuming the cache is already warm. CAR's copy stays warm
+// forever via poll()'s own cron refresh (TEAM_ABBR-scoped, runs every
+// 60s); every other team's cache depends entirely on a recent
+// /schedule?team=X request having already populated it -- /schedule's
+// own current-season path even deliberately returns [] on a cold miss
+// (fire-and-forget background fetch, fine for a page the frontend
+// re-polls). A caller that needs the schedule for a one-shot answer
+// (can't just tell the user to reload) can't tolerate that gap: found
+// live in production as "Game not found in schedule" for every non-CAR
+// team whenever nothing had recently warmed that team's cache -- /prediction/analyze
+// was reading the cache passively (`kvGet(...) || []`) instead of ever
+// fetching. This fetches synchronously so the very first request for a
+// cold team succeeds instead of erroring once and only working on retry.
+async function scheduleWithFetch(env, abbr, season) {
+  const cached = await kvGet(env, scheduleKey(abbr, season));
+  if (cached) return cached;
+  try {
+    const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${abbr}/${season}`);
+    const games = data?.games || [];
+    await kvPut(env, scheduleKey(abbr, season), games, CURRENT_SCHEDULE_TTL);
+    return games;
+  } catch (e) {
+    console.warn(`scheduleWithFetch(${abbr}, ${season}): ${e.message}`);
+    return [];
+  }
+}
+
 // Server-side Supabase REST read, for the /player-analytics etc. proxy
 // routes below — same shape as supabaseClient.js's own sbFetch(), just
 // running here instead of in the browser.
@@ -2949,7 +2977,7 @@ Only reference the two teams named above and the numbers given -- no player name
 
     // Fetch standings for both teams
     const standings = await kvGet(env, 'standings') || [];
-    const schedule  = await kvGet(env, scheduleKey(tc.abbr, tc.season)) || [];
+    const schedule  = await scheduleWithFetch(env, tc.abbr, tc.season);
 
     // Find this game
     const game = schedule.find(g => String(g.id) === String(gameId));
