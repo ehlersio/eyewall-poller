@@ -117,14 +117,23 @@ async function sbRows(path) {
   return r.json();
 }
 
-// Combined Prediction Calibration (2026-07) — see
-// eyewall-pipeline/docs/combined_calibration_part_a_b_results.md for the
-// fit/validation this was built from, and COMBINED_CALIBRATION_IMPLEMENTATION.md
-// for the "switch, don't stack" regime design these three helpers implement.
+// Prediction win-probability model (2026-09: Elo, see below) — both
+// /prediction/analyze branches (in-season and true-preseason) used to run
+// a hand-tuned scorecard (fixed weights on points/GF-GA/PP%/possession/
+// streak, never fit against real data) plus, in-season only, a separately
+// fitted isotonic calibration layer patched on top after the raw scorecard
+// was found badly overconfident at the extremes (see
+// eyewall-pipeline/docs/combined_calibration_part_a_b_results.md — now
+// superseded). Both are gone, replaced by a single Elo model validated in
+// eyewall-pipeline/docs/elo_prediction_model_results.md to beat the old
+// two-regime system on every metric, in both regimes, with no separate
+// calibration step needed (Elo's logistic formula is calibrated by
+// construction).
 
 // League-average PP% -- the one shared fallback value for a missing
 // team_seasons.pp_pct in buildPreseasonFallback (used identically by both
-// the scorecard and the AI prompt text; see PP_PCT_BACKFILL_GAP_INVESTIGATION.md).
+// the AI prompt text there and the in-season branch's own PP% display;
+// see PP_PCT_BACKFILL_GAP_INVESTIGATION.md).
 const PP_PCT_DEFAULT = 22;
 
 // e.g. 20252026 -> 20242025. Mirrors rapm.py's prior_season() exactly —
@@ -135,93 +144,55 @@ function priorSeason(season) {
   return (startYear - 1) * 10000 + (endYear - 1);
 }
 
-// Fitted via eyewall-pipeline/fit_scorecard_calibration.py on the main
-// backtest's current-season-to-date predictions (fit: 2024-25, holdout:
-// 2025-26) — see scorecard_calibration.json for the source artifact.
-// Isotonic regression's fitted function is a monotonic step/interpolation
-// curve; these are its (x, y) breakpoints. Only ever applied to the
-// in-season branch — the true-preseason regime uses continuity dampening
-// instead (see COMBINED_CALIBRATION_IMPLEMENTATION.md's "switch, don't
-// stack" resolution). Refit cadence tied to the quarterly RAPM validation
-// review (see ISOTONIC_RECALIBRATION_CADENCE.md) — a validated check each
-// review, not an automatic refit.
-//
-// Refit 2026-07-24: the original fit (2026-07-23) predates the pp_goals/
-// pp_opps situationCode-misindexing fix (PP_GOALS_FULL_FIX.md, pipeline
-// PR #53) by ~8 hours. backtest_predictions.py's standings_inputs_asof()
-// sums those same game_log columns into pp_pct, one of the scorecard's
-// five inputs — so the original curve was fit on a raw score distorted by
-// that bug (home teams' pp_pct forced toward 0 in nearly every game, a
-// directional bias, not noise) across both the 2024-25 fit set and the
-// 2025-26 holdout. Re-fit against the now-corrected game_log; see
-// eyewall-pipeline/docs/isotonic_recalibration_recheck_results.md.
-const ISOTONIC_X = [
-  0.0, 0.045454545454545456, 0.08333333333333334, 0.08571428571428572, 0.16, 0.16666666666666669,
-  0.48387096774193555, 0.5, 0.7307692307692308, 0.7391304347826086, 0.76, 0.7666666666666666,
-  0.896551724137931, 0.9, 1.0,
-];
-const ISOTONIC_Y = [
-  0.41420118343195267, 0.4375, 0.4375, 0.5034965034965035, 0.5034965034965035, 0.5236220472440944,
-  0.5236220472440944, 0.5967741935483871, 0.5967741935483871, 0.625, 0.625, 0.6644295302013423,
-  0.6644295302013423, 0.6888888888888889, 0.6888888888888889,
-];
+// Elo win probability -- see eyewall-pipeline/docs/elo_prediction_model_results.md
+// for the backtest (beats both the scorecard-based in-season branch and
+// this file's own prior continuity-dampened preseason fallback, on every
+// metric, in both regimes). Ratings live in Supabase (team_elo_ratings,
+// eyewall-pipeline's elo_ratings.py updates them nightly via a full
+// chronological replay of game_log, including a regression-to-mean step
+// applied once at each season boundary) -- so a single rating lookup is
+// correct for BOTH branches below; the preseason regime needs no separate
+// dampening logic anymore, since the pipeline-side regression-to-mean
+// already IS the season-boundary "roster probably changed some" discount,
+// done from real outcomes instead of a hand-set TOI-retention fraction.
+const ELO_HOME_ADVANTAGE = 35; // FiveThirtyEight's published NHL value; matches eyewall-pipeline/elo.py exactly
 
-// x is the raw scorecard fraction (0-1, i.e. carScore/total before
-// rounding to a percentage) — apply calibration BEFORE rounding, matching
-// exactly what was fit and validated in Python (fitting on an already-
-// rounded integer percentage would be a subtly different input).
-// Linear interpolation between breakpoints, clipped outside the fitted
-// range — verified against sklearn's actual IsotonicRegression.predict()
-// output across the full range (including boundary clips and flat/duplicate-
-// x steps) before shipping, not assumed from the algorithm's name.
-function isotonicCalibrate(x) {
-  if (x <= ISOTONIC_X[0]) return ISOTONIC_Y[0];
-  const last = ISOTONIC_X.length - 1;
-  if (x >= ISOTONIC_X[last]) return ISOTONIC_Y[last];
-  for (let i = 0; i < last; i++) {
-    if (x >= ISOTONIC_X[i] && x <= ISOTONIC_X[i + 1]) {
-      const x0 = ISOTONIC_X[i], x1 = ISOTONIC_X[i + 1];
-      const y0 = ISOTONIC_Y[i], y1 = ISOTONIC_Y[i + 1];
-      if (x1 === x0) return y0; // flat step (duplicate x-threshold)
-      return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
-    }
-  }
-  return ISOTONIC_Y[last]; // unreachable safety net
+async function fetchEloRatings(tc, oppAbbr) {
+  const rows = await sbRows(`team_elo_ratings?team=in.(${tc.abbr},${oppAbbr})&select=team,rating`);
+  // 1500 (Elo's neutral starting rating) for a team with no row yet -- same
+  // graceful default elo_ratings.py itself uses for a team's first-ever
+  // appearance (true expansion, or the table simply hasn't been populated
+  // for this team yet). Never a hard error -- a missing rating shouldn't
+  // block a prediction the way missing prior-season team_seasons data
+  // used to.
+  const car = rows.find(r => r.team === tc.abbr)?.rating ?? 1500;
+  const opp = rows.find(r => r.team === oppAbbr)?.rating ?? 1500;
+  return { car, opp };
 }
 
-// Fraction (0-1) of a team's prior-season total TOI attributable to
-// players still on its roster today — validated in
-// TRUE_PRESEASON_BACKTEST_EXTENSION.md/_RESULTS.md (continuity-adjusted
-// fallback: Brier -13%, log loss -63% vs. the raw fallback, no accuracy
-// cost). rosterIds: current roster player ids for the team (from
-// `players.team`, live — no historical proxy needed in production, unlike
-// the backtest reconstruction). priorSeasonRows: that team's own
-// player_seasons rows for the prior season (player_id, games_played,
-// toi_per_game).
-function continuityFraction(rosterIds, priorSeasonRows) {
-  let totalToi = 0, retainedToi = 0;
-  for (const r of priorSeasonRows) {
-    const toi = (r.toi_per_game || 0) * (r.games_played || 0);
-    totalToi += toi;
-    if (rosterIds.has(r.player_id)) retainedToi += toi;
-  }
-  return totalToi > 0 ? retainedToi / totalToi : null;
+// Returns tc's win probability (0-1), applying home advantage to whichever
+// side is actually playing at home -- mirrors eyewall-pipeline/elo.py's
+// expected_prob(rating_home + HOME_ADVANTAGE, rating_away) exactly, just
+// reoriented to answer "does tc win" regardless of which side tc is on.
+function eloWinProb(carRating, oppRating, isHome) {
+  const homeRating = isHome ? carRating : oppRating;
+  const awayRating = isHome ? oppRating : carRating;
+  const homeWinProb = 1 / (1 + Math.pow(10, (awayRating - (homeRating + ELO_HOME_ADVANTAGE)) / 400));
+  return isHome ? homeWinProb : 1 - homeWinProb;
 }
 
 // Called from /prediction/analyze when standings are still pinned to last
-// season (no real current-season data yet). Prior-season scorecard +
-// roster-continuity dampening, validated in TRUE_PRESEASON_BACKTEST_RESULTS.md
-// — never combined with the in-season branch's isotonic calibration (see
-// the "switch, don't stack" resolution in COMBINED_CALIBRATION_IMPLEMENTATION.md).
+// season (no real current-season data yet). Win probability comes from
+// team_elo_ratings (see above); everything else here is descriptive
+// context for the AI narrative and the Pythagorean expected-score display
+// — last season's box-score rates, since this season's don't exist yet.
 async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey) {
   const prior = priorSeason(tc.season);
 
-  const [teamSeasonRows, playerRows, priorPlayerSeasonRows] = await Promise.all([
+  const [teamSeasonRows, eloRatings] = await Promise.all([
     sbRows(`team_seasons?team=in.(${tc.abbr},${oppAbbr})&season=eq.${prior}&game_type=eq.2` +
-      `&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,shots_for_pg,corsi_for_pct,corsi_for_pct_5v5`),
-    sbRows(`players?team=in.(${tc.abbr},${oppAbbr})&select=id,team`),
-    sbRows(`player_seasons?team=in.(${tc.abbr},${oppAbbr})&season=eq.${prior}&game_type=eq.2` +
-      `&select=player_id,team,games_played,toi_per_game`),
+      `&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,corsi_for_pct,corsi_for_pct_5v5`),
+    fetchEloRatings(tc, oppAbbr),
   ]);
 
   const carRow = teamSeasonRows.find(r => r.team === tc.abbr);
@@ -234,55 +205,17 @@ async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameI
   const oppGpg = oppRow.goals_for_pg ?? 0;
   const carGag = carRow.goals_ag_pg ?? 0;
   const oppGag = oppRow.goals_ag_pg ?? 0;
-  const carSF  = carRow.shots_for_pg ?? 0;
-  const oppSF  = oppRow.shots_for_pg ?? 0;
 
-  // Same scorecard as the in-season branch, minus the streak term — no
-  // such concept for a completed prior season's final record.
-  let carScore = 0, oppScore = 0;
-  if (!isPlayoff) {
-    const ptsDiff = (carRow.points ?? 0) - (oppRow.points ?? 0);
-    carScore += ptsDiff > 0 ? Math.min(ptsDiff / 20, 1) : 0;
-    oppScore += ptsDiff < 0 ? Math.min(-ptsDiff / 20, 1) : 0;
-  }
-  if (carGpg > oppGpg) carScore += 0.6; else oppScore += 0.6;
-  if (carGag < oppGag) carScore += 0.6; else oppScore += 0.6;
   // League-average default (22%) when a team's prior-season pp_pct is
-  // missing from team_seasons -- resolved once and reused below in the
-  // prompt text too, so scoring and the AI narrative never disagree on
-  // what value stood in for the missing data (they used to: scoring
-  // defaulted to 22, the prompt separately defaulted to 0, silently).
-  // Logged, not silent -- this shouldn't happen once a season's
-  // team_seasons row is fully populated (see backfill_uta_2025_team_stats.py
-  // for the one confirmed real-world case, a teamId-mapping gap).
+  // missing from team_seasons -- only feeds the narrative text now (the
+  // win% no longer comes from a scorecard that also needed this default),
+  // kept so the prompt never silently prints a bare 0%.
   if (carRow.pp_pct == null) console.error(`buildPreseasonFallback: ${tc.abbr} ${prior} pp_pct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
   if (oppRow.pp_pct == null) console.error(`buildPreseasonFallback: ${oppAbbr} ${prior} pp_pct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
   const carPP = carRow.pp_pct ?? PP_PCT_DEFAULT;
   const oppPP = oppRow.pp_pct ?? PP_PCT_DEFAULT;
-  if (carPP > oppPP) carScore += 0.4; else oppScore += 0.4;
-  if (carSF > oppSF) carScore += 0.5; else oppScore += 0.5;
-  const total = carScore + oppScore || 1;
-  const rawFraction = carScore / total;
 
-  // Roster continuity — current roster from `players.team` (live, no
-  // historical proxy needed here, unlike the backtest reconstruction),
-  // prior-season TOI from that team's own player_seasons rows.
-  const carRosterIds = new Set(playerRows.filter(p => p.team === tc.abbr).map(p => p.id));
-  const oppRosterIds = new Set(playerRows.filter(p => p.team === oppAbbr).map(p => p.id));
-  const carPriorRows = priorPlayerSeasonRows.filter(r => r.team === tc.abbr);
-  const oppPriorRows = priorPlayerSeasonRows.filter(r => r.team === oppAbbr);
-  const carContinuity = continuityFraction(carRosterIds, carPriorRows);
-  const oppContinuity = continuityFraction(oppRosterIds, oppPriorRows);
-  const validContinuities = [carContinuity, oppContinuity].filter(c => c != null);
-  // No roster data at all (shouldn't happen once players.team is
-  // populated, but defensively) -- fall back to the raw, undamped
-  // fraction rather than guessing at a dampening factor.
-  const avgContinuity = validContinuities.length > 0
-    ? validContinuities.reduce((a, b) => a + b, 0) / validContinuities.length
-    : 1;
-
-  const dampenedFraction = 0.5 + (rawFraction - 0.5) * avgContinuity;
-  const carWinPct = Math.round(dampenedFraction * 100);
+  const carWinPct = Math.round(eloWinProb(eloRatings.car, eloRatings.opp, isHome) * 100);
 
   // Corsi: reuse team_seasons, just filtered to the prior season instead
   // of the current one — same table the in-season branch already reads.
@@ -305,18 +238,18 @@ async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameI
   const expCar = clamp(Math.sqrt(Math.max(carGpg, 0.5) * Math.max(oppGag, 0.5)) + homeAdj, 1.5, 5.0).toFixed(1);
   const expOpp = clamp(Math.sqrt(Math.max(oppGpg, 0.5) * Math.max(carGag, 0.5)) - homeAdj, 1.5, 5.0).toFixed(1);
 
-  const prompt = `You are EyeWall Analytics, a ${tc.displayName} hockey analytics assistant. Write a sharp, data-driven PRESEASON analysis for ${tc.displayName} fans — no games have been played yet this season, so this is based on last season's (${prior}) final numbers, adjusted for roster turnover. 2-3 sentences only. Be specific about the numbers and be clear this is a preseason estimate, not current form. No filler. No "In this matchup" opener.
+  const prompt = `You are EyeWall Analytics, a ${tc.displayName} hockey analytics assistant. Write a sharp, data-driven PRESEASON analysis for ${tc.displayName} fans — no games have been played yet this season. The win probability below is from a live-updated Elo rating (carries over from last season, so it already reflects each team's recent trajectory); everything else is last season's (${prior}) final numbers for context. 2-3 sentences only. Be specific about the numbers and be clear this is a preseason estimate, not current form. No filler. No "In this matchup" opener.
 
 Game: ${tc.abbr} (${isHome ? 'HOME' : 'AWAY'}) vs ${oppAbbr}
-Context: Preseason estimate, based on ${prior} final standings
+Context: Preseason estimate
 
-${tc.abbr} last season (${prior}): ${carRow.points ?? '—'} pts, GF/GA per game: ${carGpg.toFixed(2)} / ${carGag.toFixed(2)}, PP%: ${carPP.toFixed(1)}%, roster continuity: ${carContinuity != null ? (carContinuity * 100).toFixed(0) + '%' : 'unknown'}
-${oppAbbr} last season (${prior}): ${oppRow.points ?? '—'} pts, GF/GA per game: ${oppGpg.toFixed(2)} / ${oppGag.toFixed(2)}, PP%: ${oppPP.toFixed(1)}%, roster continuity: ${oppContinuity != null ? (oppContinuity * 100).toFixed(0) + '%' : 'unknown'}
+${tc.abbr} last season (${prior}): ${carRow.points ?? '—'} pts, GF/GA per game: ${carGpg.toFixed(2)} / ${carGag.toFixed(2)}, PP%: ${carPP.toFixed(1)}%
+${oppAbbr} last season (${prior}): ${oppRow.points ?? '—'} pts, GF/GA per game: ${oppGpg.toFixed(2)} / ${oppGag.toFixed(2)}, PP%: ${oppPP.toFixed(1)}%
 
 Expected score (Pythagorean, from last season's rates): ${tc.abbr} ${expCar} - ${oppAbbr} ${expOpp}
-Model win probability (roster-continuity adjusted): ${tc.abbr} ${carWinPct}%
+Model win probability (Elo): ${tc.abbr} ${carWinPct}%
 
-Write the analysis now. Mention the single most decisive factor from last season, note the roster continuity level for at least one team if notably low, and a concrete expected-score range.`;
+Write the analysis now. Mention the single most decisive factor from last season and a concrete expected-score range.`;
 
   const aiResponse = await generateText(env, {
     messages: [{ role: 'user', content: prompt }],
@@ -341,10 +274,9 @@ Write the analysis now. Mention the single most decisive factor from last season
     corsiCaveat,
     generatedAt: new Date().toISOString(),
     regime: 'preseason',
-    correction: 'continuity-dampened',
+    correction: 'elo',
     isFallback: true,
     dataSeason: prior,
-    continuity: { car: carContinuity, opp: oppContinuity },
   };
 
   await kvPut(env, kvKey, result, 24 * 3600);
@@ -3038,9 +2970,9 @@ Only reference the two teams named above and the numbers given -- no player name
     const standingsSeasonId = standings[0]?.seasonId;
     if (standingsSeasonId != null && String(standingsSeasonId) !== String(tc.season)) {
       // No real current-season standings yet -- this used to just error
-      // here. Route to the validated preseason fallback (prior-season
-      // scorecard + continuity dampening) instead of blocking the user,
-      // per COMBINED_CALIBRATION_IMPLEMENTATION.md's regime pipeline.
+      // here. Route to the preseason fallback instead of blocking the
+      // user -- it needs no current-season data at all now (Elo's own
+      // rating, carried and regressed pipeline-side, works from game 1).
       return buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey);
     }
 
@@ -3145,37 +3077,21 @@ Only reference the two teams named above and the numbers given -- no player name
     const expCar  = clamp(Math.sqrt(Math.max(carGpg,0.5) * Math.max(oppGag,0.5)) + homeAdj, 1.5, 5.0).toFixed(1);
     const expOpp  = clamp(Math.sqrt(Math.max(oppGpg,0.5) * Math.max(carGag,0.5)) - homeAdj, 1.5, 5.0).toFixed(1);
 
-    // Win probability (model-only, no odds available in Worker)
-    let carScore = 0, oppScore = 0;
-    if (!isPlayoff) { // Points only matter in regular season
-      const ptsDiff = (carTeam.points ?? 0) - (oppTeam.points ?? 0);
-      carScore += ptsDiff > 0 ? Math.min(ptsDiff / 20, 1) : 0;
-      oppScore += ptsDiff < 0 ? Math.min(-ptsDiff / 20, 1) : 0;
-    }
-    if (carGpg > oppGpg) carScore += 0.6; else oppScore += 0.6;
-    if (carGag < oppGag) carScore += 0.6; else oppScore += 0.6;
-    // Same "resolve the default once, share it with the prompt text" fix
-    // as buildPreseasonFallback's carPP/oppPP (see PP_PCT_DEFAULT) — this
-    // branch's powerPlayPct comes from the live standings API response
-    // instead of team_seasons, so a null here should be rarer in practice,
-    // but the same disagreement bug (scoring defaulting to 22, the prompt
-    // separately defaulting to 0) applied here too before this fix.
+    // powerPlayPct still needed below for the AI prompt's descriptive
+    // stats, even though it no longer feeds a win% calculation directly.
     if (carTeam.powerPlayPct == null) console.error(`prediction/analyze in-season: ${tc.abbr} powerPlayPct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
     if (oppTeam.powerPlayPct == null) console.error(`prediction/analyze in-season: ${oppAbbr} powerPlayPct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
     const carPP = carTeam.powerPlayPct ?? PP_PCT_DEFAULT;
     const oppPP = oppTeam.powerPlayPct ?? PP_PCT_DEFAULT;
-    if (carPP > oppPP) carScore += 0.4;
-    else oppScore += 0.4;
-    if (carSF > oppSF) carScore += 0.5; else oppScore += 0.5; // possession
-    if (carTeam.streakCode === 'W') carScore += 0.3;
-    if (oppTeam.streakCode === 'W') oppScore += 0.3;
-    const total = carScore + oppScore || 1;
-    // Isotonic calibration applied to the raw fraction BEFORE rounding —
-    // matches exactly what was fit/validated (Brier -23%, log loss -71%
-    // on a true 2025-26 holdout, see combined_calibration_part_a_b_results.md).
-    // Only the in-season branch gets this correction — the preseason
-    // fallback below uses continuity dampening instead, never both.
-    const carWinPct = Math.round(isotonicCalibrate(carScore / total) * 100);
+
+    // Win probability -- see eyewall-pipeline/docs/elo_prediction_model_results.md
+    // for the backtest this replaces the former hand-tuned scorecard +
+    // isotonic calibration with: beats it on every metric (Brier 0.242 vs
+    // 0.321, log loss 0.677 vs 2.561, 56.5% vs 55.5% accuracy, 3,796 real
+    // games). Same fetchEloRatings()/eloWinProb() helpers buildPreseasonFallback
+    // uses above -- one consistent model for both regimes now.
+    const eloRatings = await fetchEloRatings(tc, oppAbbr);
+    const carWinPct = Math.round(eloWinProb(eloRatings.car, eloRatings.opp, isHome) * 100);
 
     const prompt = `You are EyeWall Analytics, a ${tc.displayName} hockey analytics assistant. Write a sharp, data-driven pre-game analysis for ${tc.displayName} fans. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener.
 
@@ -3229,7 +3145,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       corsiCaveat,
       generatedAt: new Date().toISOString(),
       regime: 'in-season',
-      correction: 'isotonic-calibrated',
+      correction: 'elo',
     };
 
     // Cache for 24hr (pre-game analysis refreshes daily in case of lineup changes)
