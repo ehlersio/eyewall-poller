@@ -1531,7 +1531,9 @@ describe('GET /prediction/analyze', () => {
 
   it('serves from cache without calling the AI model', async () => {
     const cached = { gameId: '123', narrative: 'cached narrative' }
-    const env = makeEnv({ CACHE: { async get(key) { return key === 'prediction:123' ? JSON.stringify(cached) : null }, async put() {} } })
+    // Team-scoped key (prediction:${gameId}:${team}) -- CAR here since this
+    // request doesn't pass ?team=, same as DEFAULT_TEAM_ABBR's fallback.
+    const env = makeEnv({ CACHE: { async get(key) { return key === 'prediction:123:CAR' ? JSON.stringify(cached) : null }, async put() {} } })
     mockFetchWithAI('should not be called')
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
@@ -1592,6 +1594,36 @@ describe('GET /prediction/analyze', () => {
     expect(body.oppAbbr).toBe('NYI')
     expect(body.narrative).toBe('NJD take.')
     expect(putCalls).toContain('schedule:NJD:20252026') // fetched schedule also cached for next time
+  })
+
+  it('caches under a team-scoped key, not a bare gameId, so two teams viewing the same game get independently cached/framed responses', async () => {
+    // The actual bug reported live: MatchupDetail.jsx's fetch never sent
+    // team= at all, so getTeamConfig() always fell back to the default
+    // team (CAR) regardless of which team the user had selected --
+    // /prediction/analyze then searched CAR's schedule for a game that
+    // was never in it, and "Game not found in schedule" fired for every
+    // team but CAR, unconditionally (cache warm or not -- the schedule-
+    // fetch fix above was necessary but not sufficient on its own). Fixed
+    // on both ends: the frontend now sends team=, and this asserts the
+    // matching half -- a bare `prediction:${gameId}` key would let
+    // whichever team requests a shared game first silently determine the
+    // oppAbbr/isHome/carWinPct framing every other team's fans see for
+    // that same game, the same class of bug /summary/narrative's own
+    // carAbbr-scoped key already guards against.
+    const cachedForTor = { gameId: '789', oppAbbr: 'NJD', narrative: 'TOR-framed take' }
+    const env = makeEnv({
+      CACHE: {
+        async get(key) { return key === 'prediction:789:TOR' ? JSON.stringify(cachedForTor) : null },
+        async put() {},
+      },
+    })
+    mockFetchWithAI('should not be called')
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=789&team=TOR'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=789&team=TOR')
+    )
+    expect(await res.json()).toEqual(cachedForTor)
+    expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
   // ── Elo win probability (2026-09) ──────────────────────────────────
@@ -1794,7 +1826,7 @@ describe('GET /prediction/analyze', () => {
     expect(body.regime).toBe('in-season')
     expect(body.correction).toBe('elo')
 
-    const cached = JSON.parse(await env.CACHE.get('prediction:123'))
+    const cached = JSON.parse(await env.CACHE.get('prediction:123:CAR'))
     expect(cached.narrative).toBe('CAR should win this one comfortably.')
   })
 
