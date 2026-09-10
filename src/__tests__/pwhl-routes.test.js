@@ -897,6 +897,24 @@ describe('POST /pwhl/scout', () => {
     expect((await res.json()).error).toMatch(/empty/i)
   })
 
+  it('instructs the model not to invent details beyond the given stats', async () => {
+    // This was the one narrative prompt in the whole codebase with no
+    // "don't invent" guardrail -- every other one (H2H narratives across
+    // all 3 leagues, NHL's game/period summaries) has one. Found during
+    // the 2026-09 audit that also fixed /summary/narrative's period bug.
+    const env = makeEnv()
+    mockFetchWithAI('A dynamic playmaker with elite vision.')
+    await handlePWHL(
+      makeRequest('/pwhl/scout', {
+        method: 'POST',
+        body: { name: 'Marie-Philip Poulin', position: 'F', isGoalie: false, seasonLabel: '2025-26', stats: { gp: 20, goals: 15, assists: 18, points: 33 } },
+      }),
+      env, makeCtx(), new URL('https://example.com/pwhl/scout')
+    )
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).toMatch(/do not invent awards, games, injuries, teammates/i)
+  })
+
   it('502s when the AI call throws', async () => {
     const env = makeEnv()
     mockFetchWithFailingAI()

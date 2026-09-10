@@ -3190,9 +3190,19 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     const carAbbr  = stats.carAbbr || 'CAR';
     const isPlayoff = stats.isPlayoff || false;
 
-    const goalsSummary = (stats.goals || []).map(g =>
-      `${g.isCar ? carAbbr : oppAbbr} goal by ${g.scorerName || 'unknown'} at ${g.time || '—'} (${(g.strength || 'EV').toUpperCase()})`
-    ).join('; ') || 'no goals';
+    // Game summaries span all 3+ periods, so a goal's period matters for
+    // an accurate narrative -- without it, both Gemma and DeepSeek were
+    // confirmed (side-by-side test, 2026-09) to just invent one ("the
+    // decisive strike in the third", "second-period strike") rather than
+    // admit they didn't know. The client already sends g.period (see
+    // PeriodSummary.jsx's statsPayload) -- this was available and simply
+    // wasn't being read. Omitted for period-level narratives, where every
+    // goal in this same list is already understood to be from the one
+    // period the prompt names (stats.periodLabel below).
+    const goalsSummary = (stats.goals || []).map(g => {
+      const when = isGame && g.period != null ? `P${g.period} ${g.time || '—'}` : (g.time || '—');
+      return `${g.isCar ? carAbbr : oppAbbr} goal by ${g.scorerName || 'unknown'} at ${when} (${(g.strength || 'EV').toUpperCase()})`;
+    }).join('; ') || 'no goals';
 
     // Build explicit allowed-names list from goal scorer data only
     const confirmedNames = [...new Set(

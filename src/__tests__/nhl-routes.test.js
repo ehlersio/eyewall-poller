@@ -1880,6 +1880,48 @@ describe('POST /summary/narrative', () => {
     expect(res.status).toBe(200)
     expect(aiCalls(globalThis.fetch)).toHaveLength(2)
   })
+
+  it('includes each goal\'s period in a full-game prompt, so the model states it instead of guessing', async () => {
+    // Regression for a real, confirmed bug: without a period, a side-by-side
+    // model comparison found BOTH Gemma and DeepSeek inventing one anyway
+    // ("the decisive strike in the third") rather than admitting they didn't
+    // know -- see the 2026-09 shared.js model evaluation. The client already
+    // sends g.period (PeriodSummary.jsx's statsPayload); this route was
+    // simply not reading it.
+    const env = makeEnv()
+    mockFetchWithAI('Game summary text.')
+    await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=game&carAbbr=CAR', {
+        method: 'POST',
+        body: {
+          carGoals: 1, oppGoals: 0, corsiForPct: 55, carSOG: 10, oppSOG: 8, carHits: 5, carFOPct: 50,
+          goals: [{ isCar: true, scorerName: 'Sebastian Aho', time: '6:12', period: 2, strength: 'ev' }],
+        },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=game&carAbbr=CAR')
+    )
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).toMatch(/CAR goal by Sebastian Aho at P2 6:12 \(EV\)/)
+  })
+
+  it('omits the period in a single-period prompt, where every goal is already understood to be from that period', async () => {
+    const env = makeEnv()
+    mockFetchWithAI('Period summary text.')
+    await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=2&carAbbr=CAR', {
+        method: 'POST',
+        body: {
+          carGoals: 1, oppGoals: 0, corsiForPct: 55, carSOG: 10, oppSOG: 8, carHits: 5, carFOPct: 50, penaltyCount: 0, carPenaltyCount: 0,
+          periodLabel: '2nd Period',
+          goals: [{ isCar: true, scorerName: 'Sebastian Aho', time: '6:12', period: 2, strength: 'ev' }],
+        },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=2&carAbbr=CAR')
+    )
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).toMatch(/CAR goal by Sebastian Aho at 6:12 \(EV\)/)
+    expect(promptSent).not.toMatch(/P2 6:12/)
+  })
 })
 
 // ── Odds Persistence Writer (2026-07) ──────────────────────────────────

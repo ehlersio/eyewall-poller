@@ -1672,7 +1672,7 @@ Player: ${name} (${position})
 Season: ${seasonLabel} PWHL Regular Season
 Stats: ${statsLine}
 
-Write a 2-3 sentence scouting report highlighting their strengths, style of play, and impact this season. Be specific and use the stats. Do not use generic filler phrases. Write in plain text, no markdown.`;
+Write a 2-3 sentence scouting report highlighting their strengths, style of play, and impact this season. Be specific and use the stats given above — do not invent awards, games, injuries, teammates, or any other detail not in this data. If a stat is missing ('—'), skip it or say it isn't available rather than guessing a number. Do not use generic filler phrases. Write in plain text, no markdown.`;
 
     try {
       const aiResponse = await generateText(env, {
