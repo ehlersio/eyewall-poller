@@ -1550,6 +1550,50 @@ describe('GET /prediction/analyze', () => {
     expect((await res.json()).error).toMatch(/not found in schedule/i)
   })
 
+  it('fetches the schedule live and caches it when the cache is cold for a non-default team (regression: "Game not found" in production for every team but CAR)', async () => {
+    // CAR's schedule cache stays warm forever via poll()'s own cron
+    // refresh; every other team's cache only gets populated by a recent,
+    // unrelated /schedule?team=X request -- this route used to just read
+    // the cache passively (`kvGet(...) || []`) and error when it was cold,
+    // which is the *default* state for every non-CAR team, not an edge
+    // case. Confirmed live in production for NJD before this fix.
+    const scheduleGames = [
+      { id: 456, gameType: 2, gameDate: '2025-10-15', homeTeam: { abbrev: 'NJD' }, awayTeam: { abbrev: 'NYI' } },
+    ]
+    const standings = [
+      { teamAbbrev: { default: 'NJD' }, seasonId: 20252026, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 30, goalAgainst: 30, powerPlayPct: 20, penaltyKillPct: 78, shotsForPerGame: 30, shotsAgainstPerGame: 30 },
+      { teamAbbrev: { default: 'NYI' }, seasonId: 20252026, gamesPlayed: 10, wins: 4, losses: 6, otLosses: 0, points: 8, goalFor: 26, goalAgainst: 32, powerPlayPct: 18, penaltyKillPct: 74, shotsForPerGame: 28, shotsAgainstPerGame: 32 },
+    ]
+    const putCalls = []
+    const env = makeEnv({
+      CACHE: {
+        async get(key) { return key === 'standings' ? JSON.stringify(standings) : null }, // schedule cache cold, like every non-CAR team by default
+        async put(key) { putCalls.push(key) },
+      },
+    })
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      if (u.includes('openrouter.ai')) {
+        return Promise.resolve({ ok: true, json: async () => ({ choices: [{ message: { content: 'NJD take.' } }] }) })
+      }
+      if (u.includes('club-schedule-season/NJD/20252026')) {
+        return Promise.resolve({ ok: true, json: async () => ({ games: scheduleGames }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=456&team=NJD'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=456&team=NJD')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.oppAbbr).toBe('NYI')
+    expect(body.narrative).toBe('NJD take.')
+    expect(putCalls).toContain('schedule:NJD:20252026') // fetched schedule also cached for next time
+  })
+
   // ── Elo win probability (2026-09) ──────────────────────────────────
   // Regime split: standings pinned to last season -> preseason fallback;
   // real current-season standings -> in-season branch. Both now read the
