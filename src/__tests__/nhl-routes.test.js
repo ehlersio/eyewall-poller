@@ -1550,11 +1550,12 @@ describe('GET /prediction/analyze', () => {
     expect((await res.json()).error).toMatch(/not found in schedule/i)
   })
 
-  // ── Combined Prediction Calibration (2026-07) ──────────────────────
-  // Regime split: standings pinned to last season -> preseason fallback
-  // (prior-season scorecard + continuity dampening); real current-season
-  // standings -> existing scorecard + isotonic calibration. Never both.
-  // See COMBINED_CALIBRATION_IMPLEMENTATION.md / TRUE_PRESEASON_BACKTEST_RESULTS.md.
+  // ── Elo win probability (2026-09) ──────────────────────────────────
+  // Regime split: standings pinned to last season -> preseason fallback;
+  // real current-season standings -> in-season branch. Both now read the
+  // same team_elo_ratings table and share fetchEloRatings()/eloWinProb() --
+  // no separate calibration or continuity-dampening step in either regime
+  // anymore. See eyewall-pipeline/docs/elo_prediction_model_results.md.
 
   function mockSupabaseByTable(responses, aiText = 'mock AI response') {
     globalThis.fetch = vi.fn((url) => {
@@ -1569,7 +1570,7 @@ describe('GET /prediction/analyze', () => {
     })
   }
 
-  it('routes to the preseason fallback (prior-season scorecard + continuity dampening) instead of erroring when standings are still pinned to last season', async () => {
+  it('routes to the preseason fallback (Elo, from team_elo_ratings) instead of erroring when standings are still pinned to last season', async () => {
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     // resolveNHLSeason is mocked to 20252026 above; standings still carrying
     // last season's seasonId is exactly the "NHL's /standings/now hasn't
@@ -1582,18 +1583,13 @@ describe('GET /prediction/analyze', () => {
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
     })
     mockSupabaseByTable({
-      // CAR wins points/GA/PP, BOS wins GF/SF -- a non-degenerate split
       'team_seasons': [
         { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 24, shots_for_pg: 28 },
         { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 20, shots_for_pg: 31 },
       ],
-      'players?': [
-        { id: 1, team: 'CAR' }, { id: 2, team: 'CAR' }, { id: 3, team: 'BOS' },
-      ],
-      'player_seasons': [
-        { player_id: 1, team: 'CAR', games_played: 82, toi_per_game: 1200 },
-        { player_id: 99, team: 'CAR', games_played: 82, toi_per_game: 900 }, // traded away, not on current roster
-        { player_id: 3, team: 'BOS', games_played: 82, toi_per_game: 1000 },
+      'team_elo_ratings': [
+        { team: 'CAR', rating: 1550 },
+        { team: 'BOS', rating: 1480 },
       ],
     }, 'Preseason take.')
 
@@ -1605,24 +1601,19 @@ describe('GET /prediction/analyze', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.regime).toBe('preseason')
-    expect(body.correction).toBe('continuity-dampened')
+    expect(body.correction).toBe('elo')
     expect(body.isFallback).toBe(true)
     expect(body.dataSeason).toBe(20242025)
-    // CAR continuity: player 1 retained (98,400 of 172,200 prior TOI) = 0.5714...
-    expect(body.continuity.car).toBeCloseTo(0.5714, 3)
-    // BOS continuity: only prior player (3) still on roster = 1.0
-    expect(body.continuity.opp).toBeCloseTo(1.0, 3)
-    // raw fraction 1.25/2.35 = 0.53191..., dampened by avg continuity 0.7857
-    // -> 0.5 + (0.53191-0.5)*0.7857 = 0.52507 -> rounds to 53
-    expect(body.carWinPct).toBe(53)
+    // CAR home (1550+35 home advantage) vs BOS away (1480):
+    // 1/(1+10^((1480-1585)/400)) = 0.6850... -> rounds to 65.
+    expect(body.carWinPct).toBe(65)
     expect(body.h2hRecord).toMatch(/no games played yet/i)
     expect(body.narrative).toBe('Preseason take.')
-    // No team's prediction ever hits both corrections -- the regime check
-    // above is a hard early-return in nhl.js, and this test's own
-    // correction: 'continuity-dampened' assertion together with the
-    // in-season happy-path test's correction: 'isotonic-calibrated'
-    // assertion below are mutually exclusive by construction, not just by
-    // reading the source.
+    // No team's prediction ever hits both regimes -- the standings-staleness
+    // check above is a hard early-return in nhl.js, and this test's own
+    // regime: 'preseason' assertion together with the in-season happy-path
+    // test's regime: 'in-season' assertion below are mutually exclusive by
+    // construction, not just by reading the source.
   })
 
   it('returns an error rather than guessing when neither team has prior-season team_seasons data', async () => {
@@ -1644,13 +1635,15 @@ describe('GET /prediction/analyze', () => {
     expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
-  it('defaults a missing prior-season pp_pct to league-average (22%) identically in scoring and the AI prompt text', async () => {
-    // Regression for a real bug: scoring used to default a missing pp_pct
-    // to 22 (`?? 22`) while the prompt text separately defaulted to 0
-    // (`?? 0`) -- same missing-data case, two different silent defaults,
-    // so the model scored a team as league-average while telling the AI
+  it('defaults a missing prior-season pp_pct to league-average (22%) in the AI prompt text', async () => {
+    // Regression for a real bug: the prompt text used to default a missing
+    // pp_pct to 0 (`?? 0`) while scoring separately defaulted to 22 (`?? 22`)
+    // -- same missing-data case, two different silent defaults, so the old
+    // scorecard scored a team as league-average while telling the AI
     // narrative generator it was shut out on the power play. Both paths
-    // now resolve the default once (PP_PCT_DEFAULT) and share it.
+    // resolve the default once (PP_PCT_DEFAULT) and share it -- PP% no
+    // longer feeds carWinPct at all (that's Elo now), but this default
+    // still matters for what the AI narrative is told.
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [
       { teamAbbrev: { default: 'CAR' }, seasonId: 20242025, gamesPlayed: 82, points: 100 },
@@ -1666,13 +1659,9 @@ describe('GET /prediction/analyze', () => {
         { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: null, shots_for_pg: 28 },
         { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 21, shots_for_pg: 31 },
       ],
-      'players?': [
-        { id: 1, team: 'CAR' }, { id: 2, team: 'CAR' }, { id: 3, team: 'BOS' },
-      ],
-      'player_seasons': [
-        { player_id: 1, team: 'CAR', games_played: 82, toi_per_game: 1200 },
-        { player_id: 99, team: 'CAR', games_played: 82, toi_per_game: 900 },
-        { player_id: 3, team: 'BOS', games_played: 82, toi_per_game: 1000 },
+      'team_elo_ratings': [
+        { team: 'CAR', rating: 1520 },
+        { team: 'BOS', rating: 1500 },
       ],
     }, 'Preseason take.')
 
@@ -1683,12 +1672,10 @@ describe('GET /prediction/analyze', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    // Scoring: carPP (defaulted to 22) > oppPP (21) -- CAR gets the PP%
-    // point, same as if a real pp_pct > 21 had been stored. ptsDiff(+0.25)
-    // + GA(+0.6) + PP(+0.4) = 1.25 for CAR vs. GF(+0.6) + SF(+0.5) = 1.1
-    // for BOS; total 2.35, raw fraction 0.531914..., dampened by the same
-    // 0.785714 avg continuity as the sibling preseason test -> 53.
-    expect(body.carWinPct).toBe(53)
+    // CAR home (1520+35) vs BOS away (1500): 1/(1+10^((1500-1555)/400))
+    // = 0.5786... -> rounds to 58. Unaffected by the pp_pct default --
+    // that's the point of this test now (see prompt-text assertion below).
+    expect(body.carWinPct).toBe(58)
     // Prompt text: both teams' PP% lines use the same 22.0% default CAR's
     // missing value resolved to -- not a separate, disagreeing 0.0%.
     const promptSent = aiPrompt(globalThis.fetch)[0].content
@@ -1727,8 +1714,19 @@ describe('GET /prediction/analyze', () => {
     })
     // team_seasons has no rows for either team yet (e.g. before the
     // Session 52 Corsi rollup has run for this season) — route must fall
-    // back to the SOG-share proxy rather than erroring.
-    mockFetchWithAI('CAR should win this one comfortably.', () => Promise.resolve({ ok: true, json: async () => [] }))
+    // back to the SOG-share proxy rather than erroring. team_elo_ratings
+    // gets CAR/BOS ratings; both requests share one mock fetch, matched by
+    // URL substring.
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      if (u.includes('openrouter.ai')) {
+        return Promise.resolve({ ok: true, json: async () => ({ choices: [{ message: { content: 'CAR should win this one comfortably.' } }] }) })
+      }
+      if (u.includes('team_elo_ratings')) {
+        return Promise.resolve({ ok: true, json: async () => [{ team: 'CAR', rating: 1600 }, { team: 'BOS', rating: 1400 }] })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
 
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
@@ -1745,31 +1743,26 @@ describe('GET /prediction/analyze', () => {
     expect(body.carCF).toBe('50.8')
     expect(body.corsiForPct).toEqual({ car: 50.8, opp: expect.any(Number) })
     expect(body.corsiCaveat).toMatch(/shots-on-goal share only/i)
-    // CAR wins every scorecard factor here -> raw fraction is exactly 1.0
-    // (would have been carWinPct: 100 pre-calibration). Isotonic clips
-    // x=1.0 to the fitted curve's top y-threshold (0.68888..., refit
-    // 2026-07-24 against corrected game_log pp_goals/pp_opps -- see
-    // ISOTONIC_RECALIBRATION_CADENCE.md), landing on 69 -- a concrete
-    // demonstration that the calibration fix is wired in, not just
-    // present in the source.
-    expect(body.carWinPct).toBe(69)
+    // CAR home (1600+35) vs BOS away (1400): 1/(1+10^((1400-1635)/400))
+    // = 0.7910... -> rounds to 79 -- a concrete demonstration Elo is wired
+    // in, not just present in the source.
+    expect(body.carWinPct).toBe(79)
     expect(body.regime).toBe('in-season')
-    expect(body.correction).toBe('isotonic-calibrated')
+    expect(body.correction).toBe('elo')
 
     const cached = JSON.parse(await env.CACHE.get('prediction:123'))
     expect(cached.narrative).toBe('CAR should win this one comfortably.')
   })
 
-  it('defaults a missing in-season powerPlayPct to league-average (22%) identically in scoring and the AI prompt text', async () => {
+  it('defaults a missing in-season powerPlayPct to league-average (22%) in the AI prompt text', async () => {
     // Same disagreement bug as buildPreseasonFallback's pp_pct default
-    // (see the sibling test above), fixed the same way in this branch:
-    // scoring already defaulted a missing powerPlayPct to 22, but the
-    // prompt text separately defaulted to 0. Both now share PP_PCT_DEFAULT.
+    // (see the sibling test above): powerPlayPct used to default to 22 for
+    // scoring but 0 in the prompt text. PP% no longer feeds carWinPct at
+    // all (that's Elo now, from team_elo_ratings) -- this test now only
+    // covers the prompt-text default, which still matters for what the AI
+    // narrative is told.
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [
-      // Every other scorecard factor tied (points, GF/GA, SOG, no streak)
-      // so PP% is the only thing that can move carScore off 0 -- isolates
-      // the default's effect precisely.
       { teamAbbrev: { default: 'CAR' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 30, goalAgainst: 30, powerPlayPct: null, penaltyKillPct: 80, shotsForPerGame: 30, shotsAgainstPerGame: 30 },
       { teamAbbrev: { default: 'BOS' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 30, goalAgainst: 30, powerPlayPct: 21, penaltyKillPct: 76, shotsForPerGame: 30, shotsAgainstPerGame: 30 },
     ]
@@ -1785,15 +1778,10 @@ describe('GET /prediction/analyze', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    // carPP defaults to 22 > oppPP 21 -- CAR gets the sole 0.4 scoring
-    // point (every other factor tied to oppScore per the strict >/< ties
-    // going to else). carScore=0.4, oppScore=1.7 (GF tie 0.6 + GA tie 0.6
-    // + SOG tie 0.5), raw fraction 0.4/2.1=0.190476 -- lands in the fitted
-    // isotonic curve's flat plateau (0.166667-0.483871, both endpoints
-    // 0.523622), so carWinPct = round(52.3622) = 52 regardless of small
-    // float drift within that plateau.
-    expect(body.carWinPct).toBe(52)
     expect(body.regime).toBe('in-season')
+    // Both teams' ratings default to 1500 (no team_elo_ratings mock here) --
+    // home advantage alone decides it, unaffected by the pp_pct default.
+    expect(body.carWinPct).toBeGreaterThan(50)
     const promptSent = aiPrompt(globalThis.fetch)[0].content
     expect(promptSent).toMatch(/CAR stats:[\s\S]*PP%: 22\.0%/)
     expect(promptSent).not.toMatch(/CAR stats:[\s\S]{0,120}PP%: 0\.0%/)
