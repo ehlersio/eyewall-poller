@@ -24,14 +24,29 @@
  * serves the correct value, but nhl.js/pwhl.js's *own* internal use of
  * season still needs its yearly manual flip as before.
  *
- * IMPORTANT — UNTESTED BOUNDARY CASE: the "does this candidate season
- * actually have data" check below has only been validated against the
- * *offseason* case (no games in progress; standings/now and bootstrap
- * both fall back to the last season with real data). The behavior at the
- * real Sept/Oct 2026 season-start boundary — when a new season exists in
- * the schedule but has zero games played yet — has NOT been observed.
- * If auto-detection misbehaves at that boundary, use the manual override
- * below rather than redeploying under time pressure:
+ * NHL BOUNDARY CASE — resolved 2026-09: resolveNHLSeason()'s original
+ * gamesPlayed-based check only ever flips once real games have been
+ * played, which is far too late for schedule/roster-facing UI (the
+ * frontend's TEAM_CONFIG.season, used for the Schedule tab and rosters,
+ * not just stats). nextSeasonHasImminentSchedule() covers that gap by
+ * separately checking whether the season AFTER the gamesPlayed-accepted
+ * one already has a published schedule with its first game (preseason
+ * counts) within SCHEDULE_LOOKAHEAD_DAYS -- verified live 2026-09-11: with
+ * no override set, this correctly resolves to 20262027 (CAR's real
+ * preseason opener 9 days out) even though standings/now still only has
+ * real 20252026 data. Still genuinely unverified: the transition all the
+ * way through to gamesPlayed > 0 actually landing once real regular-
+ * season games are played in late Sept/Oct, and the frontend's
+ * _getTeamStats() prior-season-stats fallback behaving correctly through
+ * that whole window (see eyewallanalytics's nhlApi.js) -- worth a
+ * deliberate check-in once real games start.
+ *
+ * PWHL remains as it was -- resolvePWHLSeason() uses HockeyTech's own
+ * season_type field (which already has a real "preseason" value) rather
+ * than a games-played count, a different mechanism not touched here.
+ *
+ * If auto-detection ever misbehaves for either league, use the manual
+ * override below rather than redeploying under time pressure:
  *
  *   wrangler kv key put --binding=CACHE "config:season:nhl:override" '"20262027"'
  *   wrangler kv key put --binding=CACHE "config:season:pwhl:override" \
@@ -57,7 +72,48 @@ const FALLBACK_AHL = { seasonId: 90, seasonType: 'regular' };
 
 const TTL_SECONDS = 6 * 3600; // re-check every 6 hours
 
+// Reference team for the schedule look-ahead below — arbitrary. Every
+// team's schedule for a given season is published at essentially the same
+// time, so any one team is an equally good proxy for "has next season's
+// schedule been published, and how far off is its first game." Not
+// imported from nhl.js's own DEFAULT_TEAM_ABBR — that would create a
+// circular import (nhl.js already imports resolveNHLSeason from this
+// module), and this module is deliberately self-contained (see the
+// NOTE ON SCOPE below).
+const SCHEDULE_LOOKAHEAD_TEAM = 'CAR';
+// Treat next season as current once its first scheduled game (preseason
+// counts, not just regular season) is within this many days. Gives
+// schedule/roster-facing UI a real head start instead of waiting for
+// actual games to be played — see resolveNHLSeason's comment for why
+// gamesPlayed alone is too late a signal for that use case.
+const SCHEDULE_LOOKAHEAD_DAYS = 21;
+
 // ── NHL ───────────────────────────────────────────────────────
+
+// Does `seasonId` have a published schedule with its first game (any
+// gameType, preseason included) within SCHEDULE_LOOKAHEAD_DAYS of today?
+// Never throws — any failure (bad response, network error, no schedule
+// published yet) resolves false, same "don't guess" posture as the rest
+// of this module.
+export async function nextSeasonHasImminentSchedule(seasonId) {
+  try {
+    const res = await fetch(`${NHL_BASE}/club-schedule-season/${SCHEDULE_LOOKAHEAD_TEAM}/${seasonId}`);
+    if (!res.ok) return false;
+    const data = await res.json();
+    const games = data?.games || [];
+    if (!games.length) return false;
+    const firstDate = games.reduce(
+      (min, g) => (g.gameDate && g.gameDate < min ? g.gameDate : min),
+      games[0].gameDate
+    );
+    if (!firstDate) return false;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() + SCHEDULE_LOOKAHEAD_DAYS);
+    return new Date(firstDate) <= cutoff;
+  } catch {
+    return false;
+  }
+}
 
 export async function resolveNHLSeason(env) {
   const override = await kvGet(env, 'config:season:nhl:override');
@@ -74,15 +130,38 @@ export async function resolveNHLSeason(env) {
     const candidate = rows[0]?.seasonId;
     const gamesPlayed = rows.reduce((sum, r) => sum + (r.gamesPlayed || 0), 0);
 
-    if (!candidate || gamesPlayed === 0) {
+    // gamesPlayed > 0 only ever flips once REAL games have been played —
+    // correct for "does this season have real stats," but far too late
+    // for schedule/roster-facing UI, which should show the new season
+    // once its schedule exists and is imminent, not once it's underway.
+    // The look-ahead below covers that gap: it always checks one season
+    // past whatever gamesPlayed accepted (or the fallback, if it didn't),
+    // since that's the only season that could plausibly be imminent.
+    let resolved = null;
+    if (candidate && gamesPlayed > 0) {
+      resolved = String(candidate);
+    } else {
       console.warn(
         `NHL season resolve: candidate=${candidate} totalGamesPlayed=${gamesPlayed} — ` +
-        `no real data behind this candidate, using fallback ${FALLBACK_NHL_SEASON}`
+        `no real data behind this candidate, checking look-ahead before falling back`
       );
+    }
+
+    const base = resolved || FALLBACK_NHL_SEASON;
+    const nextCandidate = String(Number(base) + 10001);
+    if (await nextSeasonHasImminentSchedule(nextCandidate)) {
+      resolved = nextCandidate;
+    }
+
+    if (!resolved) {
+      // No live candidate AND next season isn't imminent yet — same
+      // "don't cache a guess, keep re-checking every request" posture as
+      // before this change, so a genuine live transition isn't masked by
+      // a stale cached fallback for up to TTL_SECONDS.
+      console.warn(`NHL season resolve: using fallback ${FALLBACK_NHL_SEASON}`);
       return FALLBACK_NHL_SEASON;
     }
 
-    const resolved = String(candidate);
     await kvPut(
       env, 'config:season:nhl',
       { seasonId: resolved, resolvedAt: new Date().toISOString(), source: 'live' },
