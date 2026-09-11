@@ -28,7 +28,7 @@
  *     see AHL_BUILD_BRIEF.md's explicit scope notes.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, normalizeLink, recordHealth } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, subId, deriveGameStatus, normalizeLink, recordHealth } from './shared.js';
 import { resolveAHLSeason, getAllAHLSeasonTypes, AHL_HT_BASE, AHL_HT_KEY, AHL_HT_HDR } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -430,12 +430,14 @@ async function broadcastAHL(env, payload, teamKey, eventType) {
 
   const results = await Promise.all(targets.map(s => sendPush(s, payload, env)));
 
-  const expiredEndpoints = new Set(
-    targets.filter((_, i) => results[i] === 'expired').map(s => s.endpoint)
+  // subId() covers both Web Push (endpoint-keyed) and native iOS
+  // (token-keyed) subscribers -- see nhl.js's broadcast() for the same fix.
+  const expiredIds = new Set(
+    targets.filter((_, i) => results[i] === 'expired').map(subId)
   );
-  if (expiredEndpoints.size > 0) {
+  if (expiredIds.size > 0) {
     const allSubs = (await kvGet(env, 'push:subs')) || [];
-    const active = allSubs.filter(s => !expiredEndpoints.has(s.endpoint));
+    const active = allSubs.filter(s => !expiredIds.has(subId(s)));
     await kvPut(env, 'push:subs', active, 365 * 24 * 3600);
   }
   console.log(`[AHL push] results: ${results.join(', ')}`);

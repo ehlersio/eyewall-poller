@@ -133,6 +133,7 @@ Test files:
 - `src/__tests__/nhl-routes.test.js` — `handleNHL`'s routes: a representative slice of read-proxy routes, all `POLL_SECRET`-gated mutating/ingest routes (asserting actual KV mutations/merge logic, not just status codes), and the AI-calling routes (`/prediction/analyze`, `/summary/narrative`, `/team-seasons/head-to-head/narrative`). `/atom/ingest` is covered for both real Atom and plain-RSS-format sources (Session: news ingestion investigation — the route used to assume every source was true Atom, silently parsing 0 items out of any RSS-format feed).
 - `src/__tests__/pwhl-routes.test.js` — `handlePWHL`'s equivalent: `/pwhl/standings`'s enrichment logic, the `POLL_SECRET`-gated cache-bust/ingest routes, the AI-calling routes (`/pwhl/scout`, `/pwhl/summary/narrative`, `/pwhl/prediction`, `/pwhl/team-seasons/head-to-head/narrative`), `/pwhl/preview`'s gameCenterPreview normalization, `/pwhl/summary`'s gameSummary normalization (venue, officials, Head-Coach-only coach filtering), `/pwhl/player/career`'s profile fields (bio HTML-to-plain-text extraction, `is_primary` photo selection, `display_drafts`-gated draft data, most-recent-first game log), and `/pwhl/transactions`'s normalization (flat list, ignores the `num_results` section).
 - `src/__tests__/ahl-routes.test.js` (added 2026-08, AHL Phase 1) — `AHL_TEAM_CODES`'s 32-team-plus-historical-`BRI`-entry shape, and `/ahl/standings` through `/ahl/team-season-summary` (the 7 foundation routes): cache-hit short-circuit, the no-OT-split L10/streak enrichment, graceful degradation when only the game-log fetch fails, and `/ahl/team-season-summary`'s deliberate absence of a hits/faceoff/penalties section. **Phases 2–6 (player detail, game/box-score, team-seasons, news, live tracking) have no test coverage, and ECHL has no test file at all** — see [AHL & ECHL](#ahl--echl) above.
+- `src/__tests__/apns-push.test.js` (added 2026-09, native iOS push) — `subId()`'s token-over-endpoint precedence, `sendPush()`'s platform dispatch, and `sendAPNsPush()` itself: real ES256 JWT signing + the actual APNs request shape (host selection by `APNS_ENV`, `apns-topic`/`apns-push-type` headers, `aps.alert` + merged custom data body), the config-missing guard, 410→`'expired'` mapping, and the KV-cached-JWT reuse path. Uses a disposable P-256 keypair generated fresh per run (Node's `crypto.generateKeyPairSync`) — not a real APNs credential. Real end-to-end delivery is still unverified against Apple's actual push gateway pending `APNS_KEY_ID`/`APNS_TEAM_ID`/`APNS_AUTH_KEY` (see [Secrets](#secrets)) and a physical-device test build.
 
 The remaining ~35 plain read-proxy routes (parse params → cache check → `sbRows()`/fetch → cache write → JSON) all follow the same shape already covered here and are mechanical to extend if ever needed — that count is NHL/PWHL only; the AHL/ECHL equivalent extension is a separate, still-open gap (previous paragraph).
 
@@ -156,6 +157,9 @@ Set via `wrangler secret put <NAME>`. Never commit values.
 | `VAPID_PRIVATE_KEY` | Web Push VAPID private key |
 | `VAPID_PUBLIC_KEY` | Web Push VAPID public key |
 | `VAPID_SUBJECT` | Web Push contact (`mailto:...`) |
+| `APNS_KEY_ID` | Native iOS push (added 2026-09, not yet set — see `shared.js`'s `sendAPNsPush()`): the Key ID for the APNs Auth Key (.p8) from Certificates, Identifiers & Profiles → Keys on the Apple Developer portal |
+| `APNS_TEAM_ID` | Native iOS push: Apple Developer Team ID (already on file for code signing — `MHTBPZT59D`, see `ios/App/App.xcodeproj/project.pbxproj`'s `DEVELOPMENT_TEAM`) |
+| `APNS_AUTH_KEY` | Native iOS push: the .p8 auth key's full PEM text (`-----BEGIN PRIVATE KEY-----...`) |
 | `NHL_SEASON` | **No longer read anywhere in this repo as of 2026-07.** Season resolution is entirely handled by `seasons.js`, whose own fallback is a hardcoded constant, not this secret. Kept here only because `eyewall-pipeline`'s `db.py` still reads a secret of the same name as *its* fallback — that's a separate repo/secret, not this one. Safe to leave this one stale or eventually remove it. |
 | `ODDS_API_KEY` | The Odds API key for game odds |
 | `X_ACCESS_SECRET` | X (Twitter) OAuth access secret |
@@ -192,6 +196,8 @@ Non-secret vars live in `wrangler.toml` under `[vars]` or in the Cloudflare dash
 | Variable | Description |
 |----------|-------------|
 | `VAPID_PUBLIC_KEY` | Also set here for scheduled trigger access |
+| `APNS_ENV` | Native iOS push: `production` or `sandbox` (default). Must match the app's own `aps-environment` entitlement — still `development`/sandbox as of this writing, so leave unset until shipping a production build |
+| `APNS_BUNDLE_ID` | Native iOS push: defaults to `com.eyewallanalytics.app` (the app's bundle ID) if unset |
 
 ## KV Namespace
 
@@ -211,7 +217,8 @@ Key patterns:
 | `teamstats:{ABBR}` | 10min | NHL team summary stats |
 | `news:{ABBR}` | 30min | NHL team news |
 | `pp_units:all` | 4hr | PP/PK unit rosters |
-| `push:subs` | 1yr | Web push subscriptions |
+| `push:subs` | 1yr | Push subscriptions — Web Push (`endpoint`+`keys`) and, as of 2026-09, native iOS (`platform: 'ios'` + APNs device `token`) share this one array; `sendPush()`/`broadcast()` branch on `sub.platform` |
+| `apns:jwt` | 55min | Cached APNs auth JWT (ES256, signed with `APNS_AUTH_KEY`) — Apple asks clients not to mint a fresh one per request; see `shared.js`'s `buildAPNsJWT()` |
 | `pwhl:standings:{season}` | 1hr | PWHL standings |
 | `pwhl:players:{teamId}:{season}` | 1hr | PWHL roster + stats |
 | `pwhl:shots:{teamId}:{season}` | 6hr | PWHL shot events |
@@ -286,8 +293,8 @@ Key patterns:
 | `GET` | `/nhl/today` | Today's games with live status — same normalized shape as `/pwhl/today`/`/ahl/today`/`/echl/today` (session102), but sourced straight from the league-wide `score/now` scoreboard `poll()` already fetches, not a Supabase table (NHL has no `nhl_game_log`-equivalent table; the live NHL API already returns real team abbrevs/scores). 60s KV TTL, matching `poll()`'s own cadence. |
 | `GET` | `/health` | Worker health check |
 | `POST` | `/poll?secret=` | Manual poll trigger |
-| `POST` | `/push/subscribe` | Register push subscription |
-| `POST` | `/push/unsubscribe` | Remove push subscription |
+| `POST` | `/push/subscribe` | Register a push subscription — Web Push body `{endpoint, keys, teamAbbr, prefs}`, or native iOS (2026-09) `{platform: 'ios', token, teamAbbr, prefs}`. Dedupes by `token` for iOS, `endpoint` otherwise |
+| `POST` | `/push/unsubscribe` | Remove a push subscription — body `{endpoint}` (Web Push) or `{token}` (native iOS) |
 | `POST` | `/atom/ingest` | Ingest team-blog RSS/Atom articles from GH Actions (auto-detects real Atom vs. plain RSS 2.0 per source) |
 | `POST` | `/moneypuck/ingest` | Ingest MoneyPuck data from GH Actions |
 | `GET` | `/moneypuck/refresh` | Refresh MoneyPuck for one team |

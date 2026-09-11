@@ -712,9 +712,19 @@ export async function encryptPushPayload(sub, payloadObj) {
   return body;
 }
 
+// Stable per-subscriber identifier for dedup/pruning, regardless of
+// platform: Web Push subs are keyed by `endpoint`, native iOS subs (see
+// sendAPNsPush below) by `token` -- callers that need to prune an expired
+// subscriber from `push:subs` must match on whichever one the sub actually
+// has, not assume `endpoint` unconditionally.
+export function subId(sub) {
+  return sub.token || sub.endpoint;
+}
+
 // Send a Web Push notification with encrypted payload (RFC 8291).
 // Service worker reads e.data.json() — no KV fetch needed.
 export async function sendPush(sub, payload, env) {
+  if (sub.platform === 'ios') return sendAPNsPush(sub, payload, env);
   try {
     const auth = await buildVAPIDAuthHeader(sub.endpoint, env);
 
@@ -747,6 +757,100 @@ export async function sendPush(sub, payload, env) {
     return 'ok';
   } catch (err) {
     console.error('sendPush error:', err.message);
+    return 'error';
+  }
+}
+
+// ── APNs / native iOS push (2026-09) ─────────────────────────
+// Real push for the Capacitor iOS app -- Web Push (above) doesn't reach a
+// native shell, only a browser/installed-PWA context (see
+// usePushNotifications.js's Capacitor.isNativePlatform() guard on the
+// frontend). Same token-based-auth (ES256 JWT) shape as VAPID above, just
+// APNs's own claim set (iss=team id, no aud/exp/sub) and its own transport
+// (HTTP/2 to Apple's push gateway with the device token in the URL, not an
+// arbitrary per-subscriber endpoint).
+//
+// Needs three Worker secrets that don't exist yet as of this writing:
+// APNS_KEY_ID, APNS_TEAM_ID, APNS_AUTH_KEY (the .p8 auth key's PEM text,
+// from Certificates, Identifiers & Profiles → Keys on the Apple Developer
+// portal). Until those are set, sendAPNsPush errors per-send rather than
+// silently no-op-ing, so a misconfiguration shows up in logs immediately
+// instead of looking like "sent but nothing ever arrives."
+
+function pemToDer(pem) {
+  const b64 = pem.replace(/-----BEGIN [^-]+-----/, '').replace(/-----END [^-]+-----/, '').replace(/\s+/g, '');
+  const raw = atob(b64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+// APNs tokens are valid up to 1hr and Apple asks clients not to mint a
+// fresh one per request -- cache in KV (55min TTL, safely inside that
+// window) same as every other KV-cache-then-generate pattern in this file.
+async function buildAPNsJWT(env) {
+  const cached = await kvGet(env, 'apns:jwt');
+  if (cached?.token && cached.expiresAt > Date.now()) return cached.token;
+
+  const now     = Math.floor(Date.now() / 1000);
+  const header  = { alg: 'ES256', kid: env.APNS_KEY_ID };
+  const payload = { iss: env.APNS_TEAM_ID, iat: now };
+
+  const enc    = s => uint8ArrayToBase64url(new TextEncoder().encode(JSON.stringify(s)));
+  const toSign = `${enc(header)}.${enc(payload)}`;
+
+  // .p8 key is PKCS8 PEM (unlike VAPID's raw-scalar JWK above) -- import
+  // directly for signing, no x/y components needed.
+  const privKey = await crypto.subtle.importKey(
+    'pkcs8', pemToDer(env.APNS_AUTH_KEY),
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false, ['sign']
+  );
+  const sig = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' }, privKey, new TextEncoder().encode(toSign)
+  );
+
+  const jwt = `${toSign}.${uint8ArrayToBase64url(new Uint8Array(sig))}`;
+  await kvPut(env, 'apns:jwt', { token: jwt, expiresAt: Date.now() + 55 * 60 * 1000 }, 55 * 60);
+  return jwt;
+}
+
+// sub: { platform: 'ios', token, teamAbbr, prefs }
+export async function sendAPNsPush(sub, payload, env) {
+  if (!env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_AUTH_KEY) {
+    console.error('sendAPNsPush: APNS_KEY_ID/APNS_TEAM_ID/APNS_AUTH_KEY not configured');
+    return 'error';
+  }
+  try {
+    const jwt   = await buildAPNsJWT(env);
+    // env.APNS_ENV defaults to 'sandbox' -- matches this app's entitlement
+    // (App.entitlements' aps-environment is still 'development' as of this
+    // writing; flip both together once shipping to TestFlight/App Store).
+    const host  = env.APNS_ENV === 'production' ? 'api.push.apple.com' : 'api.sandbox.push.apple.com';
+    const topic = env.APNS_BUNDLE_ID || 'com.eyewallanalytics.app';
+
+    const res = await fetch(`https://${host}/3/device/${sub.token}`, {
+      method:  'POST',
+      headers: {
+        'authorization':  `bearer ${jwt}`,
+        'apns-topic':     topic,
+        'apns-push-type': 'alert',
+        'apns-priority':  '10',
+      },
+      body: JSON.stringify({
+        aps: { alert: { title: payload.title || '', body: payload.body || '' }, sound: 'default' },
+        ...(payload.data || {}),
+      }),
+    });
+
+    const status  = res.status;
+    const resBody = await res.text().catch(() => '');
+    console.log(`sendAPNsPush: status=${status} to ${sub.token.slice(0, 12)}...`);
+
+    // 410 = "Unregistered" -- APNs's equivalent of Web Push's 410/404 expiry
+    if (status === 410) return 'expired';
+    if (!res.ok) { console.warn(`sendAPNsPush failed ${status}: ${resBody.slice(0, 150)}`); return 'error'; }
+    return 'ok';
+  } catch (err) {
+    console.error('sendAPNsPush error:', err.message);
     return 'error';
   }
 }
