@@ -202,6 +202,7 @@ Key patterns:
 | Key | TTL | Description |
 |-----|-----|-------------|
 | `schedule:{ABBR}` | 10min | NHL team schedule |
+| `roster:{ABBR}` | 1hr | NHL team roster (`/v1/roster/{team}/current` proxy — added 2026-09 alongside the KV caching fix below) |
 | `live:gameId` | 60s | Current live NHL game ID |
 | `pbp:{gameId}` | 60s live / 1hr final | NHL play-by-play |
 | `boxscore:{gameId}` | 60s live / 1hr final | NHL boxscore |
@@ -278,6 +279,7 @@ Key patterns:
 | `GET` | `/cache/:key` | Read any KV key (primary NHL data path) |
 | `GET` | `/news?team=` | Team news feed |
 | `GET` | `/schedule?team=` | Team schedule |
+| `GET` | `/roster?team=` | Team roster (`/v1/roster/{team}/current` proxy, KV-cached 1hr — see `roster:{ABBR}` above). Added 2026-09: the frontend's own `getRoster()` used to call NHL directly with zero caching, unlike this route's `/schedule`/`/standings` siblings — every page load was a genuinely fresh live upstream fetch, the root cause of repeated Cypress flakiness against a real, unmocked, uncached third-party call. |
 | `GET` | `/nhl/odds` | Moneyline odds for upcoming games, from the persisted `nhl_odds` table (Odds Persistence Writer, 2026-07) — replaces the frontend's old direct-to-Odds-API call. Already flattened/matched by team abbr server-side; 5min edge cache. |
 | `GET` | `/nhl/today` | Today's games with live status — same normalized shape as `/pwhl/today`/`/ahl/today`/`/echl/today` (session102), but sourced straight from the league-wide `score/now` scoreboard `poll()` already fetches, not a Supabase table (NHL has no `nhl_game_log`-equivalent table; the live NHL API already returns real team abbrevs/scores). 60s KV TTL, matching `poll()`'s own cadence. |
 | `GET` | `/health` | Worker health check |
