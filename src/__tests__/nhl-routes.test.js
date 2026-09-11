@@ -1107,6 +1107,38 @@ describe('POST /push/subscribe', () => {
 
     expect((await res.json()).total).toBe(1)
   })
+
+  // Native iOS push (2026-09) -- platform: 'ios' + an APNs device token,
+  // sharing the same push:subs array and route as Web Push above.
+  it('accepts a native iOS subscription, storing token instead of endpoint/keys', async () => {
+    const env = makeEnv()
+    const res = await handleNHL(
+      makeRequest('/push/subscribe', { method: 'POST', body: { platform: 'ios', token: 'device-token-1', teamAbbr: 'CAR' } }),
+      env, makeCtx(), new URL('https://example.com/push/subscribe')
+    )
+
+    expect(res.status).toBe(200)
+    expect((await res.json()).total).toBe(1)
+    const stored = JSON.parse(await env.CACHE.get('push:subs'))
+    expect(stored).toEqual([{ platform: 'ios', token: 'device-token-1', teamAbbr: 'NHL:CAR', prefs: null }])
+  })
+
+  it('dedupes iOS subscriptions by token, not endpoint', async () => {
+    const env = makeEnv({
+      CACHE: {
+        async get() {
+          return JSON.stringify([{ platform: 'ios', token: 'device-token-1', teamAbbr: 'NHL:CAR', prefs: null }])
+        },
+        async put() {},
+      },
+    })
+    const res = await handleNHL(
+      makeRequest('/push/subscribe', { method: 'POST', body: { platform: 'ios', token: 'device-token-1', teamAbbr: 'BOS' } }),
+      env, makeCtx(), new URL('https://example.com/push/subscribe')
+    )
+
+    expect((await res.json()).total).toBe(1)
+  })
 })
 
 describe('POST /push/unsubscribe', () => {
@@ -1121,6 +1153,26 @@ describe('POST /push/unsubscribe', () => {
     })
     const res = await handleNHL(
       makeRequest('/push/unsubscribe', { method: 'POST', body: { endpoint: 'ep-1' } }),
+      env, makeCtx(), new URL('https://example.com/push/unsubscribe')
+    )
+
+    expect((await res.json()).total).toBe(1)
+  })
+
+  it('removes the matching iOS subscription by token, leaving Web Push subs untouched', async () => {
+    const env = makeEnv({
+      CACHE: {
+        async get() {
+          return JSON.stringify([
+            { platform: 'ios', token: 'device-token-1' },
+            { endpoint: 'ep-1' },
+          ])
+        },
+        async put() {},
+      },
+    })
+    const res = await handleNHL(
+      makeRequest('/push/unsubscribe', { method: 'POST', body: { token: 'device-token-1' } }),
       env, makeCtx(), new URL('https://example.com/push/unsubscribe')
     )
 

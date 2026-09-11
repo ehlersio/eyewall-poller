@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink, recordHealth } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink, recordHealth } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -484,13 +484,14 @@ async function broadcastPWHL(env, payload, teamKey, eventType) {
 
   const results = await Promise.all(targets.map(s => sendPush(s, payload, env)));
 
-  // Prune expired subs
-  const expiredEndpoints = new Set(
-    targets.filter((_, i) => results[i] === 'expired').map(s => s.endpoint)
+  // Prune expired subs. subId() covers both Web Push (endpoint-keyed) and
+  // native iOS (token-keyed) subscribers -- see nhl.js's broadcast().
+  const expiredIds = new Set(
+    targets.filter((_, i) => results[i] === 'expired').map(subId)
   );
-  if (expiredEndpoints.size > 0) {
+  if (expiredIds.size > 0) {
     const allSubs = (await kvGet(env, 'push:subs')) || [];
-    const active = allSubs.filter(s => !expiredEndpoints.has(s.endpoint));
+    const active = allSubs.filter(s => !expiredIds.has(subId(s)));
     await kvPut(env, 'push:subs', active, 365 * 24 * 3600);
   }
   console.log(`[PWHL push] results: ${results.join(', ')}`);

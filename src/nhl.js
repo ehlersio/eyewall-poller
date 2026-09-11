@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth } from './shared.js';
+import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth } from './shared.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
@@ -352,14 +352,16 @@ async function broadcast(env, payload, teamAbbr, eventType) {
 
   const results = await Promise.all(targets.map(s => sendPush(s, payload, env)));
 
-  // Prune expired subs from full list
-  const expiredEndpoints = new Set(
-    targets.filter((_, i) => results[i] === 'expired').map(s => s.endpoint)
+  // Prune expired subs from full list. subId() covers both Web Push
+  // (endpoint-keyed) and native iOS (token-keyed) subscribers -- endpoint
+  // alone used to miss every expired iOS sub silently.
+  const expiredIds = new Set(
+    targets.filter((_, i) => results[i] === 'expired').map(subId)
   );
-  if (expiredEndpoints.size > 0) {
-    const active = subs.filter(s => !expiredEndpoints.has(s.endpoint));
+  if (expiredIds.size > 0) {
+    const active = subs.filter(s => !expiredIds.has(subId(s)));
     await kvPut(env, 'push:subs', active, 365 * 24 * 3600);
-    console.log(`broadcast: removed ${expiredEndpoints.size} expired subscription(s)`);
+    console.log(`broadcast: removed ${expiredIds.size} expired subscription(s)`);
   }
   console.log(`broadcast results: ${results.join(', ')}`);
 }
@@ -2799,39 +2801,43 @@ Only reference the two teams named above and the numbers given -- no player name
     return json(val);
   }
 
-  // Push subscribe
+  // Push subscribe — Web Push (endpoint+keys) or, as of 2026-09, native iOS
+  // (platform: 'ios' + an APNs device token) share this one route and the
+  // one push:subs KV array; sendPush()/broadcast() branch on sub.platform.
   if (url.pathname === '/push/subscribe' && request.method === 'POST') {
     const body = await request.json();
     const subs = (await kvGet(env, 'push:subs')) || [];
 
-    // Build subscription object — include teamAbbr and prefs
     // Prefix league if not already present: 'CAR' → 'NHL:CAR', 'PWHL:MTL' stays
     const rawTeam = body.teamAbbr || 'CAR';
     const teamAbbr = rawTeam.includes(':') ? rawTeam : `NHL:${rawTeam}`;
-    const newSub = {
-      endpoint: body.endpoint,
-      keys:     body.keys,
-      teamAbbr,
-      prefs:    body.prefs || null,
-    };
 
-    // Update existing or add new (deduplicate by endpoint)
-    const idx = subs.findIndex(s => s.endpoint === body.endpoint);
+    const isIOS = body.platform === 'ios';
+    const newSub = isIOS
+      ? { platform: 'ios', token: body.token, teamAbbr, prefs: body.prefs || null }
+      : { endpoint: body.endpoint, keys: body.keys, teamAbbr, prefs: body.prefs || null };
+
+    // Update existing or add new (dedupe by token for iOS, endpoint for Web Push)
+    const idx = isIOS
+      ? subs.findIndex(s => s.platform === 'ios' && s.token === body.token)
+      : subs.findIndex(s => s.endpoint === body.endpoint);
     if (idx >= 0) {
       subs[idx] = newSub; // update team/prefs on re-subscribe
     } else {
       subs.push(newSub);
     }
     await kvPut(env, 'push:subs', subs, 365 * 24 * 3600);
-    console.log(`Subscriber upserted: ${newSub.teamAbbr} prefs=${JSON.stringify(newSub.prefs)}. Total: ${subs.length}`);
+    console.log(`Subscriber upserted: ${newSub.teamAbbr} (${isIOS ? 'ios' : 'web'}) prefs=${JSON.stringify(newSub.prefs)}. Total: ${subs.length}`);
     return json({ ok: true, total: subs.length });
   }
 
   // Push unsubscribe
   if (url.pathname === '/push/unsubscribe' && request.method === 'POST') {
-    const { endpoint } = await request.json();
+    const { endpoint, token } = await request.json();
     const subs  = (await kvGet(env, 'push:subs')) || [];
-    const after = subs.filter(s => s.endpoint !== endpoint);
+    const after = token
+      ? subs.filter(s => s.token !== token)
+      : subs.filter(s => s.endpoint !== endpoint);
     await kvPut(env, 'push:subs', after, 365 * 24 * 3600);
     return json({ ok: true, total: after.length });
   }
