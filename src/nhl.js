@@ -84,6 +84,19 @@ function scheduleKey(abbr, season) {
   return `schedule:${abbr}:${season}`;
 }
 
+// 1 hour — rosters change rarely (trades/waivers aside) most of the
+// season, but this app also gets hit hardest during training camp
+// (Sept), when the roster genuinely can change day to day as players
+// get cut/signed. 1hr balances real resilience against a slow/rate-
+// limited upstream call against not sitting on a stale camp roster too
+// long — matches milestones' own 1hr TTL for the same "hot but not
+// truly live" shape. Bustable manually via /cache if a trade needs to
+// show up faster than that.
+const ROSTER_TTL = 3600;
+function rosterKey(abbr) {
+  return `roster:${abbr}`;
+}
+
 // The scheduled poll job uses the default team's static config.
 // KV keys and notifications in poll() derive from this. `season` is NOT
 // included here — poll() resolves it live for itself (see poll() below)
@@ -1826,6 +1839,37 @@ export async function handleNHL(request, env, ctx, url) {
       }
     })());
     return json([]);
+  }
+
+  // GET /roster?team=CAR
+  // Proxies NHL's /roster/{team}/current, cached in KV. Synchronous
+  // fetch-and-cache-on-miss (mirrors /schedule's historical-season branch
+  // above, not its current-season fire-and-forget pattern) -- this is a
+  // foreground page (the Players view's Roster tab), not a background
+  // feed nothing else keeps warm, so a cold-miss user needs real data
+  // now, not an empty response with a silent retry-later.
+  //
+  // Added after this exact endpoint's client-side equivalent
+  // (eyewallanalytics's getRoster(), which calls /roster/{team}/current
+  // directly with zero caching) was identified as the root cause of
+  // repeated Cypress flakiness -- every CI run was a genuinely fresh
+  // live NHL fetch for 4 teams, with nothing to fall back on but the
+  // real API's own response time. getAllGames()/getStandings() already
+  // had this KV-first protection; getRoster() was the one gap.
+  if (url.pathname === '/roster' && request.method === 'GET') {
+    const tc = await getTeamConfig(request, env);
+    const kvKey = rosterKey(tc.abbr);
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    try {
+      const data = await nhlGet(`${NHL_BASE}/roster/${tc.abbr}/current`);
+      await kvPut(env, kvKey, data, ROSTER_TTL);
+      return json(data);
+    } catch (e) {
+      console.warn(`Roster fetch ${tc.abbr}: ${e.message}`);
+      return json({ forwards: [], defensemen: [], goalies: [] });
+    }
   }
 
   // GET /nhl/today

@@ -198,6 +198,71 @@ describe('GET /schedule', () => {
   })
 })
 
+// ── /roster (added alongside this session's roster-caching fix) ──
+// getRoster() (eyewallanalytics) used to call NHL's /roster/{team}/current
+// directly with zero server-side caching, unlike /schedule and /standings
+// above -- every request was a genuinely fresh live upstream call, which
+// was the root cause of repeated Cypress flakiness (4 teams' worth of
+// live fetches every CI run, nothing to fall back on but the real API's
+// response time). Fully synchronous fetch-and-cache-on-miss, same shape
+// as /schedule's historical-season branch above -- this is a foreground
+// page (Players view Roster tab), not a background feed, so a cold-miss
+// user needs real data now, not an empty response with a silent retry.
+describe('GET /roster', () => {
+  it('cold cache: fetches from NHL, caches under roster:{abbr} with the 1hr TTL, returns real data', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    const rosterPayload = { forwards: [{ id: 1, sweaterNumber: 20 }], defensemen: [], goalies: [] }
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => rosterPayload })
+
+    const res = await handleNHL(makeRequest('/roster'), env, makeCtx(), new URL('https://example.com/roster'))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(rosterPayload)
+    expect(putSpy).toHaveBeenCalledWith('roster:CAR', JSON.stringify(rosterPayload), { expirationTtl: 3600 })
+  })
+
+  it('warm cache: serves directly from KV, no upstream fetch', async () => {
+    const cachedRoster = { forwards: [{ id: 2 }], defensemen: [], goalies: [] }
+    const env = makeEnv({
+      CACHE: { async get(key) { return key === 'roster:CAR' ? JSON.stringify(cachedRoster) : null }, async put() {} },
+    })
+    globalThis.fetch = vi.fn()
+
+    const res = await handleNHL(makeRequest('/roster'), env, makeCtx(), new URL('https://example.com/roster'))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cachedRoster)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('respects ?team=, keying the cache per team', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ forwards: [], defensemen: [], goalies: [] }) })
+
+    await handleNHL(makeRequest('/roster?team=TOR'), env, makeCtx(), new URL('https://example.com/roster?team=TOR'))
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/roster/TOR/current'),
+      expect.anything()
+    )
+    expect(putSpy).toHaveBeenCalledWith('roster:TOR', expect.any(String), { expirationTtl: 3600 })
+  })
+
+  it('upstream failure: returns an empty roster shape instead of a 500, does not cache the failure', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 502 })
+
+    const res = await handleNHL(makeRequest('/roster'), env, makeCtx(), new URL('https://example.com/roster'))
+
+    expect(res.status).toBe(200) // degrades gracefully, not a 500
+    expect(await res.json()).toEqual({ forwards: [], defensemen: [], goalies: [] })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-analytics', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const env = makeEnv({
