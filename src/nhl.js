@@ -2219,6 +2219,37 @@ export async function handleNHL(request, env, ctx, url) {
     return json(rows);
   }
 
+  // GET /injuries?team=CAR
+  // Proxies the pipeline's player_injuries table (injuries.py, ESPN's
+  // injuries feed -- the NHL API itself has no injuries/scratches
+  // endpoint at all, see that module's own docstring for the full
+  // investigation). Same KV-cache-then-Supabase-read shape as
+  // /team-lines above; unlike that route, not season-scoped -- injuries
+  // aren't a per-season concept the way lines are, this table is always
+  // just "current league-wide state," fully refreshed on every pipeline
+  // run. Scoped to one team per call (not a league-wide dump) since the
+  // one real consumer so far, the Scouting tab, always wants exactly two
+  // teams' worth -- the user's and the opponent's -- fetched separately.
+  if (url.pathname === '/injuries') {
+    const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const kvKey  = `nhl:injuries:${team}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let rows;
+    try {
+      rows = await sbRows(
+        `player_injuries?team=eq.${team}` +
+        `&select=player_id,player_name,status,comment,espn_updated_at`
+      );
+    } catch {
+      rows = []; // same "degrade to empty, don't 502" posture as /team-lines
+    }
+
+    await kvPut(env, kvKey, rows, 3600);
+    return json(rows);
+  }
+
   if (url.pathname === '/game-xg') {
     const gameId = url.searchParams.get('gameId');
     if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });

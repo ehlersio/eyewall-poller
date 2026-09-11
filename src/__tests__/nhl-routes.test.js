@@ -263,6 +263,63 @@ describe('GET /roster', () => {
   })
 })
 
+// ── /injuries (added alongside injuries.py / player_injuries) ──
+// Same KV-cache-then-Supabase-read shape as /team-lines above; not
+// season-scoped, unlike that route -- injuries aren't a per-season
+// concept, this table is always just "current league-wide state."
+describe('GET /injuries', () => {
+  it('cold cache: reads player_injuries scoped to ?team=, caches under injuries:{abbr} with 1hr TTL', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    const injuryRows = [
+      { player_id: 8480762, player_name: 'Eric Robinson', status: 'day-to-day', comment: 'day-to-day', espn_updated_at: '2026-09-10T14:06Z' },
+    ]
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => injuryRows })
+
+    const res = await handleNHL(makeRequest('/injuries?team=CAR'), env, makeCtx(), new URL('https://example.com/injuries?team=CAR'))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(injuryRows)
+    const calledUrl = globalThis.fetch.mock.calls[0][0]
+    expect(calledUrl).toContain('player_injuries')
+    expect(calledUrl).toContain('team=eq.CAR')
+    expect(putSpy).toHaveBeenCalledWith('nhl:injuries:CAR', JSON.stringify(injuryRows), { expirationTtl: 3600 })
+  })
+
+  it('warm cache: serves directly from KV, no Supabase read', async () => {
+    const cachedRows = [{ player_id: 1, player_name: 'Test Player', status: 'out' }]
+    const env = makeEnv({
+      CACHE: { async get(key) { return key === 'nhl:injuries:CAR' ? JSON.stringify(cachedRows) : null }, async put() {} },
+    })
+    globalThis.fetch = vi.fn()
+
+    const res = await handleNHL(makeRequest('/injuries?team=CAR'), env, makeCtx(), new URL('https://example.com/injuries?team=CAR'))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(cachedRows)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('defaults to DEFAULT_TEAM_ABBR when ?team= is omitted', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    await handleNHL(makeRequest('/injuries'), env, makeCtx(), new URL('https://example.com/injuries'))
+
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('team=eq.CAR')
+  })
+
+  it('degrades to an empty array (not a 502) on a Supabase read failure, matching /team-lines', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await handleNHL(makeRequest('/injuries?team=CAR'), env, makeCtx(), new URL('https://example.com/injuries?team=CAR'))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([])
+  })
+})
+
 describe('GET /player-analytics', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const env = makeEnv({
