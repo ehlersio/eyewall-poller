@@ -272,7 +272,10 @@ describe('GET /injuries', () => {
     const putSpy = vi.fn()
     const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
     const injuryRows = [
-      { player_id: 8480762, player_name: 'Eric Robinson', status: 'day-to-day', comment: 'day-to-day', espn_updated_at: '2026-09-10T14:06Z' },
+      {
+        player_id: 8480762, player_name: 'Eric Robinson', status: 'day-to-day', comment: 'day-to-day', espn_updated_at: '2026-09-10T14:06Z',
+        injury_type: 'Knee', injury_side: 'Left', injury_detail: 'Surgery', return_date: '2026-09-20',
+      },
     ]
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => injuryRows })
 
@@ -283,6 +286,9 @@ describe('GET /injuries', () => {
     const calledUrl = globalThis.fetch.mock.calls[0][0]
     expect(calledUrl).toContain('player_injuries')
     expect(calledUrl).toContain('team=eq.CAR')
+    for (const col of ['injury_type', 'injury_side', 'injury_detail', 'return_date']) {
+      expect(calledUrl).toContain(col)
+    }
     expect(putSpy).toHaveBeenCalledWith('nhl:injuries:CAR', JSON.stringify(injuryRows), { expirationTtl: 3600 })
   })
 
