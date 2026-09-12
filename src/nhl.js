@@ -2232,6 +2232,9 @@ export async function handleNHL(request, env, ctx, url) {
   // run. Scoped to one team per call (not a league-wide dump) since the
   // one real consumer so far, the Scouting tab, always wants exactly two
   // teams' worth -- the user's and the opponent's -- fetched separately.
+  // injury_type/injury_side/injury_detail/return_date come from ESPN's
+  // per-entry `details` object (eyewall-pipeline's
+  // docs/session_injury_details_history.sql) -- any of the four can be null.
   if (url.pathname === '/injuries') {
     const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const kvKey  = `nhl:injuries:${team}`;
@@ -2242,7 +2245,8 @@ export async function handleNHL(request, env, ctx, url) {
     try {
       rows = await sbRows(
         `player_injuries?team=eq.${team}` +
-        `&select=player_id,player_name,status,comment,espn_updated_at`
+        `&select=player_id,player_name,status,comment,espn_updated_at,` +
+        `injury_type,injury_side,injury_detail,return_date`
       );
     } catch {
       rows = []; // same "degrade to empty, don't 502" posture as /team-lines
