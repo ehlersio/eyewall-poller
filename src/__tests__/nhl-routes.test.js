@@ -549,6 +549,98 @@ describe('GET /draft/pick-history', () => {
   })
 })
 
+// ── /playoff-odds (added alongside eyewall-pipeline's playoff_odds.py) ──
+// Latest row + season history in parallel, then the latest run's
+// playoff_odds_game_impacts rows for the next game-day.
+describe('GET /playoff-odds', () => {
+  const latest = {
+    season: 20262027, run_date: '2026-10-15', playoff_pct: 0.641, division_pct: 0.214, proj_points: 95.3,
+    points_p10: 87, points_p90: 103, current_points: 4, games_played: 3, games_remaining: 81, elo_rating: 1531.2, sims: 10000,
+    change: { prev_run_date: '2026-10-14', prev_pct: 0.58, delta: 0.061, contributions: [], residual: 0.061 },
+  }
+  const historyDesc = [
+    { season: 20262027, run_date: '2026-10-15', playoff_pct: 0.641 },
+    { season: 20262027, run_date: '2026-10-14', playoff_pct: 0.58 },
+    { season: 20252026, run_date: '2026-04-16', playoff_pct: 1 },
+  ]
+  const impact = (game_id, home_team, away_team, outcome, playoff_pct) => ({ game_id, game_date: '2026-10-16', home_team, away_team, outcome, playoff_pct })
+  const impacts = [
+    impact(2026020041, 'NYR', 'BOS', 'home', 0.62), impact(2026020041, 'NYR', 'BOS', 'away', 0.60),
+    impact(2026020040, 'CAR', 'OTT', 'home', 0.66), impact(2026020040, 'CAR', 'OTT', 'away', 0.57),
+    impact(2026020042, 'MTL', 'TOR', 'home', 0.641), impact(2026020042, 'MTL', 'TOR', 'away', 0.643),
+  ]
+  const byUrl = ({ latestRows = [latest], impactRows = impacts } = {}) => vi.fn().mockImplementation(async (u) => ({
+    ok: true,
+    json: async () => (u.includes('playoff_odds_game_impacts') ? impactRows : u.endsWith('limit=1') ? latestRows : historyDesc),
+  }))
+  const get = (env, qs) => handleNHL(makeRequest(`/playoff-odds${qs}`), env, makeCtx(), new URL(`https://example.com/playoff-odds${qs}`))
+
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-16T15:00:00Z')) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it("returns the latest run, that season's history, and the next game-day's stakes; caches 1hr", async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = byUrl()
+
+    const body = await (await get(env, '?team=CAR')).json()
+
+    expect(body).toMatchObject({ team: 'CAR', season: 20262027, runDate: '2026-10-15', stale: false, latest })
+    expect(body.history).toEqual([{ run_date: '2026-10-14', playoff_pct: 0.58 }, { run_date: '2026-10-15', playoff_pct: 0.641 }])
+    expect(body.nextGames.map(g => g.game_id)).toEqual([2026020040, 2026020041])
+    expect(body.nextGames[0]).toMatchObject({ home: 'CAR', away: 'OTT', ifHomeWins: 0.66, ifAwayWins: 0.57, own: true })
+    const urls = globalThis.fetch.mock.calls.map(c => c[0])
+    expect(urls).toHaveLength(3)
+    expect(urls.filter(u => u.includes('/playoff_odds?') && u.includes('team=eq.CAR') && !u.includes('season=eq.'))).toHaveLength(2)
+    expect(urls.find(u => u.includes('playoff_odds_game_impacts'))).toContain('season=eq.20262027&run_date=eq.2026-10-15&team=eq.CAR')
+    expect(putSpy).toHaveBeenCalledWith('nhl:playoff-odds:CAR:latest', JSON.stringify(body), { expirationTtl: 3600 })
+  })
+
+  it('flags a latest run older than a few days as stale', async () => {
+    vi.setSystemTime(new Date('2027-08-01T12:00:00Z'))
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = byUrl()
+    expect((await (await get(env, '?team=CAR')).json()).stale).toBe(true)
+  })
+
+  it('filters by an explicit season, and rejects an invalid team or season', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = byUrl()
+    await get(env, '?team=car&season=20262027')
+    const urls = globalThis.fetch.mock.calls.map(c => c[0])
+    expect(urls.filter(u => u.includes('/playoff_odds?') && u.includes('team=eq.CAR&season=eq.20262027'))).toHaveLength(2)
+
+    globalThis.fetch = vi.fn()
+    expect((await get(env, '?team=CAR),id.gt.0')).status).toBe(400)
+    expect((await get(env, '?team=CAR&season=2026')).status).toBe(400)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('before the first run: empty result, no impacts read, not cached', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = byUrl({ latestRows: [] })
+
+    const body = await (await get(env, '?team=CAR')).json()
+
+    expect(body).toEqual({ team: 'CAR', season: null, runDate: null, stale: false, latest: null, history: [], nextGames: [] })
+    expect(globalThis.fetch.mock.calls.some(c => c[0].includes('playoff_odds_game_impacts'))).toBe(false)
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+
+  it('degrades to unavailable on a Supabase failure and does not cache it', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await get(env, '?team=CAR')
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ team: 'CAR', latest: null, unavailable: true })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-analytics', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const env = makeEnv({
