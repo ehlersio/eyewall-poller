@@ -717,6 +717,75 @@ describe('GET /injury-impact', () => {
   })
 })
 
+// ── /probable-starters (added alongside eyewall-pipeline's starting_goalie.py) ──
+// One read of goalie_start_probs for the game, both teams, shaped by
+// summarizeStarters().
+describe('GET /probable-starters', () => {
+  const probs = [
+    { team: 'CAR', goalie_id: 8483548, goalie_name: 'Brandon Bussi', start_prob: 0.62, factors: { share_last10: 0.6, started_last: true }, game_date: '2026-09-29', run_date: '2026-09-28' },
+    { team: 'CAR', goalie_id: 8480051, goalie_name: 'Cayden Primeau', start_prob: 0.38, factors: { share_last10: 0.4, started_last: false }, game_date: '2026-09-29', run_date: '2026-09-28' },
+    { team: 'FLA', goalie_id: 8475683, goalie_name: 'Sergei Bobrovsky', start_prob: 0.81, factors: { share_last10: 0.8 }, game_date: '2026-09-29', run_date: '2026-09-28' },
+  ]
+  const get = (env, qs) => handleNHL(makeRequest(`/probable-starters${qs}`), env, makeCtx(), new URL(`https://example.com/probable-starters${qs}`))
+
+  it("returns both teams' goalies most likely first; caches 1hr", async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => probs })
+
+    const body = await (await get(env, '?game=2026020001')).json()
+
+    expect(body.gameId).toBe(2026020001)
+    expect(body.gameDate).toBe('2026-09-29')
+    expect(body.runDate).toBe('2026-09-28')
+    expect(body.teams.CAR.map(g => g.goalie_name)).toEqual(['Brandon Bussi', 'Cayden Primeau'])
+    expect(body.teams.FLA).toHaveLength(1)
+    const urls = globalThis.fetch.mock.calls.map(c => c[0])
+    expect(urls).toHaveLength(1)
+    expect(urls[0]).toContain('goalie_start_probs?')
+    expect(urls[0]).toContain('game_id=eq.2026020001')
+    expect(putSpy).toHaveBeenCalledWith('nhl:probable-starters:2026020001', JSON.stringify(body), { expirationTtl: 3600 })
+  })
+
+  it('warm cache: serves directly from KV, no Supabase read', async () => {
+    const cachedBody = { gameId: 2026020001, gameDate: '2026-09-29', runDate: '2026-09-28', teams: { CAR: [] } }
+    const env = makeEnv({ CACHE: { async get(key) { return key === 'nhl:probable-starters:2026020001' ? JSON.stringify(cachedBody) : null }, async put() {} } })
+    globalThis.fetch = vi.fn()
+    expect(await (await get(env, '?game=2026020001')).json()).toEqual(cachedBody)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('outside the 2-day window: empty teams, not cached', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    expect(await (await get(env, '?game=2026020001')).json()).toEqual({ gameId: 2026020001, gameDate: null, runDate: null, teams: {} })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+
+  it('rejects a missing or malformed game id', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = vi.fn()
+    for (const qs of ['', '?game=abc', '?game=2026020001),id.gt.0', '?game=123']) {
+      expect((await get(env, qs)).status).toBe(400)
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('degrades to unavailable on a Supabase failure and does not cache it', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await get(env, '?game=2026020001')
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ gameId: 2026020001, teams: {}, unavailable: true })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-analytics', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const env = makeEnv({
