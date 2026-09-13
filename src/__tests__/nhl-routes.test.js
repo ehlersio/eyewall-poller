@@ -480,6 +480,75 @@ describe('GET /scratches', () => {
   })
 })
 
+// ── /draft/pick-history (added alongside eyewall-pipeline's draft_history.py) ──
+// Two parallel reads of draft_pick_history: picks the team made, and its own
+// original picks another team used. Fixture rows are real 2025-26 CAR picks.
+describe('GET /draft/pick-history', () => {
+  const sinceYear = new Date().getUTCFullYear() - 4
+  const made = [
+    { draft_year: 2026, round: 2, overall_pick: 51, team: 'CAR', original_team: 'UTA', pick_chain: ['UTA', 'CGY', 'CAR'], times_traded: 2, player_name: 'William Hakansson', position: 'D' },
+  ]
+  const away = [
+    { draft_year: 2025, round: 1, overall_pick: 29, team: 'CHI', original_team: 'CAR', pick_chain: ['CAR', 'CHI'], times_traded: 1, player_name: 'Mason West', position: 'C' },
+  ]
+  const byUrl = () => vi.fn().mockImplementation(async (u) => ({ ok: true, json: async () => (u.includes('original_team=eq.') ? away : made) }))
+
+  it('queries picks made and own picks traded away for the last 5 drafts, caches 6hr', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = byUrl()
+
+    const res = await handleNHL(makeRequest('/draft/pick-history?team=CAR'), env, makeCtx(), new URL('https://example.com/draft/pick-history?team=CAR'))
+
+    const body = await res.json()
+    expect(body).toEqual({ team: 'CAR', sinceYear, made, tradedAway: away })
+    const urls = globalThis.fetch.mock.calls.map(c => c[0])
+    expect(urls).toHaveLength(2)
+    expect(urls.every(u => u.includes('draft_pick_history') && u.includes(`draft_year=gte.${sinceYear}`))).toBe(true)
+    // Both queries SELECT the original_team column, so match the filter, not the column name.
+    expect(urls.some(u => u.includes('&team=eq.CAR') && !u.includes('original_team=eq.'))).toBe(true)
+    expect(urls.some(u => u.includes('original_team=eq.CAR') && u.includes('team=neq.CAR'))).toBe(true)
+    expect(putSpy).toHaveBeenCalledWith(`draft:pick-history:CAR:${sinceYear}`, JSON.stringify(body), { expirationTtl: 6 * 3600 })
+  })
+
+  it('warm cache: serves directly from KV, no Supabase read', async () => {
+    const cachedBody = { team: 'CAR', sinceYear, made: [], tradedAway: [] }
+    const env = makeEnv({
+      CACHE: { async get(key) { return key === `draft:pick-history:CAR:${sinceYear}` ? JSON.stringify(cachedBody) : null }, async put() {} },
+    })
+    globalThis.fetch = vi.fn()
+
+    const res = await handleNHL(makeRequest('/draft/pick-history?team=CAR'), env, makeCtx(), new URL('https://example.com/draft/pick-history?team=CAR'))
+
+    expect(await res.json()).toEqual(cachedBody)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('defaults to DEFAULT_TEAM_ABBR and rejects an invalid team', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = byUrl()
+    const res = await handleNHL(makeRequest('/draft/pick-history'), env, makeCtx(), new URL('https://example.com/draft/pick-history'))
+    expect((await res.json()).team).toBe('CAR')
+
+    globalThis.fetch = vi.fn()
+    const bad = await handleNHL(makeRequest('/draft/pick-history?team=CAR),id.gt.0'), env, makeCtx(), new URL('https://example.com/draft/pick-history?team=CAR),id.gt.0'))
+    expect(bad.status).toBe(400)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('degrades to empty lists on a Supabase failure and does not cache it', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await handleNHL(makeRequest('/draft/pick-history?team=CAR'), env, makeCtx(), new URL('https://example.com/draft/pick-history?team=CAR'))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ team: 'CAR', sinceYear, made: [], tradedAway: [] })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-analytics', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const env = makeEnv({
