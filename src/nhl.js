@@ -3804,35 +3804,33 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     return json(data);
   }
 
-  // ── Elo win probability for one matchup ─────────────────────────────────────
-  // GET /elo/win-prob?home=CAR&away=FLA[&neutral=1]
-  // The number the game preview's win bar shows -- the same one
-  // eyewall-pipeline's win_probs.py logs each morning for the public scorecard
-  // and /prediction/analyze uses: team_elo_ratings + the Elo expected score,
-  // with ELO_HOME_ADVANTAGE unless the game is at a neutral site. Response:
-  // { home, away, neutral, homeWinProb, ratings: { home, away } }. A team with
-  // no rating row uses 1500 (fetchEloRatings()'s default). 1hr KV -- ratings
-  // change once a night. A failed read returns `unavailable: true`, not cached.
-  if (url.pathname === '/elo/win-prob') {
-    const home    = (url.searchParams.get('home') || '').toUpperCase();
-    const away    = (url.searchParams.get('away') || '').toUpperCase();
-    const neutral = url.searchParams.get('neutral') === '1';
-    if (!/^[A-Z]{2,3}$/.test(home) || !/^[A-Z]{2,3}$/.test(away) || home === away) {
-      return new Response(JSON.stringify({ error: 'invalid home/away' }), { status: 400, headers: corsHeaders() });
-    }
-    const kvKey  = `nhl:elo-win-prob:${home}:${away}:${neutral ? 1 : 0}`;
+  // ── Elo ratings — every team's rating, for game win probabilities ─────────────
+  // GET /elo/ratings
+  // team_elo_ratings (eyewall-pipeline's elo_ratings.py, a nightly full replay)
+  // plus the home advantage, so the frontend computes each matchup's win
+  // probability with the exact formula /prediction/analyze (eloWinProb()) and
+  // eyewall-pipeline's win_probs.py -- the morning log the public scorecard
+  // grades -- use: P(home) = 1 / (1 + 10^((away - (home + homeAdvantage)) / 400)),
+  // no advantage at a neutral site. One call covers the preview's win bar and
+  // every game card on the schedule. Response: { ratings: { ABBR: rating },
+  // homeAdvantage }. 1hr KV (ratings change once a night); a failed read
+  // returns `unavailable: true`, and neither it nor an empty table is cached.
+  if (url.pathname === '/elo/ratings') {
+    const kvKey  = 'nhl:elo-ratings';
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
-    let ratings;
+    let rows;
     try {
-      ratings = await fetchEloRatings({ abbr: home }, away);
+      rows = await sbRows('team_elo_ratings?select=team,rating');
     } catch {
-      return json({ home, away, neutral, homeWinProb: null, ratings: null, unavailable: true });
+      return json({ ratings: {}, homeAdvantage: ELO_HOME_ADVANTAGE, unavailable: true });
     }
-    const homeWinProb = Math.round(eloWinProb(ratings.car, ratings.opp, true, neutral) * 10000) / 10000;
-    const data = { home, away, neutral, homeWinProb, ratings: { home: ratings.car, away: ratings.opp } };
-    await kvPut(env, kvKey, data, 3600);
+    const data = {
+      ratings: Object.fromEntries(rows.map(row => [row.team, Number(row.rating)])),
+      homeAdvantage: ELO_HOME_ADVANTAGE,
+    };
+    if (rows.length) await kvPut(env, kvKey, data, 3600);
     return json(data);
   }
 
