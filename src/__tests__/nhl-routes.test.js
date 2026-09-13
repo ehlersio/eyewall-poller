@@ -786,6 +786,88 @@ describe('GET /probable-starters', () => {
   })
 })
 
+// ── /scorecard (added alongside eyewall-pipeline's prediction_scorecard.py) ──
+describe('GET /scorecard', () => {
+  const rows = [
+    { model: 'game_winner', kind: 'live', period: '2026-27', status: 'pending', n: 0, updated_at: '2026-09-14T12:40:00Z' },
+    { model: 'game_winner', kind: 'backtest', period: '2023-24 to 2025-26', status: 'ok', n: 3936, accuracy: 0.5648, brier: 0.2419, updated_at: '2026-09-13T23:00:00Z' },
+  ]
+  const get = env => handleNHL(makeRequest('/scorecard'), env, makeCtx(), new URL('https://example.com/scorecard'))
+
+  it('reads prediction_scorecard, groups it, caches 1hr', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => rows })
+
+    const body = await (await get(env)).json()
+
+    expect(body.models.game_winner.live).toMatchObject({ period: '2026-27', status: 'pending' })
+    expect(body.models.game_winner.backtest).toMatchObject({ n: 3936, accuracy: 0.5648 })
+    expect(body.updatedAt).toBe('2026-09-14T12:40:00Z')
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('prediction_scorecard?select=')
+    expect(putSpy).toHaveBeenCalledWith('nhl:scorecard', JSON.stringify(body), { expirationTtl: 3600 })
+  })
+
+  it('an empty table is returned but not cached; a failed read is unavailable and not cached', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+    expect(await (await get(env)).json()).toEqual({ models: {}, updatedAt: null })
+
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+    expect(await (await get(env)).json()).toMatchObject({ models: {}, unavailable: true })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
+// ── /elo/win-prob (the number the game preview's win bar shows) ──
+describe('GET /elo/win-prob', () => {
+  const ratingsRows = [{ team: 'CAR', rating: 1560 }, { team: 'FLA', rating: 1540 }]
+  const expected = (home, away, adv) => Math.round((1 / (1 + Math.pow(10, (away - (home + adv)) / 400))) * 10000) / 10000
+  const get = (env, qs) => handleNHL(makeRequest(`/elo/win-prob${qs}`), env, makeCtx(), new URL(`https://example.com/elo/win-prob${qs}`))
+
+  it('home advantage for a normal game, none at a neutral site; caches 1hr', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ratingsRows })
+
+    const home = await (await get(env, '?home=car&away=FLA')).json()
+    const neutral = await (await get(env, '?home=CAR&away=FLA&neutral=1')).json()
+
+    expect(home).toEqual({ home: 'CAR', away: 'FLA', neutral: false, homeWinProb: expected(1560, 1540, 35), ratings: { home: 1560, away: 1540 } })
+    expect(neutral.homeWinProb).toBe(expected(1560, 1540, 0))
+    expect(home.homeWinProb).toBeGreaterThan(neutral.homeWinProb)
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('team_elo_ratings?team=in.(CAR,FLA)')
+    expect(putSpy).toHaveBeenCalledWith('nhl:elo-win-prob:CAR:FLA:0', JSON.stringify(home), { expirationTtl: 3600 })
+    expect(putSpy).toHaveBeenCalledWith('nhl:elo-win-prob:CAR:FLA:1', JSON.stringify(neutral), { expirationTtl: 3600 })
+  })
+
+  it('a team with no rating uses 1500', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [{ team: 'CAR', rating: 1560 }] })
+    const body = await (await get(env, '?home=CAR&away=UTA')).json()
+    expect(body.ratings).toEqual({ home: 1560, away: 1500 })
+    expect(body.homeWinProb).toBe(expected(1560, 1500, 35))
+  })
+
+  it('rejects missing, malformed or identical teams', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = vi.fn()
+    for (const qs of ['', '?home=CAR', '?home=CAR&away=CAR', '?home=CAR),id.gt.0&away=FLA']) {
+      expect((await get(env, qs)).status).toBe(400)
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('a failed ratings read is unavailable and not cached', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+    expect(await (await get(env, '?home=CAR&away=FLA')).json()).toMatchObject({ homeWinProb: null, unavailable: true })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-analytics', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const env = makeEnv({
