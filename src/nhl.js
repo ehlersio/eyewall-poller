@@ -3585,6 +3585,46 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     return json(rows);
   }
 
+  // ── Draft pick history — where a team's recent picks came from / went ────────
+  // GET /draft/pick-history?team=CAR
+  // From eyewall-pipeline's draft_pick_history (draft_history.py -- the NHL
+  // records API's draft data, each pick's teamPickHistory parsed into
+  // pick_chain, original owner first, drafting team last). Two lists over the
+  // last PICK_HISTORY_DRAFTS drafts, newest first:
+  //   made       -- picks this team used (pick_chain = where each came from)
+  //   tradedAway -- this team's own original picks another team used
+  // 6hr KV: draft history only changes at the draft (and as prospects get NHL
+  // ids). A failed read returns empty lists and is NOT cached. `team` is
+  // validated before it's interpolated into the PostgREST filter.
+  if (url.pathname === '/draft/pick-history') {
+    const PICK_HISTORY_DRAFTS = 5;
+    const team = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
+    if (!/^[A-Z]{2,3}$/.test(team)) {
+      return new Response(JSON.stringify({ error: 'invalid team' }), { status: 400, headers: corsHeaders() });
+    }
+    const sinceYear = new Date().getUTCFullYear() - (PICK_HISTORY_DRAFTS - 1);
+    const kvKey  = `draft:pick-history:${team}:${sinceYear}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const select = 'draft_year,round,pick_in_round,overall_pick,team,original_team,pick_chain,times_traded,player_id,player_name,position';
+    const base   = `draft_pick_history?select=${select}&draft_year=gte.${sinceYear}&order=draft_year.desc,overall_pick.asc`;
+    let made;
+    let tradedAway;
+    try {
+      [made, tradedAway] = await Promise.all([
+        sbRows(`${base}&team=eq.${team}`),
+        sbRows(`${base}&original_team=eq.${team}&team=neq.${team}`),
+      ]);
+    } catch {
+      return json({ team, sinceYear, made: [], tradedAway: [] });
+    }
+
+    const data = { team, sinceYear, made, tradedAway };
+    await kvPut(env, kvKey, data, 6 * 3600);
+    return json(data);
+  }
+
   // ── Milestones — hat tricks, shutouts, SH goals, season/career thresholds ─────
   // GET /milestones               — recent milestones, NHL only (feed default)
   // GET /milestones?team=CAR      — filtered to one team
