@@ -326,6 +326,88 @@ describe('GET /injuries', () => {
   })
 })
 
+// ── /transactions (added alongside eyewall-pipeline's transactions.py) ──
+// Pairing itself is unit-tested in transactions.test.js; these cover the
+// route: the Supabase query shape per scope, the KV key/TTL, the paired
+// response, input validation, and not caching a failed read.
+describe('GET /transactions', () => {
+  const tradeRows = [
+    { id: 1, tx_date: '2026-06-27', team: 'CAR', categories: ['trade'], primary_category: 'trade', counterparties: ['ANA'],
+      description: 'Acquired D John Carlson from Anaheim in exchange for D Kyle Masters and a 2026 sixth-round pick (No. 162).' },
+    { id: 2, tx_date: '2026-06-27', team: 'ANA', categories: ['trade'], primary_category: 'trade', counterparties: ['CAR'],
+      description: 'Acquired D Kyle Masters and a 2026 sixth-round pick (No. 162) from Carolina Hurricanes for D John Carlson.' },
+  ]
+
+  it('team scope: filters to the team or trades naming it, pairs halves, caches under the team key for 1hr', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => tradeRows })
+
+    const res = await handleNHL(makeRequest('/transactions?team=ANA'), env, makeCtx(), new URL('https://example.com/transactions?team=ANA'))
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.scope).toBe('team')
+    expect(body.team).toBe('ANA')
+    expect(body.items).toHaveLength(1)
+    expect(body.items[0].kind).toBe('trade')
+    expect(body.items[0].teams).toEqual(['ANA', 'CAR']) // focus team first
+    const calledUrl = globalThis.fetch.mock.calls[0][0]
+    expect(calledUrl).toContain('nhl_transactions')
+    expect(calledUrl).toContain('or=(team.eq.ANA,counterparties.cs.%7BANA%7D)')
+    expect(calledUrl).toContain('order=tx_date.desc,id.desc')
+    expect(putSpy).toHaveBeenCalledWith('nhl:transactions:team:ANA', JSON.stringify(body), { expirationTtl: 3600 })
+  })
+
+  it('league scope: no team filter, league cache key', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => tradeRows })
+
+    const res = await handleNHL(makeRequest('/transactions?scope=league'), env, makeCtx(), new URL('https://example.com/transactions?scope=league'))
+
+    const body = await res.json()
+    expect(body).toMatchObject({ scope: 'league', team: null })
+    expect(globalThis.fetch.mock.calls[0][0]).not.toContain('or=')
+    expect(putSpy.mock.calls[0][0]).toBe('nhl:transactions:league')
+  })
+
+  it('warm cache: serves directly from KV, no Supabase read', async () => {
+    const cachedBody = { scope: 'team', team: 'CAR', items: [] }
+    const env = makeEnv({
+      CACHE: { async get(key) { return key === 'nhl:transactions:team:CAR' ? JSON.stringify(cachedBody) : null }, async put() {} },
+    })
+    globalThis.fetch = vi.fn()
+
+    const res = await handleNHL(makeRequest('/transactions?team=CAR'), env, makeCtx(), new URL('https://example.com/transactions?team=CAR'))
+
+    expect(await res.json()).toEqual(cachedBody)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('rejects a team value that is not a 2-3 letter abbreviation (it lands in a PostgREST filter)', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = vi.fn()
+
+    const res = await handleNHL(makeRequest('/transactions?team=CAR),id.gt.0'), env, makeCtx(), new URL('https://example.com/transactions?team=CAR),id.gt.0'))
+
+    expect(res.status).toBe(400)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('degrades to empty items on a Supabase failure and does not cache it', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await handleNHL(makeRequest('/transactions?team=CAR'), env, makeCtx(), new URL('https://example.com/transactions?team=CAR'))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ scope: 'team', team: 'CAR', items: [] })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-analytics', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const env = makeEnv({
