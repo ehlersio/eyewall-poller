@@ -408,6 +408,78 @@ describe('GET /transactions', () => {
   })
 })
 
+// ── /scratches (added alongside eyewall-pipeline's scratches.py) ──
+// Summary math is unit-tested in scratches.test.js; these cover the route:
+// query shape, validation, prior-season fallback, KV key, no-cache-on-failure.
+// resolveNHLSeason is mocked to 20252026 at the top of this file.
+describe('GET /scratches', () => {
+  const rows = [
+    { game_id: 1, game_date: '2025-12-13', player_id: 8476422, player_name: 'Mike Reilly', scratch_type: 'unknown' },
+    { game_id: 2, game_date: '2025-12-15', player_id: 8476422, player_name: 'Mike Reilly', scratch_type: 'unknown' },
+  ]
+
+  it('cold cache: queries the live season regular-season rows and summarizes them', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => rows })
+
+    const res = await handleNHL(makeRequest('/scratches?team=CAR'), env, makeCtx(), new URL('https://example.com/scratches?team=CAR'))
+
+    const body = await res.json()
+    expect(body).toMatchObject({ team: 'CAR', season: 20252026, gameType: 2, stale: false, classified: false })
+    expect(body.players[0]).toMatchObject({ player_name: 'Mike Reilly', total: 2, unknown: 2 })
+    const calledUrl = globalThis.fetch.mock.calls[0][0]
+    expect(calledUrl).toContain('game_scratches?team=eq.CAR&season=eq.20252026&game_type=eq.2')
+    expect(putSpy).toHaveBeenCalledWith('nhl:scratches:CAR:auto:2', JSON.stringify(body), { expirationTtl: 3600 })
+  })
+
+  it('falls back to the prior season when the live one has no rows yet, and flags it stale', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => rows })
+
+    const res = await handleNHL(makeRequest('/scratches?team=CAR'), env, makeCtx(), new URL('https://example.com/scratches?team=CAR'))
+
+    const body = await res.json()
+    expect(body).toMatchObject({ season: 20242025, stale: true })
+    expect(globalThis.fetch.mock.calls[1][0]).toContain('season=eq.20242025')
+  })
+
+  it('does not fall back when a season is given explicitly', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    const res = await handleNHL(makeRequest('/scratches?team=CAR&season=20262027&gameType=3'), env, makeCtx(), new URL('https://example.com/scratches?team=CAR&season=20262027&gameType=3'))
+
+    expect(await res.json()).toMatchObject({ season: 20262027, gameType: 3, stale: false, players: [] })
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('game_type=eq.3')
+  })
+
+  it('rejects an invalid team, season, or gameType before querying', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = vi.fn()
+    for (const qs of ['team=CAR),id.gt.0', 'team=CAR&season=2025', 'team=CAR&gameType=1']) {
+      const res = await handleNHL(makeRequest(`/scratches?${qs}`), env, makeCtx(), new URL(`https://example.com/scratches?${qs}`))
+      expect(res.status).toBe(400)
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('degrades to an empty summary on a Supabase failure and does not cache it', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await handleNHL(makeRequest('/scratches?team=CAR'), env, makeCtx(), new URL('https://example.com/scratches?team=CAR'))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ team: 'CAR', players: [], stale: false })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-analytics', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const env = makeEnv({

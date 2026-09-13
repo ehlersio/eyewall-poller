@@ -8,6 +8,7 @@
 import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth } from './shared.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
+import { summarizeScratches } from './scratches.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
 const STATS_BASE = 'https://api.nhle.com/stats/rest/en';
@@ -2291,6 +2292,58 @@ export async function handleNHL(request, env, ctx, url) {
     }
 
     const data = { scope, team: focusTeam, items: pairTransactions(rows, { focusTeam }) };
+    await kvPut(env, kvKey, data, 3600);
+    return json(data);
+  }
+
+  // GET /scratches?team=CAR[&season=20262027][&gameType=2]
+  // Per-player scratch summary for one team-season, from eyewall-pipeline's
+  // game_scratches table (scratches.py: the NHL's own right-rail scratch
+  // lists, classified healthy/injured/suspended/unknown against that day's
+  // player_injury_history snapshot). gameType 2 (regular season, default) or
+  // 3 (playoffs) -- never pooled, since playoff lists run much longer (extra
+  // reserve players are carried). With no explicit season and nothing yet
+  // for the live one (every offseason/preseason day -- scratches.py skips
+  // preseason), falls back to the prior season, flagged via stale/season --
+  // the same "carry forward real data, label it" convention as
+  // /player-analytics' statsStale. team/season/gameType are all validated
+  // before being interpolated into the PostgREST query. 1hr KV; a failed
+  // read returns an empty summary and is NOT cached.
+  if (url.pathname === '/scratches') {
+    const team        = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
+    const seasonParam = url.searchParams.get('season');
+    const gameType    = url.searchParams.get('gameType') || '2';
+    if (!/^[A-Z]{2,3}$/.test(team) || (seasonParam && !/^\d{8}$/.test(seasonParam)) || !['2', '3'].includes(gameType)) {
+      return new Response(JSON.stringify({ error: 'invalid team, season, or gameType' }), { status: 400, headers: corsHeaders() });
+    }
+    const season = seasonParam || String(await resolveNHLSeason(env));
+    const kvKey  = `nhl:scratches:${team}:${seasonParam || 'auto'}:${gameType}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const fetchSeason = (s) => sbRows(
+      `game_scratches?team=eq.${team}&season=eq.${s}&game_type=eq.${gameType}` +
+      `&select=game_id,game_date,player_id,player_name,scratch_type&order=game_date.asc,id.asc&limit=1000`
+    );
+    let rows;
+    let usedSeason = season;
+    let stale = false;
+    try {
+      rows = await fetchSeason(season);
+      if (rows.length === 0 && !seasonParam) {
+        const prior = String(Number(season) - 10001); // 20262027 -> 20252026
+        const fallback = await fetchSeason(prior);
+        if (fallback.length > 0) {
+          rows = fallback;
+          usedSeason = prior;
+          stale = true;
+        }
+      }
+    } catch {
+      return json({ team, season: Number(season), gameType: Number(gameType), stale: false, ...summarizeScratches([]) });
+    }
+
+    const data = { team, season: Number(usedSeason), gameType: Number(gameType), stale, ...summarizeScratches(rows) };
     await kvPut(env, kvKey, data, 3600);
     return json(data);
   }
