@@ -11,6 +11,7 @@ import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { summarizeScratches } from './scratches.js';
 import { summarizeNextGames, isPlayoffOddsStale } from './playoffOdds.js';
 import { summarizeInjuryLeague } from './injuryImpact.js';
+import { summarizeStarters } from './probableStarters.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
 const STATS_BASE = 'https://api.nhle.com/stats/rest/en';
@@ -3728,6 +3729,41 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
 
     const data = { team, season: impact.season, impact, league: summarizeInjuryLeague(leagueRows) };
     await kvPut(env, kvKey, data, 3600);
+    return json(data);
+  }
+
+  // ── Probable starters — who's likely to start in goal for a game ──────────────
+  // GET /probable-starters?game=2026020001
+  // From eyewall-pipeline's starting_goalie.py (nightly: for each team's next
+  // regular-season game once it's within 2 days, the probability each healthy
+  // roster goalie starts -- a model of the team's own pattern, since the NHL
+  // publishes no probable starters). Response: { gameId, gameDate, runDate,
+  // teams: { ABBR: [{ goalie_id, goalie_name, start_prob, factors }] } }, each
+  // team's goalies most likely first (summarizeStarters(),
+  // src/probableStarters.js). teams is {} until the game is inside the window
+  // (or for a team skipped as still carrying a camp roster). 1hr KV; neither a
+  // failed read (`unavailable: true`) nor an empty result is cached, so the
+  // first nightly write shows up at once. `game` must be a 10-digit NHL id.
+  if (url.pathname === '/probable-starters') {
+    const gameId = url.searchParams.get('game') || '';
+    if (!/^\d{10}$/.test(gameId)) {
+      return new Response(JSON.stringify({ error: 'invalid game' }), { status: 400, headers: corsHeaders() });
+    }
+    const kvKey  = `nhl:probable-starters:${gameId}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let rows;
+    try {
+      rows = await sbRows(
+        `goalie_start_probs?select=team,goalie_id,goalie_name,start_prob,factors,game_date,run_date&game_id=eq.${gameId}`
+      );
+    } catch {
+      return json({ gameId: Number(gameId), gameDate: null, runDate: null, teams: {}, unavailable: true });
+    }
+
+    const data = { gameId: Number(gameId), ...summarizeStarters(rows) };
+    if (Object.keys(data.teams).length) await kvPut(env, kvKey, data, 3600);
     return json(data);
   }
 
