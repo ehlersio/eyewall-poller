@@ -9,6 +9,7 @@ import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert,
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { summarizeScratches } from './scratches.js';
+import { summarizeNextGames, isPlayoffOddsStale } from './playoffOdds.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
 const STATS_BASE = 'https://api.nhle.com/stats/rest/en';
@@ -3622,6 +3623,67 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
 
     const data = { team, sinceYear, made, tradedAway };
     await kvPut(env, kvKey, data, 6 * 3600);
+    return json(data);
+  }
+
+  // ── Playoff odds — simulated playoff chances, and why they moved ──────────────
+  // GET /playoff-odds?team=CAR[&season=20262027]
+  // From eyewall-pipeline's playoff_odds.py (nightly: the rest of the regular
+  // season simulated from team Elo ratings). Without `season`, the season of
+  // the team's most recent run -- no resolveNHLSeason() call, since odds only
+  // exist once the pipeline has run for a season anyway. Response:
+  //   latest    -- that run's row, incl. `change` (why it moved since the
+  //                previous run; null on a season's first run)
+  //   history   -- [{ run_date, playoff_pct }] for that season, oldest first
+  //   nextGames -- the team's odds under each result of the next game-day's
+  //                games (summarizeNextGames(): own games, then the biggest
+  //                swings elsewhere)
+  //   stale     -- no run for PLAYOFF_ODDS_STALE_DAYS (season over, or the
+  //                nightly stopped) -- labeled by the frontend, not hidden
+  // 1hr KV. A failed read returns `unavailable: true` and is NOT cached;
+  // neither is an empty result, so the season's first run shows up at once.
+  if (url.pathname === '/playoff-odds') {
+    const HISTORY_MAX = 250; // > one regular season of nightly runs
+    const team   = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
+    const season = url.searchParams.get('season');
+    if (!/^[A-Z]{2,3}$/.test(team) || (season && !/^\d{8}$/.test(season))) {
+      return new Response(JSON.stringify({ error: 'invalid team or season' }), { status: 400, headers: corsHeaders() });
+    }
+    const kvKey  = `nhl:playoff-odds:${team}:${season || 'latest'}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const empty = { team, season: season ? Number(season) : null, runDate: null, stale: false, latest: null, history: [], nextGames: [] };
+    const bySeason = season ? `&season=eq.${season}` : '';
+    const cols = 'season,run_date,playoff_pct,division_pct,proj_points,points_p10,points_p90,current_points,games_played,games_remaining,elo_rating,sims,change';
+    let latest;
+    let history;
+    let nextGames;
+    try {
+      const [latestRows, historyRows] = await Promise.all([
+        sbRows(`playoff_odds?select=${cols}&team=eq.${team}${bySeason}&order=run_date.desc&limit=1`),
+        sbRows(`playoff_odds?select=season,run_date,playoff_pct&team=eq.${team}${bySeason}&order=run_date.desc&limit=${HISTORY_MAX}`),
+      ]);
+      latest = latestRows[0] || null;
+      if (!latest) return json(empty);
+      history = historyRows
+        .filter(r => r.season === latest.season)
+        .reverse()
+        .map(({ run_date, playoff_pct }) => ({ run_date, playoff_pct }));
+      const impacts = await sbRows(
+        `playoff_odds_game_impacts?select=game_id,game_date,home_team,away_team,outcome,playoff_pct` +
+        `&season=eq.${latest.season}&run_date=eq.${latest.run_date}&team=eq.${team}`
+      );
+      nextGames = summarizeNextGames(impacts, team);
+    } catch {
+      return json({ ...empty, unavailable: true });
+    }
+
+    const data = {
+      team, season: latest.season, runDate: latest.run_date,
+      stale: isPlayoffOddsStale(latest.run_date), latest, history, nextGames,
+    };
+    await kvPut(env, kvKey, data, 3600);
     return json(data);
   }
 
