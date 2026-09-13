@@ -10,6 +10,7 @@ import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { summarizeScratches } from './scratches.js';
 import { summarizeNextGames, isPlayoffOddsStale } from './playoffOdds.js';
+import { summarizeInjuryLeague } from './injuryImpact.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
 const STATS_BASE = 'https://api.nhle.com/stats/rest/en';
@@ -3683,6 +3684,49 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       team, season: latest.season, runDate: latest.run_date,
       stale: isPlayoffOddsStale(latest.run_date), latest, history, nextGames,
     };
+    await kvPut(env, kvKey, data, 3600);
+    return json(data);
+  }
+
+  // ── Injury impact — man-games and WAR lost to injury this season ──────────────
+  // GET /injury-impact?team=CAR[&season=20262027]
+  // From eyewall-pipeline's injury_impact.py (nightly: a player on the day's
+  // injury report who didn't dress = a man-game lost, valued at his WAR per
+  // game). Without `season`, the team's most recent season row. Response:
+  //   impact -- the team_injury_impact row: games_played, man_games_lost,
+  //             war_lost, players_injured, rank_man_games / rank_war_lost
+  //             (1 = most lost), players [{ player_id, player_name, games,
+  //             war_lost, last_date, status, injury_type }], updated_at
+  //   league -- summarizeInjuryLeague() over every team's row that season
+  // Injury history starts 2026-09-12, so there are no rows before the
+  // 2026-27 regular season: impact is null. 1hr KV. A failed read returns
+  // `unavailable: true` and is NOT cached; neither is an empty result, so
+  // the first game night shows up at once.
+  if (url.pathname === '/injury-impact') {
+    const team   = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
+    const season = url.searchParams.get('season');
+    if (!/^[A-Z]{2,3}$/.test(team) || (season && !/^\d{8}$/.test(season))) {
+      return new Response(JSON.stringify({ error: 'invalid team or season' }), { status: 400, headers: corsHeaders() });
+    }
+    const kvKey  = `nhl:injury-impact:${team}:${season || 'latest'}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const empty = { team, season: season ? Number(season) : null, impact: null, league: null };
+    const bySeason = season ? `&season=eq.${season}` : '';
+    const cols = 'season,team,games_played,man_games_lost,war_lost,players_injured,rank_man_games,rank_war_lost,players,updated_at';
+    let impact;
+    let leagueRows;
+    try {
+      const rows = await sbRows(`team_injury_impact?select=${cols}&team=eq.${team}${bySeason}&order=season.desc&limit=1`);
+      impact = rows[0] || null;
+      if (!impact) return json(empty);
+      leagueRows = await sbRows(`team_injury_impact?select=team,games_played,man_games_lost,war_lost&season=eq.${impact.season}`);
+    } catch {
+      return json({ ...empty, unavailable: true });
+    }
+
+    const data = { team, season: impact.season, impact, league: summarizeInjuryLeague(leagueRows) };
     await kvPut(env, kvKey, data, 3600);
     return json(data);
   }
