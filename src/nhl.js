@@ -7,6 +7,7 @@
 
 import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth } from './shared.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
+import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
 const STATS_BASE = 'https://api.nhle.com/stats/rest/en';
@@ -2254,6 +2255,44 @@ export async function handleNHL(request, env, ctx, url) {
 
     await kvPut(env, kvKey, rows, 3600);
     return json(rows);
+  }
+
+  // GET /transactions?team=CAR      -- that team's moves: its own entries, plus
+  //                                    trades naming it that it has no entry for
+  // GET /transactions?scope=league  -- league-wide recent moves
+  // Proxies eyewall-pipeline's nhl_transactions table (transactions.py, from
+  // ESPN's NHL transactions feed -- the NHL API has none). ESPN posts each side
+  // of a trade as its own entry, so pairTransactions() (src/transactions.js)
+  // merges the two halves into one { kind: 'trade' } item before responding.
+  // 1hr KV cache, same class as /injuries. Unlike /injuries, a Supabase read
+  // failure degrades to an empty list WITHOUT caching it, so a transient
+  // outage doesn't pin an empty feed for the full hour. `team` is validated
+  // before it's interpolated into the PostgREST `or=` filter string.
+  if (url.pathname === '/transactions') {
+    const scope = url.searchParams.get('scope') === 'league' ? 'league' : 'team';
+    const team  = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    if (scope === 'team' && !/^[A-Z]{2,3}$/.test(team)) {
+      return new Response(JSON.stringify({ error: 'invalid team' }), { status: 400, headers: corsHeaders() });
+    }
+    const focusTeam = scope === 'team' ? team : null;
+    const kvKey  = scope === 'league' ? 'nhl:transactions:league' : `nhl:transactions:team:${team}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    const select = 'id,tx_date,team,description,categories,primary_category,counterparties';
+    const filter = scope === 'team' ? `&or=(team.eq.${team},counterparties.cs.%7B${team}%7D)` : '';
+    let rows;
+    try {
+      rows = await sbRows(
+        `nhl_transactions?select=${select}${filter}&order=tx_date.desc,id.desc&limit=${TRANSACTIONS_LIMIT}`
+      );
+    } catch {
+      return json({ scope, team: focusTeam, items: [] });
+    }
+
+    const data = { scope, team: focusTeam, items: pairTransactions(rows, { focusTeam }) };
+    await kvPut(env, kvKey, data, 3600);
+    return json(data);
   }
 
   if (url.pathname === '/game-xg') {
