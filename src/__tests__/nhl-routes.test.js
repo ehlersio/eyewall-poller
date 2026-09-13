@@ -641,6 +641,82 @@ describe('GET /playoff-odds', () => {
   })
 })
 
+// ── /injury-impact (added alongside eyewall-pipeline's injury_impact.py) ──
+// The team's latest team_injury_impact row, then every team's row that
+// season for league averages.
+describe('GET /injury-impact', () => {
+  const impact = {
+    season: 20262027, team: 'CAR', games_played: 10, man_games_lost: 14, war_lost: 0.62, players_injured: 3,
+    rank_man_games: 5, rank_war_lost: 3, updated_at: '2026-10-29T12:40:00+00:00',
+    players: [{ player_id: 8478427, player_name: 'Sebastian Aho', games: 6, war_lost: 0.41, last_date: '2026-10-28', status: 'out', injury_type: 'Upper Body' }],
+  }
+  const league = [
+    { team: 'CAR', games_played: 10, man_games_lost: 14, war_lost: 0.62 },
+    { team: 'OTT', games_played: 9, man_games_lost: 6, war_lost: 0.18 },
+  ]
+  const byUrl = ({ teamRows = [impact] } = {}) => vi.fn().mockImplementation(async (u) => ({
+    ok: true,
+    json: async () => (u.includes('limit=1') ? teamRows : league),
+  }))
+  const get = (env, qs) => handleNHL(makeRequest(`/injury-impact${qs}`), env, makeCtx(), new URL(`https://example.com/injury-impact${qs}`))
+
+  it("returns the team's season row and league averages; caches 1hr", async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = byUrl()
+
+    const body = await (await get(env, '?team=CAR')).json()
+
+    expect(body).toEqual({
+      team: 'CAR', season: 20262027, impact,
+      league: { teams: 2, avgManGames: 10, avgWarLost: 0.4, avgGamesPlayed: 9.5 },
+    })
+    const urls = globalThis.fetch.mock.calls.map(c => c[0])
+    expect(urls).toHaveLength(2)
+    expect(urls[0]).toContain('team_injury_impact?')
+    expect(urls[0]).toContain('team=eq.CAR&order=season.desc&limit=1')
+    expect(urls[1]).toContain('season=eq.20262027')
+    expect(urls[1]).not.toContain('team=eq.')
+    expect(putSpy).toHaveBeenCalledWith('nhl:injury-impact:CAR:latest', JSON.stringify(body), { expirationTtl: 3600 })
+  })
+
+  it('filters by an explicit season, and rejects an invalid team or season', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = byUrl()
+    await get(env, '?team=car&season=20262027')
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('team=eq.CAR&season=eq.20262027')
+
+    globalThis.fetch = vi.fn()
+    expect((await get(env, '?team=CAR),id.gt.0')).status).toBe(400)
+    expect((await get(env, '?team=CAR&season=2026')).status).toBe(400)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('before the first game: impact null, no league read, not cached', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = byUrl({ teamRows: [] })
+
+    const body = await (await get(env, '?team=CAR')).json()
+
+    expect(body).toEqual({ team: 'CAR', season: null, impact: null, league: null })
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+
+  it('degrades to unavailable on a Supabase failure and does not cache it', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await get(env, '?team=CAR')
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ team: 'CAR', impact: null, unavailable: true })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-analytics', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const env = makeEnv({
