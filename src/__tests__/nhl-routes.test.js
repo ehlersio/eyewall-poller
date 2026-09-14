@@ -786,6 +786,77 @@ describe('GET /probable-starters', () => {
   })
 })
 
+// ── /scorecard (added alongside eyewall-pipeline's prediction_scorecard.py) ──
+describe('GET /scorecard', () => {
+  const rows = [
+    { model: 'game_winner', kind: 'live', period: '2026-27', status: 'pending', n: 0, updated_at: '2026-09-14T12:40:00Z' },
+    { model: 'game_winner', kind: 'backtest', period: '2023-24 to 2025-26', status: 'ok', n: 3936, accuracy: 0.5648, brier: 0.2419, updated_at: '2026-09-13T23:00:00Z' },
+  ]
+  const get = env => handleNHL(makeRequest('/scorecard'), env, makeCtx(), new URL('https://example.com/scorecard'))
+
+  it('reads prediction_scorecard, groups it, caches 1hr', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => rows })
+
+    const body = await (await get(env)).json()
+
+    expect(body.models.game_winner.live).toMatchObject({ period: '2026-27', status: 'pending' })
+    expect(body.models.game_winner.backtest).toMatchObject({ n: 3936, accuracy: 0.5648 })
+    expect(body.updatedAt).toBe('2026-09-14T12:40:00Z')
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('prediction_scorecard?select=')
+    expect(putSpy).toHaveBeenCalledWith('nhl:scorecard', JSON.stringify(body), { expirationTtl: 3600 })
+  })
+
+  it('an empty table is returned but not cached; a failed read is unavailable and not cached', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+    expect(await (await get(env)).json()).toEqual({ models: {}, updatedAt: null })
+
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+    expect(await (await get(env)).json()).toMatchObject({ models: {}, unavailable: true })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
+// ── /elo/ratings (every team's rating + the home advantage, for win bars) ──
+describe('GET /elo/ratings', () => {
+  const ratingsRows = [{ team: 'CAR', rating: 1560.25 }, { team: 'FLA', rating: 1540 }]
+  const get = env => handleNHL(makeRequest('/elo/ratings'), env, makeCtx(), new URL('https://example.com/elo/ratings'))
+
+  it('returns every rating (unrounded) and the home advantage; caches 1hr', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ratingsRows })
+
+    const body = await (await get(env)).json()
+
+    expect(body).toEqual({ ratings: { CAR: 1560.25, FLA: 1540 }, homeAdvantage: 35 })
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('team_elo_ratings?select=team,rating')
+    expect(putSpy).toHaveBeenCalledWith('nhl:elo-ratings', JSON.stringify(body), { expirationTtl: 3600 })
+  })
+
+  it('warm cache: serves directly from KV, no Supabase read', async () => {
+    const cachedBody = { ratings: { CAR: 1500 }, homeAdvantage: 35 }
+    const env = makeEnv({ CACHE: { async get(key) { return key === 'nhl:elo-ratings' ? JSON.stringify(cachedBody) : null }, async put() {} } })
+    globalThis.fetch = vi.fn()
+    expect(await (await get(env)).json()).toEqual(cachedBody)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('an empty table is not cached; a failed read is unavailable and not cached', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+    expect(await (await get(env)).json()).toEqual({ ratings: {}, homeAdvantage: 35 })
+
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+    expect(await (await get(env)).json()).toEqual({ ratings: {}, homeAdvantage: 35, unavailable: true })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /player-analytics', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const env = makeEnv({

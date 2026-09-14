@@ -12,6 +12,7 @@ import { summarizeScratches } from './scratches.js';
 import { summarizeNextGames, isPlayoffOddsStale } from './playoffOdds.js';
 import { summarizeInjuryLeague } from './injuryImpact.js';
 import { summarizeStarters } from './probableStarters.js';
+import { summarizeScorecard } from './scorecard.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
 const STATS_BASE = 'https://api.nhle.com/stats/rest/en';
@@ -217,13 +218,17 @@ async function fetchEloRatings(tc, oppAbbr) {
 }
 
 // Returns tc's win probability (0-1), applying home advantage to whichever
-// side is actually playing at home -- mirrors eyewall-pipeline/elo.py's
-// expected_prob(rating_home + HOME_ADVANTAGE, rating_away) exactly, just
+// side is actually playing at home -- unless the game is at a neutral site
+// (e.g. a Global Series game), where neither side gets it. Mirrors
+// eyewall-pipeline's playoff_odds.home_win_prob() exactly (elo.py's
+// expected_prob(rating_home + HOME_ADVANTAGE, rating_away), no advantage when
+// neutral) -- the number win_probs.py logs for the public scorecard -- just
 // reoriented to answer "does tc win" regardless of which side tc is on.
-function eloWinProb(carRating, oppRating, isHome) {
+function eloWinProb(carRating, oppRating, isHome, neutral = false) {
   const homeRating = isHome ? carRating : oppRating;
   const awayRating = isHome ? oppRating : carRating;
-  const homeWinProb = 1 / (1 + Math.pow(10, (awayRating - (homeRating + ELO_HOME_ADVANTAGE)) / 400));
+  const advantage = neutral ? 0 : ELO_HOME_ADVANTAGE;
+  const homeWinProb = 1 / (1 + Math.pow(10, (awayRating - (homeRating + advantage)) / 400));
   return isHome ? homeWinProb : 1 - homeWinProb;
 }
 
@@ -232,7 +237,7 @@ function eloWinProb(carRating, oppRating, isHome) {
 // team_elo_ratings (see above); everything else here is descriptive
 // context for the AI narrative and the Pythagorean expected-score display
 // — last season's box-score rates, since this season's don't exist yet.
-async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey) {
+async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey, neutral = false) {
   const prior = priorSeason(tc.season);
 
   const [teamSeasonRows, eloRatings] = await Promise.all([
@@ -261,7 +266,7 @@ async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameI
   const carPP = carRow.pp_pct ?? PP_PCT_DEFAULT;
   const oppPP = oppRow.pp_pct ?? PP_PCT_DEFAULT;
 
-  const carWinPct = Math.round(eloWinProb(eloRatings.car, eloRatings.opp, isHome) * 100);
+  const carWinPct = Math.round(eloWinProb(eloRatings.car, eloRatings.opp, isHome, neutral) * 100);
 
   // Corsi: reuse team_seasons, just filtered to the prior season instead
   // of the current one — same table the in-season branch already reads.
@@ -3175,6 +3180,7 @@ Only reference the two teams named above and the numbers given -- no player name
     const isHome    = game.homeTeam?.abbrev === tc.abbr;
     const oppAbbr   = isHome ? game.awayTeam?.abbrev : game.homeTeam?.abbrev;
     const isPlayoff = game.gameType === 3;
+    const neutral   = !!game.neutralSite;
 
     // NHL's /standings/now stays pinned to last season's final standings
     // until real games exist for the new one (confirmed live) — the
@@ -3190,7 +3196,7 @@ Only reference the two teams named above and the numbers given -- no player name
       // here. Route to the preseason fallback instead of blocking the
       // user -- it needs no current-season data at all now (Elo's own
       // rating, carried and regressed pipeline-side, works from game 1).
-      return buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey);
+      return buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey, neutral);
     }
 
     // Find standings for both teams
@@ -3308,7 +3314,7 @@ Only reference the two teams named above and the numbers given -- no player name
     // games). Same fetchEloRatings()/eloWinProb() helpers buildPreseasonFallback
     // uses above -- one consistent model for both regimes now.
     const eloRatings = await fetchEloRatings(tc, oppAbbr);
-    const carWinPct = Math.round(eloWinProb(eloRatings.car, eloRatings.opp, isHome) * 100);
+    const carWinPct = Math.round(eloWinProb(eloRatings.car, eloRatings.opp, isHome, neutral) * 100);
 
     const prompt = `You are EyeWall Analytics, a ${tc.displayName} hockey analytics assistant. Write a sharp, data-driven pre-game analysis for ${tc.displayName} fans. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener.
 
@@ -3764,6 +3770,67 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
 
     const data = { gameId: Number(gameId), ...summarizeStarters(rows) };
     if (Object.keys(data.teams).length) await kvPut(env, kvKey, data, 3600);
+    return json(data);
+  }
+
+  // ── Prediction scorecard — how the published predictions have done ────────────
+  // GET /scorecard
+  // From eyewall-pipeline's prediction_scorecard.py (nightly): one row per
+  // model x kind x period -- game_winner / starting_goalie / playoff_odds, each
+  // 'live' (graded predictions that were published beforehand, from 2026-27)
+  // and 'backtest' (the model replayed on past seasons, labeled as such).
+  // Response: { models: { <model>: { live, backtest } }, updatedAt } -- see
+  // summarizeScorecard(), src/scorecard.js (the most recent live period per
+  // model, so a new season's row takes over, plus its backtest). Plain
+  // probabilities, no betting framing. 1hr KV; neither a failed read
+  // (`unavailable: true`) nor an empty table is cached.
+  if (url.pathname === '/scorecard') {
+    const kvKey  = 'nhl:scorecard';
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let rows;
+    try {
+      rows = await sbRows(
+        'prediction_scorecard?select=model,kind,period,status,n,accuracy,brier,log_loss,' +
+        'baseline,calibration,recent,note,updated_at'
+      );
+    } catch {
+      return json({ models: {}, updatedAt: null, unavailable: true });
+    }
+
+    const data = summarizeScorecard(rows);
+    if (Object.keys(data.models).length) await kvPut(env, kvKey, data, 3600);
+    return json(data);
+  }
+
+  // ── Elo ratings — every team's rating, for game win probabilities ─────────────
+  // GET /elo/ratings
+  // team_elo_ratings (eyewall-pipeline's elo_ratings.py, a nightly full replay)
+  // plus the home advantage, so the frontend computes each matchup's win
+  // probability with the exact formula /prediction/analyze (eloWinProb()) and
+  // eyewall-pipeline's win_probs.py -- the morning log the public scorecard
+  // grades -- use: P(home) = 1 / (1 + 10^((away - (home + homeAdvantage)) / 400)),
+  // no advantage at a neutral site. One call covers the preview's win bar and
+  // every game card on the schedule. Response: { ratings: { ABBR: rating },
+  // homeAdvantage }. 1hr KV (ratings change once a night); a failed read
+  // returns `unavailable: true`, and neither it nor an empty table is cached.
+  if (url.pathname === '/elo/ratings') {
+    const kvKey  = 'nhl:elo-ratings';
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let rows;
+    try {
+      rows = await sbRows('team_elo_ratings?select=team,rating');
+    } catch {
+      return json({ ratings: {}, homeAdvantage: ELO_HOME_ADVANTAGE, unavailable: true });
+    }
+    const data = {
+      ratings: Object.fromEntries(rows.map(row => [row.team, Number(row.rating)])),
+      homeAdvantage: ELO_HOME_ADVANTAGE,
+    };
+    if (rows.length) await kvPut(env, kvKey, data, 3600);
     return json(data);
   }
 
