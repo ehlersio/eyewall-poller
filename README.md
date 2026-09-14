@@ -195,7 +195,7 @@ Non-secret vars live in `wrangler.toml` under `[vars]` or in the Cloudflare dash
 | Variable | Description |
 |----------|-------------|
 | `VAPID_PUBLIC_KEY` | Also set here for scheduled trigger access |
-| `APNS_ENV` | Native iOS push: `production` or `sandbox` (default). Must match the app's own `aps-environment` entitlement — still `development`/sandbox as of this writing, so leave unset until shipping a production build |
+| `APNS_ENV` | Native iOS push: `production` or `sandbox` (default when unset). **Set to `production` as of 2026-09-14** — TestFlight and App Store builds register production APNs tokens (Xcode signs archives with the production `aps-environment`, even though `App.entitlements` says `development`), and those tokens only work against `api.push.apple.com`. Side effect: debug builds run straight from Xcode get sandbox tokens and won't receive pushes while this is `production`. |
 | `APNS_BUNDLE_ID` | Native iOS push: defaults to `com.eyewallanalytics.app` (the app's bundle ID) if unset |
 
 ## KV Namespace
