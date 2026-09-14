@@ -1,0 +1,15 @@
+-- Drop nhl_odds -- sportsbook odds removed from the app and the Worker
+-- (2026-09: App Store review + no betting content). Run this in the
+-- Supabase SQL editor, after the Worker change that removed fetchOdds()
+-- and GET /nhl/odds has deployed. Nothing reads or writes this table any
+-- more (grepped across all three repos).
+--
+-- Worth doing rather than leaving the table idle: nhl_odds_table.sql /
+-- nhl_odds_rls_tighten.sql gave the anon role INSERT and UPDATE on it (the
+-- Worker only ever held the publishable key), so an unused table would
+-- still be publicly writable. Dropping it removes those policies too.
+--
+-- This deletes the stored odds history permanently. Export it first if
+-- you want it for backtests:
+--   copy (select * from public.nhl_odds) to stdout with csv header;
+drop table if exists public.nhl_odds;
