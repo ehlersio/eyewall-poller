@@ -39,8 +39,10 @@ function byNewest(a, b) {
 }
 
 // nhl_transactions rows -> feed items, newest first:
-//   { kind: 'trade', date, teams: [A, B], sides: [{team, description}, x2] }
-//   { kind: 'move',  date, team, category, categories, counterparties, description }
+//   { kind: 'trade', ids: [idA, idB], date, teams: [A, B], sides: [{team, description}, x2] }
+//   { kind: 'move',  id, date, team, category, categories, counterparties, description }
+// The row ids are what GET /trades/tree?tx= takes -- the app opens a trade's
+// tree from either kind (an unpaired trade entry is still a trade there).
 // A trade entry from team A naming B pairs with a trade entry from B naming
 // A within `windowDays`. Each row is used at most once. `focusTeam` (the
 // team whose feed this is) is put first in a pair's sides.
@@ -65,13 +67,16 @@ export function pairTransactions(rows, { windowDays = 2, focusTeam = null } = {}
         used.add(partner.id);
         let sides = [side(row), side(partner)];
         if (focusTeam && sides[1].team === focusTeam) sides = [sides[1], sides[0]];
-        items.push({ kind: 'trade', date: row.tx_date, teams: sides.map(s => s.team), sides });
+        items.push({
+          kind: 'trade', ids: [row.id, partner.id], date: row.tx_date, teams: sides.map(s => s.team), sides,
+        });
         continue;
       }
     }
 
     items.push({
       kind: 'move',
+      id: row.id,
       date: row.tx_date,
       team: row.team,
       category: row.primary_category || 'other',

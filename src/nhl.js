@@ -8,6 +8,7 @@
 import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, sbUpsert, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth } from './shared.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
+import { fetchTradeTree } from './trades.js';
 import { summarizeScratches } from './scratches.js';
 import { summarizeNextGames, isPlayoffOddsStale } from './playoffOdds.js';
 import { summarizeInjuryLeague } from './injuryImpact.js';
@@ -2301,6 +2302,36 @@ export async function handleNHL(request, env, ctx, url) {
 
     const data = { scope, team: focusTeam, items: pairTransactions(rows, { focusTeam }) };
     await kvPut(env, kvKey, data, 3600);
+    return json(data);
+  }
+
+  // GET /trades/tree?tx=<nhl_transactions id>
+  // The trade containing that transaction row (an id from /transactions'
+  // items) and where every asset went next -- eyewall-pipeline's trades /
+  // trade_assets (trade_trees.py, nightly: ESPN's trade text parsed, picks
+  // resolved to the drafted player via the NHL's draft records, each asset
+  // linked to the next trade it went out in). Walked by fetchTradeTree()
+  // (src/trades.js), a few levels deep plus the trades that brought the
+  // root's outgoing assets in. Response: { found, root, trades: { id: trade },
+  // origins, truncated }. `tx` must be digits (400 otherwise -- it's
+  // interpolated into the PostgREST filter). 1hr KV; neither a failed read
+  // (`unavailable: true`) nor a not-found is cached.
+  if (url.pathname === '/trades/tree') {
+    const tx = url.searchParams.get('tx') || '';
+    if (!/^\d{1,12}$/.test(tx)) {
+      return new Response(JSON.stringify({ error: 'invalid tx' }), { status: 400, headers: corsHeaders() });
+    }
+    const kvKey  = `nhl:trades:tree:${tx}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return json(cached);
+
+    let data;
+    try {
+      data = await fetchTradeTree(tx, sbRows);
+    } catch {
+      return json({ found: false, root: null, trades: {}, origins: [], truncated: false, unavailable: true });
+    }
+    if (data.found) await kvPut(env, kvKey, data, 3600);
     return json(data);
   }
 
