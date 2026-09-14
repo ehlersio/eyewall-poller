@@ -27,6 +27,7 @@ describe('pairTransactions', () => {
     expect(items[0].date).toBe('2025-12-31')
     expect(new Set(items[0].teams)).toEqual(new Set(['PIT', 'PHI']))
     expect(items[0].sides.map(s => s.description)).toContain(PHI_HALF.description)
+    expect(new Set(items[0].ids)).toEqual(new Set([1, 2]))
   })
 
   it('puts the focus team first in a pair', () => {
@@ -44,7 +45,7 @@ describe('pairTransactions', () => {
   it('leaves a trade with no matching other half as a single move with its counterparties', () => {
     const items = pairTransactions([PIT_HALF])
     expect(items).toEqual([{
-      kind: 'move', date: '2025-12-31', team: 'PIT', category: 'trade',
+      kind: 'move', id: 1, date: '2025-12-31', team: 'PIT', category: 'trade',
       categories: ['trade'], counterparties: ['PHI'], description: PIT_HALF.description,
     }])
   })

@@ -408,6 +408,63 @@ describe('GET /transactions', () => {
   })
 })
 
+// ── /trades/tree (added alongside eyewall-pipeline's trade_trees.py) ──
+// The walk itself is unit-tested in trades.test.js; these cover the route:
+// validation, the KV key/TTL, and not caching a not-found or a failed read.
+describe('GET /trades/tree', () => {
+  const ROOT = 'aaaaaaaaaaaaaaaa'
+  const get = (tx, env) => handleNHL(makeRequest(`/trades/tree?tx=${tx}`), env, makeCtx(), new URL(`https://example.com/trades/tree?tx=${tx}`))
+  const respond = rows => ({ ok: true, json: async () => rows })
+
+  it('finds the trade holding the transaction, returns its tree, caches 1hr', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url.includes('source_tx_ids=cs.%7B1%7D')) {
+        return respond([{ trade_id: ROOT, tx_date: '2026-06-27', teams: ['ANA', 'CAR'], via: [], descriptions: ['x'] }])
+      }
+      if (url.includes('trade_assets') && url.includes(`trade_id=in.(${ROOT})`)) {
+        return respond([{ trade_id: ROOT, idx: 0, from_team: 'ANA', to_team: 'CAR', asset_type: 'player', player_name: 'John Carlson' }])
+      }
+      return respond([])
+    })
+
+    const res = await get('1', env)
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({ found: true, root: ROOT, origins: [], truncated: false })
+    expect(body.trades[ROOT].sides.find(s => s.team === 'CAR').received[0].name).toBe('John Carlson')
+    expect(putSpy).toHaveBeenCalledWith('nhl:trades:tree:1', JSON.stringify(body), { expirationTtl: 3600 })
+  })
+
+  it('rejects a tx that is not digits (it lands in a PostgREST filter)', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = vi.fn()
+    const res = await get('1%7D),id.gt.(0', env)
+    expect(res.status).toBe(400)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('does not cache a not-found', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue(respond([]))
+    const body = await (await get('99', env)).json()
+    expect(body).toEqual({ found: false, root: null, trades: {}, origins: [], truncated: false })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+
+  it('flags a Supabase failure as unavailable and does not cache it', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+    const body = await (await get('1', env)).json()
+    expect(body).toMatchObject({ found: false, unavailable: true })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
 // ── /scratches (added alongside eyewall-pipeline's scratches.py) ──
 // Summary math is unit-tested in scratches.test.js; these cover the route:
 // query shape, validation, prior-season fallback, KV key, no-cache-on-failure.
