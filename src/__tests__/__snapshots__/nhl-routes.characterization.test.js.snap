@@ -1,0 +1,7632 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`atom/ingest (no secret) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`atom/ingest (no secret) > Supabase unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`atom/ingest (no secret) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+  "upstream": [],
+}
+`;
+
+exports[`atom/ingest (not an object) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Bad request: Expected JSON object",
+  "kvWrites": [],
+  "status": 400,
+}
+`;
+
+exports[`atom/ingest (not an object) > Supabase unavailable 1`] = `
+{
+  "body": "Bad request: Expected JSON object",
+  "kvWrites": [],
+  "status": 400,
+}
+`;
+
+exports[`atom/ingest (not an object) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Bad request: Expected JSON object",
+  "kvWrites": [],
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`background fetches > GET /cache/:key serves a hit; a schedule miss is 404 and fills the cache in the background 1`] = `
+{
+  "hitCount": 2,
+  "kvWrites": [
+    {
+      "key": "schedule:BOS:20242025",
+      "ttl": 5184000,
+    },
+  ],
+  "miss": {
+    "body": "Not found",
+    "status": 404,
+  },
+  "otherMiss": {
+    "body": "Not found",
+    "status": 404,
+  },
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/club-schedule-season/BOS/20242025",
+    },
+  ],
+}
+`;
+
+exports[`background fetches > GET /news with a cold cache returns [] and fetches the team's sources in the background 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "health:nhl:espn",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:nhl:sportsnet",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:nhl:thescore",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:nhl:athletic",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:nhl:bleacherreport",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:nhl:rotowire",
+      "ttl": 2592000,
+    },
+    {
+      "key": "news:BOS",
+      "ttl": 1800,
+    },
+  ],
+  "res": {
+    "body": [],
+    "status": 200,
+  },
+  "storedCount": 8,
+  "upstream": [
+    {
+      "url": "https://www.espn.com/espn/rss/nhl/news",
+    },
+    {
+      "url": "https://www.sportsnet.ca/feed/",
+    },
+    {
+      "url": "https://origin-feeds.thescore.com/nhl.rss",
+    },
+    {
+      "url": "https://www.nytimes.com/athletic/rss/nhl/",
+    },
+    {
+      "url": "https://feeds.bleacherreport.com/articles",
+    },
+    {
+      "url": "https://www.rotowire.com/rss/news.php?sport=NHL",
+    },
+  ],
+}
+`;
+
+exports[`background fetches > GET /news/refresh with the secret fetches synchronously 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "health:nhl:espn",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:nhl:sportsnet",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:nhl:thescore",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:nhl:athletic",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:nhl:bleacherreport",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:nhl:rotowire",
+      "ttl": 2592000,
+    },
+    {
+      "key": "news:BOS",
+      "ttl": 1800,
+    },
+  ],
+  "res": {
+    "body": {
+      "count": 8,
+      "ok": true,
+      "team": "BOS",
+    },
+    "status": 200,
+  },
+}
+`;
+
+exports[`background fetches > GET /schedule for the current season: [] now, cached in the background 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "schedule:BOS:20252026",
+      "ttl": 600,
+    },
+  ],
+  "res": {
+    "body": [],
+    "status": 200,
+  },
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/club-schedule-season/BOS/20252026",
+    },
+  ],
+}
+`;
+
+exports[`draft/analyze (no prompt) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Bad request: prompt required",
+  "kvWrites": [],
+  "status": 400,
+}
+`;
+
+exports[`draft/analyze (no prompt) > Supabase unavailable 1`] = `
+{
+  "body": "Bad request: prompt required",
+  "kvWrites": [],
+  "status": 400,
+}
+`;
+
+exports[`draft/analyze (no prompt) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Bad request: prompt required",
+  "kvWrites": [],
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`draft/analyze (no secret) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`draft/analyze (no secret) > Supabase unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`draft/analyze (no secret) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+  "upstream": [],
+}
+`;
+
+exports[`draft/analyze > NHL API and AI unavailable 1`] = `
+{
+  "kvWrites": [],
+  "threw": "OpenRouter 503",
+}
+`;
+
+exports[`draft/analyze > Supabase unavailable 1`] = `
+{
+  "body": {
+    "analysis": "Fixture NHL narrative.",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`draft/analyze > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "analysis": "Fixture NHL narrative.",
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [
+    {
+      "aiPrompt": "You are Sticks, the EyeWall Analytics draft analyst. You give sharp, specific 2-3 sentence pick analyses. Focus on value relative to rank, team fit, and player type. No filler. No "This is a great pick" openers. Be direct.
+Analyze pick 20.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`draft/order (team) > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "pick_overall": 1,
+      "team_abbrev": "SJS",
+    },
+    {
+      "pick_overall": 2,
+      "team_abbrev": "CAR",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "draft:order:2026:CAR",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`draft/order (team) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`draft/order (team) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "pick_overall": 1,
+      "team_abbrev": "SJS",
+    },
+    {
+      "pick_overall": 2,
+      "team_abbrev": "CAR",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "draft:order:2026:CAR",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/draft_pick_order_2026?order=pick_overall.asc&limit=32&team_abbrev=eq.CAR",
+    },
+  ],
+}
+`;
+
+exports[`draft/order > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "pick_overall": 1,
+      "team_abbrev": "SJS",
+    },
+    {
+      "pick_overall": 2,
+      "team_abbrev": "CAR",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "draft:order:2026:all",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`draft/order > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`draft/order > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "pick_overall": 1,
+      "team_abbrev": "SJS",
+    },
+    {
+      "pick_overall": 2,
+      "team_abbrev": "CAR",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "draft:order:2026:all",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/draft_pick_order_2026?order=pick_overall.asc&limit=32",
+    },
+  ],
+}
+`;
+
+exports[`draft/pick-history > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "made": [
+      {
+        "draft_year": 2025,
+        "original_team": "CAR",
+        "overall_pick": 20,
+        "pick_chain": [
+          "CAR",
+        ],
+        "pick_in_round": 20,
+        "player_id": 8485000,
+        "player_name": "Recent Pick",
+        "position": "D",
+        "round": 1,
+        "team": "CAR",
+        "times_traded": 0,
+      },
+    ],
+    "sinceYear": 2022,
+    "team": "CAR",
+    "tradedAway": [
+      {
+        "draft_year": 2025,
+        "original_team": "CAR",
+        "overall_pick": 20,
+        "pick_chain": [
+          "CAR",
+        ],
+        "pick_in_round": 20,
+        "player_id": 8485000,
+        "player_name": "Recent Pick",
+        "position": "D",
+        "round": 1,
+        "team": "CAR",
+        "times_traded": 0,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "draft:pick-history:CAR:2022",
+      "ttl": 21600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`draft/pick-history > Supabase unavailable 1`] = `
+{
+  "body": {
+    "made": [],
+    "sinceYear": 2022,
+    "team": "CAR",
+    "tradedAway": [],
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`draft/pick-history > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "invalid team",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`draft/pick-history > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "made": [
+      {
+        "draft_year": 2025,
+        "original_team": "CAR",
+        "overall_pick": 20,
+        "pick_chain": [
+          "CAR",
+        ],
+        "pick_in_round": 20,
+        "player_id": 8485000,
+        "player_name": "Recent Pick",
+        "position": "D",
+        "round": 1,
+        "team": "CAR",
+        "times_traded": 0,
+      },
+    ],
+    "sinceYear": 2022,
+    "team": "CAR",
+    "tradedAway": [
+      {
+        "draft_year": 2025,
+        "original_team": "CAR",
+        "overall_pick": 20,
+        "pick_chain": [
+          "CAR",
+        ],
+        "pick_in_round": 20,
+        "player_id": 8485000,
+        "player_name": "Recent Pick",
+        "position": "D",
+        "round": 1,
+        "team": "CAR",
+        "times_traded": 0,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "draft:pick-history:CAR:2022",
+      "ttl": 21600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/draft_pick_history?select=draft_year,round,pick_in_round,overall_pick,team,original_team,pick_chain,times_traded,player_id,player_name,position&draft_year=gte.2022&order=draft_year.desc,overall_pick.asc&team=eq.CAR",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/draft_pick_history?select=draft_year,round,pick_in_round,overall_pick,team,original_team,pick_chain,times_traded,player_id,player_name,position&draft_year=gte.2022&order=draft_year.desc,overall_pick.asc&original_team=eq.CAR&team=neq.CAR",
+    },
+  ],
+}
+`;
+
+exports[`draft/picks (all) > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "name": "First Pick",
+      "pick_overall": 1,
+      "round": 1,
+      "team_abbrev": "SJS",
+    },
+    {
+      "name": "Second Pick",
+      "pick_overall": 2,
+      "round": 1,
+      "team_abbrev": "CAR",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "draft:picks:2026:all:all",
+      "ttl": 60,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`draft/picks (all) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`draft/picks (all) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "name": "First Pick",
+      "pick_overall": 1,
+      "round": 1,
+      "team_abbrev": "SJS",
+    },
+    {
+      "name": "Second Pick",
+      "pick_overall": 2,
+      "round": 1,
+      "team_abbrev": "CAR",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "draft:picks:2026:all:all",
+      "ttl": 60,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/draft_picks_2026?order=pick_overall.asc&limit=300",
+    },
+  ],
+}
+`;
+
+exports[`draft/picks (full board) > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "pick_overall": 1,
+    },
+    {
+      "pick_overall": 2,
+    },
+    {
+      "pick_overall": 3,
+    },
+    {
+      "pick_overall": 4,
+    },
+    {
+      "pick_overall": 5,
+    },
+    {
+      "pick_overall": 6,
+    },
+    {
+      "pick_overall": 7,
+    },
+    {
+      "pick_overall": 8,
+    },
+    {
+      "pick_overall": 9,
+    },
+    {
+      "pick_overall": 10,
+    },
+    {
+      "pick_overall": 11,
+    },
+    {
+      "pick_overall": 12,
+    },
+    {
+      "pick_overall": 13,
+    },
+    {
+      "pick_overall": 14,
+    },
+    {
+      "pick_overall": 15,
+    },
+    {
+      "pick_overall": 16,
+    },
+    {
+      "pick_overall": 17,
+    },
+    {
+      "pick_overall": 18,
+    },
+    {
+      "pick_overall": 19,
+    },
+    {
+      "pick_overall": 20,
+    },
+    {
+      "pick_overall": 21,
+    },
+    {
+      "pick_overall": 22,
+    },
+    {
+      "pick_overall": 23,
+    },
+    {
+      "pick_overall": 24,
+    },
+    {
+      "pick_overall": 25,
+    },
+    {
+      "pick_overall": 26,
+    },
+    {
+      "pick_overall": 27,
+    },
+    {
+      "pick_overall": 28,
+    },
+    {
+      "pick_overall": 29,
+    },
+    {
+      "pick_overall": 30,
+    },
+    {
+      "pick_overall": 31,
+    },
+    {
+      "pick_overall": 32,
+    },
+    {
+      "pick_overall": 33,
+    },
+    {
+      "pick_overall": 34,
+    },
+    {
+      "pick_overall": 35,
+    },
+    {
+      "pick_overall": 36,
+    },
+    {
+      "pick_overall": 37,
+    },
+    {
+      "pick_overall": 38,
+    },
+    {
+      "pick_overall": 39,
+    },
+    {
+      "pick_overall": 40,
+    },
+    {
+      "pick_overall": 41,
+    },
+    {
+      "pick_overall": 42,
+    },
+    {
+      "pick_overall": 43,
+    },
+    {
+      "pick_overall": 44,
+    },
+    {
+      "pick_overall": 45,
+    },
+    {
+      "pick_overall": 46,
+    },
+    {
+      "pick_overall": 47,
+    },
+    {
+      "pick_overall": 48,
+    },
+    {
+      "pick_overall": 49,
+    },
+    {
+      "pick_overall": 50,
+    },
+    {
+      "pick_overall": 51,
+    },
+    {
+      "pick_overall": 52,
+    },
+    {
+      "pick_overall": 53,
+    },
+    {
+      "pick_overall": 54,
+    },
+    {
+      "pick_overall": 55,
+    },
+    {
+      "pick_overall": 56,
+    },
+    {
+      "pick_overall": 57,
+    },
+    {
+      "pick_overall": 58,
+    },
+    {
+      "pick_overall": 59,
+    },
+    {
+      "pick_overall": 60,
+    },
+    {
+      "pick_overall": 61,
+    },
+    {
+      "pick_overall": 62,
+    },
+    {
+      "pick_overall": 63,
+    },
+    {
+      "pick_overall": 64,
+    },
+    {
+      "pick_overall": 65,
+    },
+    {
+      "pick_overall": 66,
+    },
+    {
+      "pick_overall": 67,
+    },
+    {
+      "pick_overall": 68,
+    },
+    {
+      "pick_overall": 69,
+    },
+    {
+      "pick_overall": 70,
+    },
+    {
+      "pick_overall": 71,
+    },
+    {
+      "pick_overall": 72,
+    },
+    {
+      "pick_overall": 73,
+    },
+    {
+      "pick_overall": 74,
+    },
+    {
+      "pick_overall": 75,
+    },
+    {
+      "pick_overall": 76,
+    },
+    {
+      "pick_overall": 77,
+    },
+    {
+      "pick_overall": 78,
+    },
+    {
+      "pick_overall": 79,
+    },
+    {
+      "pick_overall": 80,
+    },
+    {
+      "pick_overall": 81,
+    },
+    {
+      "pick_overall": 82,
+    },
+    {
+      "pick_overall": 83,
+    },
+    {
+      "pick_overall": 84,
+    },
+    {
+      "pick_overall": 85,
+    },
+    {
+      "pick_overall": 86,
+    },
+    {
+      "pick_overall": 87,
+    },
+    {
+      "pick_overall": 88,
+    },
+    {
+      "pick_overall": 89,
+    },
+    {
+      "pick_overall": 90,
+    },
+    {
+      "pick_overall": 91,
+    },
+    {
+      "pick_overall": 92,
+    },
+    {
+      "pick_overall": 93,
+    },
+    {
+      "pick_overall": 94,
+    },
+    {
+      "pick_overall": 95,
+    },
+    {
+      "pick_overall": 96,
+    },
+    {
+      "pick_overall": 97,
+    },
+    {
+      "pick_overall": 98,
+    },
+    {
+      "pick_overall": 99,
+    },
+    {
+      "pick_overall": 100,
+    },
+    {
+      "pick_overall": 101,
+    },
+    {
+      "pick_overall": 102,
+    },
+    {
+      "pick_overall": 103,
+    },
+    {
+      "pick_overall": 104,
+    },
+    {
+      "pick_overall": 105,
+    },
+    {
+      "pick_overall": 106,
+    },
+    {
+      "pick_overall": 107,
+    },
+    {
+      "pick_overall": 108,
+    },
+    {
+      "pick_overall": 109,
+    },
+    {
+      "pick_overall": 110,
+    },
+    {
+      "pick_overall": 111,
+    },
+    {
+      "pick_overall": 112,
+    },
+    {
+      "pick_overall": 113,
+    },
+    {
+      "pick_overall": 114,
+    },
+    {
+      "pick_overall": 115,
+    },
+    {
+      "pick_overall": 116,
+    },
+    {
+      "pick_overall": 117,
+    },
+    {
+      "pick_overall": 118,
+    },
+    {
+      "pick_overall": 119,
+    },
+    {
+      "pick_overall": 120,
+    },
+    {
+      "pick_overall": 121,
+    },
+    {
+      "pick_overall": 122,
+    },
+    {
+      "pick_overall": 123,
+    },
+    {
+      "pick_overall": 124,
+    },
+    {
+      "pick_overall": 125,
+    },
+    {
+      "pick_overall": 126,
+    },
+    {
+      "pick_overall": 127,
+    },
+    {
+      "pick_overall": 128,
+    },
+    {
+      "pick_overall": 129,
+    },
+    {
+      "pick_overall": 130,
+    },
+    {
+      "pick_overall": 131,
+    },
+    {
+      "pick_overall": 132,
+    },
+    {
+      "pick_overall": 133,
+    },
+    {
+      "pick_overall": 134,
+    },
+    {
+      "pick_overall": 135,
+    },
+    {
+      "pick_overall": 136,
+    },
+    {
+      "pick_overall": 137,
+    },
+    {
+      "pick_overall": 138,
+    },
+    {
+      "pick_overall": 139,
+    },
+    {
+      "pick_overall": 140,
+    },
+    {
+      "pick_overall": 141,
+    },
+    {
+      "pick_overall": 142,
+    },
+    {
+      "pick_overall": 143,
+    },
+    {
+      "pick_overall": 144,
+    },
+    {
+      "pick_overall": 145,
+    },
+    {
+      "pick_overall": 146,
+    },
+    {
+      "pick_overall": 147,
+    },
+    {
+      "pick_overall": 148,
+    },
+    {
+      "pick_overall": 149,
+    },
+    {
+      "pick_overall": 150,
+    },
+    {
+      "pick_overall": 151,
+    },
+    {
+      "pick_overall": 152,
+    },
+    {
+      "pick_overall": 153,
+    },
+    {
+      "pick_overall": 154,
+    },
+    {
+      "pick_overall": 155,
+    },
+    {
+      "pick_overall": 156,
+    },
+    {
+      "pick_overall": 157,
+    },
+    {
+      "pick_overall": 158,
+    },
+    {
+      "pick_overall": 159,
+    },
+    {
+      "pick_overall": 160,
+    },
+    {
+      "pick_overall": 161,
+    },
+    {
+      "pick_overall": 162,
+    },
+    {
+      "pick_overall": 163,
+    },
+    {
+      "pick_overall": 164,
+    },
+    {
+      "pick_overall": 165,
+    },
+    {
+      "pick_overall": 166,
+    },
+    {
+      "pick_overall": 167,
+    },
+    {
+      "pick_overall": 168,
+    },
+    {
+      "pick_overall": 169,
+    },
+    {
+      "pick_overall": 170,
+    },
+    {
+      "pick_overall": 171,
+    },
+    {
+      "pick_overall": 172,
+    },
+    {
+      "pick_overall": 173,
+    },
+    {
+      "pick_overall": 174,
+    },
+    {
+      "pick_overall": 175,
+    },
+    {
+      "pick_overall": 176,
+    },
+    {
+      "pick_overall": 177,
+    },
+    {
+      "pick_overall": 178,
+    },
+    {
+      "pick_overall": 179,
+    },
+    {
+      "pick_overall": 180,
+    },
+    {
+      "pick_overall": 181,
+    },
+    {
+      "pick_overall": 182,
+    },
+    {
+      "pick_overall": 183,
+    },
+    {
+      "pick_overall": 184,
+    },
+    {
+      "pick_overall": 185,
+    },
+    {
+      "pick_overall": 186,
+    },
+    {
+      "pick_overall": 187,
+    },
+    {
+      "pick_overall": 188,
+    },
+    {
+      "pick_overall": 189,
+    },
+    {
+      "pick_overall": 190,
+    },
+    {
+      "pick_overall": 191,
+    },
+    {
+      "pick_overall": 192,
+    },
+    {
+      "pick_overall": 193,
+    },
+    {
+      "pick_overall": 194,
+    },
+    {
+      "pick_overall": 195,
+    },
+    {
+      "pick_overall": 196,
+    },
+    {
+      "pick_overall": 197,
+    },
+    {
+      "pick_overall": 198,
+    },
+    {
+      "pick_overall": 199,
+    },
+    {
+      "pick_overall": 200,
+    },
+    {
+      "pick_overall": 201,
+    },
+    {
+      "pick_overall": 202,
+    },
+    {
+      "pick_overall": 203,
+    },
+    {
+      "pick_overall": 204,
+    },
+    {
+      "pick_overall": 205,
+    },
+    {
+      "pick_overall": 206,
+    },
+    {
+      "pick_overall": 207,
+    },
+    {
+      "pick_overall": 208,
+    },
+    {
+      "pick_overall": 209,
+    },
+    {
+      "pick_overall": 210,
+    },
+    {
+      "pick_overall": 211,
+    },
+    {
+      "pick_overall": 212,
+    },
+    {
+      "pick_overall": 213,
+    },
+    {
+      "pick_overall": 214,
+    },
+    {
+      "pick_overall": 215,
+    },
+    {
+      "pick_overall": 216,
+    },
+    {
+      "pick_overall": 217,
+    },
+    {
+      "pick_overall": 218,
+    },
+    {
+      "pick_overall": 219,
+    },
+    {
+      "pick_overall": 220,
+    },
+    {
+      "pick_overall": 221,
+    },
+    {
+      "pick_overall": 222,
+    },
+    {
+      "pick_overall": 223,
+    },
+    {
+      "pick_overall": 224,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "draft:picks:2026:CAR:1",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`draft/picks (full board) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`draft/picks (full board) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "pick_overall": 1,
+    },
+    {
+      "pick_overall": 2,
+    },
+    {
+      "pick_overall": 3,
+    },
+    {
+      "pick_overall": 4,
+    },
+    {
+      "pick_overall": 5,
+    },
+    {
+      "pick_overall": 6,
+    },
+    {
+      "pick_overall": 7,
+    },
+    {
+      "pick_overall": 8,
+    },
+    {
+      "pick_overall": 9,
+    },
+    {
+      "pick_overall": 10,
+    },
+    {
+      "pick_overall": 11,
+    },
+    {
+      "pick_overall": 12,
+    },
+    {
+      "pick_overall": 13,
+    },
+    {
+      "pick_overall": 14,
+    },
+    {
+      "pick_overall": 15,
+    },
+    {
+      "pick_overall": 16,
+    },
+    {
+      "pick_overall": 17,
+    },
+    {
+      "pick_overall": 18,
+    },
+    {
+      "pick_overall": 19,
+    },
+    {
+      "pick_overall": 20,
+    },
+    {
+      "pick_overall": 21,
+    },
+    {
+      "pick_overall": 22,
+    },
+    {
+      "pick_overall": 23,
+    },
+    {
+      "pick_overall": 24,
+    },
+    {
+      "pick_overall": 25,
+    },
+    {
+      "pick_overall": 26,
+    },
+    {
+      "pick_overall": 27,
+    },
+    {
+      "pick_overall": 28,
+    },
+    {
+      "pick_overall": 29,
+    },
+    {
+      "pick_overall": 30,
+    },
+    {
+      "pick_overall": 31,
+    },
+    {
+      "pick_overall": 32,
+    },
+    {
+      "pick_overall": 33,
+    },
+    {
+      "pick_overall": 34,
+    },
+    {
+      "pick_overall": 35,
+    },
+    {
+      "pick_overall": 36,
+    },
+    {
+      "pick_overall": 37,
+    },
+    {
+      "pick_overall": 38,
+    },
+    {
+      "pick_overall": 39,
+    },
+    {
+      "pick_overall": 40,
+    },
+    {
+      "pick_overall": 41,
+    },
+    {
+      "pick_overall": 42,
+    },
+    {
+      "pick_overall": 43,
+    },
+    {
+      "pick_overall": 44,
+    },
+    {
+      "pick_overall": 45,
+    },
+    {
+      "pick_overall": 46,
+    },
+    {
+      "pick_overall": 47,
+    },
+    {
+      "pick_overall": 48,
+    },
+    {
+      "pick_overall": 49,
+    },
+    {
+      "pick_overall": 50,
+    },
+    {
+      "pick_overall": 51,
+    },
+    {
+      "pick_overall": 52,
+    },
+    {
+      "pick_overall": 53,
+    },
+    {
+      "pick_overall": 54,
+    },
+    {
+      "pick_overall": 55,
+    },
+    {
+      "pick_overall": 56,
+    },
+    {
+      "pick_overall": 57,
+    },
+    {
+      "pick_overall": 58,
+    },
+    {
+      "pick_overall": 59,
+    },
+    {
+      "pick_overall": 60,
+    },
+    {
+      "pick_overall": 61,
+    },
+    {
+      "pick_overall": 62,
+    },
+    {
+      "pick_overall": 63,
+    },
+    {
+      "pick_overall": 64,
+    },
+    {
+      "pick_overall": 65,
+    },
+    {
+      "pick_overall": 66,
+    },
+    {
+      "pick_overall": 67,
+    },
+    {
+      "pick_overall": 68,
+    },
+    {
+      "pick_overall": 69,
+    },
+    {
+      "pick_overall": 70,
+    },
+    {
+      "pick_overall": 71,
+    },
+    {
+      "pick_overall": 72,
+    },
+    {
+      "pick_overall": 73,
+    },
+    {
+      "pick_overall": 74,
+    },
+    {
+      "pick_overall": 75,
+    },
+    {
+      "pick_overall": 76,
+    },
+    {
+      "pick_overall": 77,
+    },
+    {
+      "pick_overall": 78,
+    },
+    {
+      "pick_overall": 79,
+    },
+    {
+      "pick_overall": 80,
+    },
+    {
+      "pick_overall": 81,
+    },
+    {
+      "pick_overall": 82,
+    },
+    {
+      "pick_overall": 83,
+    },
+    {
+      "pick_overall": 84,
+    },
+    {
+      "pick_overall": 85,
+    },
+    {
+      "pick_overall": 86,
+    },
+    {
+      "pick_overall": 87,
+    },
+    {
+      "pick_overall": 88,
+    },
+    {
+      "pick_overall": 89,
+    },
+    {
+      "pick_overall": 90,
+    },
+    {
+      "pick_overall": 91,
+    },
+    {
+      "pick_overall": 92,
+    },
+    {
+      "pick_overall": 93,
+    },
+    {
+      "pick_overall": 94,
+    },
+    {
+      "pick_overall": 95,
+    },
+    {
+      "pick_overall": 96,
+    },
+    {
+      "pick_overall": 97,
+    },
+    {
+      "pick_overall": 98,
+    },
+    {
+      "pick_overall": 99,
+    },
+    {
+      "pick_overall": 100,
+    },
+    {
+      "pick_overall": 101,
+    },
+    {
+      "pick_overall": 102,
+    },
+    {
+      "pick_overall": 103,
+    },
+    {
+      "pick_overall": 104,
+    },
+    {
+      "pick_overall": 105,
+    },
+    {
+      "pick_overall": 106,
+    },
+    {
+      "pick_overall": 107,
+    },
+    {
+      "pick_overall": 108,
+    },
+    {
+      "pick_overall": 109,
+    },
+    {
+      "pick_overall": 110,
+    },
+    {
+      "pick_overall": 111,
+    },
+    {
+      "pick_overall": 112,
+    },
+    {
+      "pick_overall": 113,
+    },
+    {
+      "pick_overall": 114,
+    },
+    {
+      "pick_overall": 115,
+    },
+    {
+      "pick_overall": 116,
+    },
+    {
+      "pick_overall": 117,
+    },
+    {
+      "pick_overall": 118,
+    },
+    {
+      "pick_overall": 119,
+    },
+    {
+      "pick_overall": 120,
+    },
+    {
+      "pick_overall": 121,
+    },
+    {
+      "pick_overall": 122,
+    },
+    {
+      "pick_overall": 123,
+    },
+    {
+      "pick_overall": 124,
+    },
+    {
+      "pick_overall": 125,
+    },
+    {
+      "pick_overall": 126,
+    },
+    {
+      "pick_overall": 127,
+    },
+    {
+      "pick_overall": 128,
+    },
+    {
+      "pick_overall": 129,
+    },
+    {
+      "pick_overall": 130,
+    },
+    {
+      "pick_overall": 131,
+    },
+    {
+      "pick_overall": 132,
+    },
+    {
+      "pick_overall": 133,
+    },
+    {
+      "pick_overall": 134,
+    },
+    {
+      "pick_overall": 135,
+    },
+    {
+      "pick_overall": 136,
+    },
+    {
+      "pick_overall": 137,
+    },
+    {
+      "pick_overall": 138,
+    },
+    {
+      "pick_overall": 139,
+    },
+    {
+      "pick_overall": 140,
+    },
+    {
+      "pick_overall": 141,
+    },
+    {
+      "pick_overall": 142,
+    },
+    {
+      "pick_overall": 143,
+    },
+    {
+      "pick_overall": 144,
+    },
+    {
+      "pick_overall": 145,
+    },
+    {
+      "pick_overall": 146,
+    },
+    {
+      "pick_overall": 147,
+    },
+    {
+      "pick_overall": 148,
+    },
+    {
+      "pick_overall": 149,
+    },
+    {
+      "pick_overall": 150,
+    },
+    {
+      "pick_overall": 151,
+    },
+    {
+      "pick_overall": 152,
+    },
+    {
+      "pick_overall": 153,
+    },
+    {
+      "pick_overall": 154,
+    },
+    {
+      "pick_overall": 155,
+    },
+    {
+      "pick_overall": 156,
+    },
+    {
+      "pick_overall": 157,
+    },
+    {
+      "pick_overall": 158,
+    },
+    {
+      "pick_overall": 159,
+    },
+    {
+      "pick_overall": 160,
+    },
+    {
+      "pick_overall": 161,
+    },
+    {
+      "pick_overall": 162,
+    },
+    {
+      "pick_overall": 163,
+    },
+    {
+      "pick_overall": 164,
+    },
+    {
+      "pick_overall": 165,
+    },
+    {
+      "pick_overall": 166,
+    },
+    {
+      "pick_overall": 167,
+    },
+    {
+      "pick_overall": 168,
+    },
+    {
+      "pick_overall": 169,
+    },
+    {
+      "pick_overall": 170,
+    },
+    {
+      "pick_overall": 171,
+    },
+    {
+      "pick_overall": 172,
+    },
+    {
+      "pick_overall": 173,
+    },
+    {
+      "pick_overall": 174,
+    },
+    {
+      "pick_overall": 175,
+    },
+    {
+      "pick_overall": 176,
+    },
+    {
+      "pick_overall": 177,
+    },
+    {
+      "pick_overall": 178,
+    },
+    {
+      "pick_overall": 179,
+    },
+    {
+      "pick_overall": 180,
+    },
+    {
+      "pick_overall": 181,
+    },
+    {
+      "pick_overall": 182,
+    },
+    {
+      "pick_overall": 183,
+    },
+    {
+      "pick_overall": 184,
+    },
+    {
+      "pick_overall": 185,
+    },
+    {
+      "pick_overall": 186,
+    },
+    {
+      "pick_overall": 187,
+    },
+    {
+      "pick_overall": 188,
+    },
+    {
+      "pick_overall": 189,
+    },
+    {
+      "pick_overall": 190,
+    },
+    {
+      "pick_overall": 191,
+    },
+    {
+      "pick_overall": 192,
+    },
+    {
+      "pick_overall": 193,
+    },
+    {
+      "pick_overall": 194,
+    },
+    {
+      "pick_overall": 195,
+    },
+    {
+      "pick_overall": 196,
+    },
+    {
+      "pick_overall": 197,
+    },
+    {
+      "pick_overall": 198,
+    },
+    {
+      "pick_overall": 199,
+    },
+    {
+      "pick_overall": 200,
+    },
+    {
+      "pick_overall": 201,
+    },
+    {
+      "pick_overall": 202,
+    },
+    {
+      "pick_overall": 203,
+    },
+    {
+      "pick_overall": 204,
+    },
+    {
+      "pick_overall": 205,
+    },
+    {
+      "pick_overall": 206,
+    },
+    {
+      "pick_overall": 207,
+    },
+    {
+      "pick_overall": 208,
+    },
+    {
+      "pick_overall": 209,
+    },
+    {
+      "pick_overall": 210,
+    },
+    {
+      "pick_overall": 211,
+    },
+    {
+      "pick_overall": 212,
+    },
+    {
+      "pick_overall": 213,
+    },
+    {
+      "pick_overall": 214,
+    },
+    {
+      "pick_overall": 215,
+    },
+    {
+      "pick_overall": 216,
+    },
+    {
+      "pick_overall": 217,
+    },
+    {
+      "pick_overall": 218,
+    },
+    {
+      "pick_overall": 219,
+    },
+    {
+      "pick_overall": 220,
+    },
+    {
+      "pick_overall": 221,
+    },
+    {
+      "pick_overall": 222,
+    },
+    {
+      "pick_overall": 223,
+    },
+    {
+      "pick_overall": 224,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "draft:picks:2026:CAR:1",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/draft_picks_2026?order=pick_overall.asc&limit=300&team_abbrev=eq.CAR&round=eq.1",
+    },
+  ],
+}
+`;
+
+exports[`draft/rankings (all) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "1": [
+      {
+        "category_id": 1,
+        "final_rank": 1,
+        "name": "NA Skater One",
+      },
+    ],
+    "2": [],
+    "3": [
+      {
+        "category_id": 3,
+        "final_rank": 1,
+        "name": "NA Goalie One",
+      },
+    ],
+    "4": [],
+  },
+  "kvWrites": [
+    {
+      "key": "draft:rankings:2026:all",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`draft/rankings (all) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`draft/rankings (all) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "1": [
+      {
+        "category_id": 1,
+        "final_rank": 1,
+        "name": "NA Skater One",
+      },
+    ],
+    "2": [],
+    "3": [
+      {
+        "category_id": 3,
+        "final_rank": 1,
+        "name": "NA Goalie One",
+      },
+    ],
+    "4": [],
+  },
+  "kvWrites": [
+    {
+      "key": "draft:rankings:2026:all",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/draft_rankings_2026?order=category_id.asc,final_rank.asc&limit=600",
+    },
+  ],
+}
+`;
+
+exports[`draft/rankings (category) > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "category_id": 1,
+      "final_rank": 1,
+      "name": "NA Skater One",
+    },
+    {
+      "category_id": 3,
+      "final_rank": 1,
+      "name": "NA Goalie One",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "draft:rankings:2026:1",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`draft/rankings (category) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`draft/rankings (category) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "category_id": 1,
+      "final_rank": 1,
+      "name": "NA Skater One",
+    },
+    {
+      "category_id": 3,
+      "final_rank": 1,
+      "name": "NA Goalie One",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "draft:rankings:2026:1",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/draft_rankings_2026?category_id=eq.1&order=final_rank.asc&limit=300",
+    },
+  ],
+}
+`;
+
+exports[`elo/ratings (empty table) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "homeAdvantage": 35,
+    "ratings": {},
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`elo/ratings (empty table) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "homeAdvantage": 35,
+    "ratings": {},
+    "unavailable": true,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`elo/ratings (empty table) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "homeAdvantage": 35,
+    "ratings": {},
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_elo_ratings?select=team,rating",
+    },
+  ],
+}
+`;
+
+exports[`elo/ratings > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "homeAdvantage": 35,
+    "ratings": {
+      "BOS": 1510,
+      "CAR": 1560,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:elo-ratings",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`elo/ratings > Supabase unavailable 1`] = `
+{
+  "body": {
+    "homeAdvantage": 35,
+    "ratings": {},
+    "unavailable": true,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`elo/ratings > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "homeAdvantage": 35,
+    "ratings": {
+      "BOS": 1510,
+      "CAR": 1560,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:elo-ratings",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_elo_ratings?select=team,rating",
+    },
+  ],
+}
+`;
+
+exports[`game-log (default team, no limit) > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "game_date": "2026-01-10",
+      "game_id": 2025020498,
+      "game_type": 2,
+      "home_team": true,
+      "opp_score": 2,
+      "opponent": "BOS",
+      "pk_goals_against": 0,
+      "pk_opps": 2,
+      "pp_goals": 1,
+      "pp_opps": 3,
+      "season": 20252026,
+      "team_score": 4,
+      "team_scored_first": true,
+    },
+    {
+      "game_date": "2026-01-12",
+      "game_id": 2025020499,
+      "game_type": 2,
+      "home_team": false,
+      "opp_score": 3,
+      "opponent": "BOS",
+      "pk_goals_against": 1,
+      "pk_opps": 4,
+      "pp_goals": 0,
+      "pp_opps": 2,
+      "season": 20252026,
+      "team_score": 1,
+      "team_scored_first": false,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:game-log:CAR:20252026:all",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`game-log (default team, no limit) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: game_log?season=eq.20252026&team=eq.CAR&order=game_id.asc&select=game_id,game_date,opponent,team_score,opp_score,home_team,team_scored_first,pp_goals,pp_opps,pk_goals_against,pk_opps,game_type",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`game-log (default team, no limit) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "game_date": "2026-01-10",
+      "game_id": 2025020498,
+      "game_type": 2,
+      "home_team": true,
+      "opp_score": 2,
+      "opponent": "BOS",
+      "pk_goals_against": 0,
+      "pk_opps": 2,
+      "pp_goals": 1,
+      "pp_opps": 3,
+      "season": 20252026,
+      "team_score": 4,
+      "team_scored_first": true,
+    },
+    {
+      "game_date": "2026-01-12",
+      "game_id": 2025020499,
+      "game_type": 2,
+      "home_team": false,
+      "opp_score": 3,
+      "opponent": "BOS",
+      "pk_goals_against": 1,
+      "pk_opps": 4,
+      "pp_goals": 0,
+      "pp_opps": 2,
+      "season": 20252026,
+      "team_score": 1,
+      "team_scored_first": false,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:game-log:CAR:20252026:all",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_log?season=eq.20252026&team=eq.CAR&order=game_id.asc&select=game_id,game_date,opponent,team_score,opp_score,home_team,team_scored_first,pp_goals,pp_opps,pk_goals_against,pk_opps,game_type",
+    },
+  ],
+}
+`;
+
+exports[`game-log > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "game_date": "2026-01-10",
+      "game_id": 2025020498,
+      "game_type": 2,
+      "home_team": true,
+      "opp_score": 2,
+      "opponent": "BOS",
+      "pk_goals_against": 0,
+      "pk_opps": 2,
+      "pp_goals": 1,
+      "pp_opps": 3,
+      "season": 20252026,
+      "team_score": 4,
+      "team_scored_first": true,
+    },
+    {
+      "game_date": "2026-01-12",
+      "game_id": 2025020499,
+      "game_type": 2,
+      "home_team": false,
+      "opp_score": 3,
+      "opponent": "BOS",
+      "pk_goals_against": 1,
+      "pk_opps": 4,
+      "pp_goals": 0,
+      "pp_opps": 2,
+      "season": 20252026,
+      "team_score": 1,
+      "team_scored_first": false,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:game-log:CAR:20252026:10",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`game-log > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: game_log?season=eq.20252026&team=eq.CAR&order=game_id.asc&select=game_id,game_date,opponent,team_score,opp_score,home_team,team_scored_first,pp_goals,pp_opps,pk_goals_against,pk_opps,game_type&limit=10",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`game-log > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "game_date": "2026-01-10",
+      "game_id": 2025020498,
+      "game_type": 2,
+      "home_team": true,
+      "opp_score": 2,
+      "opponent": "BOS",
+      "pk_goals_against": 0,
+      "pk_opps": 2,
+      "pp_goals": 1,
+      "pp_opps": 3,
+      "season": 20252026,
+      "team_score": 4,
+      "team_scored_first": true,
+    },
+    {
+      "game_date": "2026-01-12",
+      "game_id": 2025020499,
+      "game_type": 2,
+      "home_team": false,
+      "opp_score": 3,
+      "opponent": "BOS",
+      "pk_goals_against": 1,
+      "pk_opps": 4,
+      "pp_goals": 0,
+      "pp_opps": 2,
+      "season": 20252026,
+      "team_score": 1,
+      "team_scored_first": false,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:game-log:CAR:20252026:10",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_log?season=eq.20252026&team=eq.CAR&order=game_id.asc&select=game_id,game_date,opponent,team_score,opp_score,home_team,team_scored_first,pp_goals,pp_opps,pk_goals_against,pk_opps,game_type&limit=10",
+    },
+  ],
+}
+`;
+
+exports[`game-predictions > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "generated_at": "2026-01-15T12:00:00Z",
+      "matchup_text": "Matchup text.",
+      "prediction_text": "Prediction text.",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:game-predictions:2025020500",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`game-predictions > Supabase unavailable 1`] = `
+{
+  "body": [],
+  "kvWrites": [
+    {
+      "key": "nhl:game-predictions:2025020500",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`game-predictions > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`game-predictions > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "generated_at": "2026-01-15T12:00:00Z",
+      "matchup_text": "Matchup text.",
+      "prediction_text": "Prediction text.",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:game-predictions:2025020500",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_predictions?game_id=eq.2025020500&select=matchup_text,prediction_text,generated_at&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`game-summary > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "card_text": "Card text.",
+      "generated_at": "2026-01-13T04:00:00Z",
+      "summary_text": "Summary text.",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:game-summary:2025020499:CAR:fr",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`game-summary > Supabase unavailable 1`] = `
+{
+  "body": [],
+  "kvWrites": [
+    {
+      "key": "nhl:game-summary:2025020499:CAR:fr",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`game-summary > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "gameId and team required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`game-summary > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "card_text": "Card text.",
+      "generated_at": "2026-01-13T04:00:00Z",
+      "summary_text": "Summary text.",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:game-summary:2025020499:CAR:fr",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_summaries?game_id=eq.2025020499&team=eq.CAR&locale=eq.fr&select=summary_text,card_text,generated_at&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`game-xg > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "game_id": 2025020498,
+      "team": "CAR",
+      "xga": 2.2,
+      "xgf": 3.1,
+      "xgf_pct": 0.585,
+    },
+    {
+      "game_id": 2025020498,
+      "team": "BOS",
+      "xga": 3.1,
+      "xgf": 2.2,
+      "xgf_pct": 0.415,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:game-xg:2025020498",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`game-xg > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: game_xg?game_id=eq.2025020498&situation=eq.5on5&select=team,xgf,xga,xgf_pct",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`game-xg > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`game-xg > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "game_id": 2025020498,
+      "team": "CAR",
+      "xga": 2.2,
+      "xgf": 3.1,
+      "xgf_pct": 0.585,
+    },
+    {
+      "game_id": 2025020498,
+      "team": "BOS",
+      "xga": 3.1,
+      "xgf": 2.2,
+      "xgf_pct": 0.415,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:game-xg:2025020498",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_xg?game_id=eq.2025020498&situation=eq.5on5&select=team,xgf,xga,xgf_pct",
+    },
+  ],
+}
+`;
+
+exports[`goalie-analytics (empty season, prior-s… > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "rows": [],
+    "statsSeason": null,
+    "statsStale": false,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:goalie-analytics:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`goalie-analytics (empty season, prior-s… > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: goalie_seasons?season=eq.20252026&game_type=eq.2&gsax=not.is.null&select=player_id,team,games_played,gsax,gsax_per60,qs_pct,qs,ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`goalie-analytics (empty season, prior-s… > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "rows": [],
+    "statsSeason": null,
+    "statsStale": false,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:goalie-analytics:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/goalie_seasons?season=eq.20252026&game_type=eq.2&gsax=not.is.null&select=player_id,team,games_played,gsax,gsax_per60,qs_pct,qs,ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/goalie_seasons?season=eq.20242025&game_type=eq.2&gsax=not.is.null&select=player_id,team,games_played,gsax,gsax_per60,qs_pct,qs,ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv",
+    },
+  ],
+}
+`;
+
+exports[`goalie-analytics > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "rows": [
+      {
+        "ev_sv_pct": 0.925,
+        "games_played": 30,
+        "gsax": 12.1,
+        "gsax_per60": 0.4,
+        "hd_sv_pct": 0.84,
+        "md_sv_pct": 0.9,
+        "pct_ev_sv": 80,
+        "pct_gsax": 88,
+        "pct_gsax60": 85,
+        "pct_hd_sv": 70,
+        "pct_md_sv": 60,
+        "pct_pk_sv": 50,
+        "pk_sv_pct": 0.87,
+        "player_id": 8481611,
+        "qs": 18,
+        "qs_pct": 0.6,
+        "team": "CAR",
+      },
+    ],
+    "statsSeason": null,
+    "statsStale": false,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:goalie-analytics:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`goalie-analytics > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: goalie_seasons?season=eq.20252026&game_type=eq.2&gsax=not.is.null&select=player_id,team,games_played,gsax,gsax_per60,qs_pct,qs,ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`goalie-analytics > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "rows": [
+      {
+        "ev_sv_pct": 0.925,
+        "games_played": 30,
+        "gsax": 12.1,
+        "gsax_per60": 0.4,
+        "hd_sv_pct": 0.84,
+        "md_sv_pct": 0.9,
+        "pct_ev_sv": 80,
+        "pct_gsax": 88,
+        "pct_gsax60": 85,
+        "pct_hd_sv": 70,
+        "pct_md_sv": 60,
+        "pct_pk_sv": 50,
+        "pk_sv_pct": 0.87,
+        "player_id": 8481611,
+        "qs": 18,
+        "qs_pct": 0.6,
+        "team": "CAR",
+      },
+    ],
+    "statsSeason": null,
+    "statsStale": false,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:goalie-analytics:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/goalie_seasons?season=eq.20252026&game_type=eq.2&gsax=not.is.null&select=player_id,team,games_played,gsax,gsax_per60,qs_pct,qs,ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv",
+    },
+  ],
+}
+`;
+
+exports[`goalie-shots > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "event_type": "goal",
+      "game_id": 2025020498,
+      "period": 1,
+      "shot_type": "wrist",
+      "team": "CAR",
+      "time_in_period": "04:00",
+      "x": 70,
+      "y": -10,
+    },
+    {
+      "event_type": "shot-on-goal",
+      "game_id": 2025020498,
+      "period": 2,
+      "shot_type": "slap",
+      "team": "BOS",
+      "time_in_period": "11:30",
+      "x": -60,
+      "y": 20,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:goalie-shots:8481611:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`goalie-shots > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: shot_events?goalie_id=eq.8481611&season=eq.20252026&select=x,y,event_type,period,time_in_period,shot_type,team&limit=2000",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`goalie-shots > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "goalieId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`goalie-shots > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "event_type": "goal",
+      "game_id": 2025020498,
+      "period": 1,
+      "shot_type": "wrist",
+      "team": "CAR",
+      "time_in_period": "04:00",
+      "x": 70,
+      "y": -10,
+    },
+    {
+      "event_type": "shot-on-goal",
+      "game_id": 2025020498,
+      "period": 2,
+      "shot_type": "slap",
+      "team": "BOS",
+      "time_in_period": "11:30",
+      "x": -60,
+      "y": 20,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:goalie-shots:8481611:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/shot_events?goalie_id=eq.8481611&season=eq.20252026&select=x,y,event_type,period,time_in_period,shot_type,team&limit=2000",
+    },
+  ],
+}
+`;
+
+exports[`health > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "liveGameId": 2025020500,
+    "liveGameIds": [
+      2025020500,
+    ],
+    "ok": true,
+    "subscribers": 1,
+    "timestamp": "2026-01-15T23:30:00.000Z",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`health > Supabase unavailable 1`] = `
+{
+  "body": {
+    "liveGameId": 2025020500,
+    "liveGameIds": [
+      2025020500,
+    ],
+    "ok": true,
+    "subscribers": 1,
+    "timestamp": "2026-01-15T23:30:00.000Z",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`health > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "liveGameId": 2025020500,
+    "liveGameIds": [
+      2025020500,
+    ],
+    "ok": true,
+    "subscribers": 1,
+    "timestamp": "2026-01-15T23:30:00.000Z",
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [],
+}
+`;
+
+exports[`injuries > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "comment": "Lower body",
+      "espn_updated_at": "2026-01-14T18:00:00Z",
+      "injury_detail": null,
+      "injury_side": "Left",
+      "injury_type": "Leg",
+      "player_id": 8476882,
+      "player_name": "Some Defenseman",
+      "return_date": null,
+      "status": "Day-To-Day",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:injuries:CAR",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`injuries > Supabase unavailable 1`] = `
+{
+  "body": [],
+  "kvWrites": [
+    {
+      "key": "nhl:injuries:CAR",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`injuries > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "comment": "Lower body",
+      "espn_updated_at": "2026-01-14T18:00:00Z",
+      "injury_detail": null,
+      "injury_side": "Left",
+      "injury_type": "Leg",
+      "player_id": 8476882,
+      "player_name": "Some Defenseman",
+      "return_date": null,
+      "status": "Day-To-Day",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:injuries:CAR",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/player_injuries?team=eq.CAR&select=player_id,player_name,status,comment,espn_updated_at,injury_type,injury_side,injury_detail,return_date",
+    },
+  ],
+}
+`;
+
+exports[`injury-impact (no rows yet) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "impact": null,
+    "league": null,
+    "season": null,
+    "team": "CAR",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`injury-impact (no rows yet) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "impact": null,
+    "league": null,
+    "season": null,
+    "team": "CAR",
+    "unavailable": true,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`injury-impact (no rows yet) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "impact": null,
+    "league": null,
+    "season": null,
+    "team": "CAR",
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_injury_impact?select=season,team,games_played,man_games_lost,war_lost,players_injured,rank_man_games,rank_war_lost,players,updated_at&team=eq.CAR&order=season.desc&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`injury-impact > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "impact": {
+      "games_played": 40,
+      "man_games_lost": 12,
+      "players": [],
+      "players_injured": 2,
+      "rank_man_games": 20,
+      "rank_war_lost": 18,
+      "season": 20252026,
+      "team": "CAR",
+      "updated_at": "2026-01-15T08:00:00Z",
+      "war_lost": 0.8,
+    },
+    "league": {
+      "avgGamesPlayed": 40,
+      "avgManGames": 12,
+      "avgWarLost": 0.8,
+      "teams": 1,
+    },
+    "season": 20252026,
+    "team": "CAR",
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:injury-impact:CAR:latest",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`injury-impact > Supabase unavailable 1`] = `
+{
+  "body": {
+    "impact": null,
+    "league": null,
+    "season": null,
+    "team": "CAR",
+    "unavailable": true,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`injury-impact > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "invalid team or season",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`injury-impact > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "impact": {
+      "games_played": 40,
+      "man_games_lost": 12,
+      "players": [],
+      "players_injured": 2,
+      "rank_man_games": 20,
+      "rank_war_lost": 18,
+      "season": 20252026,
+      "team": "CAR",
+      "updated_at": "2026-01-15T08:00:00Z",
+      "war_lost": 0.8,
+    },
+    "league": {
+      "avgGamesPlayed": 40,
+      "avgManGames": 12,
+      "avgWarLost": 0.8,
+      "teams": 1,
+    },
+    "season": 20252026,
+    "team": "CAR",
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:injury-impact:CAR:latest",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_injury_impact?select=season,team,games_played,man_games_lost,war_lost,players_injured,rank_man_games,rank_war_lost,players,updated_at&team=eq.CAR&order=season.desc&limit=1",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_injury_impact?select=team,games_played,man_games_lost,war_lost&season=eq.20252026",
+    },
+  ],
+}
+`;
+
+exports[`milestones (pwhl) > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "game_date": "2026-01-12",
+      "id": 1,
+      "milestone": "hat_trick",
+      "player_name": "Sebastian Aho",
+      "season": "20252026",
+      "team": "CAR",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "milestones:pwhl:all:50:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`milestones (pwhl) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`milestones (pwhl) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "game_date": "2026-01-12",
+      "id": 1,
+      "milestone": "hat_trick",
+      "player_name": "Sebastian Aho",
+      "season": "20252026",
+      "team": "CAR",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "milestones:pwhl:all:50:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/milestones?order=game_date.desc,id.desc&limit=50&is_pwhl=eq.true&season=eq.8",
+    },
+  ],
+}
+`;
+
+exports[`milestones > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "game_date": "2026-01-12",
+      "id": 1,
+      "milestone": "hat_trick",
+      "player_name": "Sebastian Aho",
+      "season": "20252026",
+      "team": "CAR",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "milestones:nhl:CAR:5:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`milestones > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`milestones > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "game_date": "2026-01-12",
+      "id": 1,
+      "milestone": "hat_trick",
+      "player_name": "Sebastian Aho",
+      "season": "20252026",
+      "team": "CAR",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "milestones:nhl:CAR:5:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/milestones?order=game_date.desc,id.desc&limit=5&is_pwhl=eq.false&season=eq.20252026&team=eq.CAR",
+    },
+  ],
+}
+`;
+
+exports[`moneypuck/ingest (no secret) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`moneypuck/ingest (no secret) > Supabase unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`moneypuck/ingest (no secret) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+  "upstream": [],
+}
+`;
+
+exports[`moneypuck/ingest (too short) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Bad request: Empty or too-short body",
+  "kvWrites": [],
+  "status": 400,
+}
+`;
+
+exports[`moneypuck/ingest (too short) > Supabase unavailable 1`] = `
+{
+  "body": "Bad request: Empty or too-short body",
+  "kvWrites": [],
+  "status": 400,
+}
+`;
+
+exports[`moneypuck/ingest (too short) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Bad request: Empty or too-short body",
+  "kvWrites": [],
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`moneypuck/refresh (no secret) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`moneypuck/refresh (no secret) > Supabase unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`moneypuck/refresh (no secret) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+  "upstream": [],
+}
+`;
+
+exports[`moneypuck/refresh/all (no secret) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`moneypuck/refresh/all (no secret) > Supabase unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`moneypuck/refresh/all (no secret) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+  "upstream": [],
+}
+`;
+
+exports[`news/refresh (no secret) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`news/refresh (no secret) > Supabase unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`news/refresh (no secret) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+  "upstream": [],
+}
+`;
+
+exports[`nhl/shots > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "NHL API 503: https://api-web.nhle.com/v1/club-schedule-season/CAR/20252026",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`nhl/shots > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`nhl/shots > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "event_type": "goal",
+      "game_id": 2025020498,
+      "period": 1,
+      "shot_type": "wrist",
+      "team": "CAR",
+      "time_in_period": "04:00",
+      "x": 70,
+      "y": -10,
+    },
+    {
+      "event_type": "shot-on-goal",
+      "game_id": 2025020498,
+      "period": 2,
+      "shot_type": "slap",
+      "team": "BOS",
+      "time_in_period": "11:30",
+      "x": -60,
+      "y": 20,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:shots:CAR:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/club-schedule-season/CAR/20252026",
+    },
+    {
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/shot_events?game_id=in.(2025020498,2025020499)&season=eq.20252026&select=game_id,team,x,y,event_type,period,time_in_period,shot_type&order=game_id.asc",
+    },
+  ],
+}
+`;
+
+exports[`nhl/today > NHL API and AI unavailable 1`] = `
+{
+  "kvWrites": [],
+  "threw": "NHL API 503: https://api-web.nhle.com/v1/score/now",
+}
+`;
+
+exports[`nhl/today > Supabase unavailable 1`] = `
+{
+  "body": [
+    {
+      "awayScore": 1,
+      "awayTeamCode": "BOS",
+      "gameId": 2025020500,
+      "homeScore": 2,
+      "homeTeamCode": "CAR",
+      "status": "live",
+    },
+    {
+      "awayScore": 4,
+      "awayTeamCode": "MTL",
+      "gameId": 2025020501,
+      "homeScore": 3,
+      "homeTeamCode": "TOR",
+      "status": "final",
+    },
+    {
+      "awayTeamCode": "VAN",
+      "gameId": 2025020502,
+      "homeTeamCode": "EDM",
+      "status": "pre",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:today",
+      "ttl": 60,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`nhl/today > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "awayScore": 1,
+      "awayTeamCode": "BOS",
+      "gameId": 2025020500,
+      "homeScore": 2,
+      "homeTeamCode": "CAR",
+      "status": "live",
+    },
+    {
+      "awayScore": 4,
+      "awayTeamCode": "MTL",
+      "gameId": 2025020501,
+      "homeScore": 3,
+      "homeTeamCode": "TOR",
+      "status": "final",
+    },
+    {
+      "awayTeamCode": "VAN",
+      "gameId": 2025020502,
+      "homeTeamCode": "EDM",
+      "status": "pre",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:today",
+      "ttl": 60,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/score/now",
+    },
+  ],
+}
+`;
+
+exports[`player/landing > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "NHL API 503: https://api-web.nhle.com/v1/player/8478427/landing",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player/landing > Supabase unavailable 1`] = `
+{
+  "body": {
+    "firstName": {
+      "default": "Sebastian",
+    },
+    "lastName": {
+      "default": "Aho",
+    },
+    "playerId": 8478427,
+    "position": "C",
+  },
+  "kvWrites": [
+    {
+      "key": "player:landing:8478427",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player/landing > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "id required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`player/landing > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "firstName": {
+      "default": "Sebastian",
+    },
+    "lastName": {
+      "default": "Aho",
+    },
+    "playerId": 8478427,
+    "position": "C",
+  },
+  "kvWrites": [
+    {
+      "key": "player:landing:8478427",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/player/8478427/landing",
+    },
+  ],
+}
+`;
+
+exports[`player-analytics (default season) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "poRows": [
+      {
+        "blocked_shots": 2,
+        "giveaways": 0,
+        "hits": 5,
+        "player_id": 8478427,
+        "takeaways": 1,
+      },
+    ],
+    "rows": [
+      {
+        "assists": 22,
+        "games_played": 40,
+        "goals": 18,
+        "on_ice_gf_pct": 0.56,
+        "pct_a1": 81,
+        "pct_goals": 92,
+        "player_id": 8478427,
+        "points": 40,
+        "results_vs_process_diff": 0.02,
+        "team": "CAR",
+        "war": 3.1,
+      },
+      {
+        "assists": 12,
+        "games_played": 38,
+        "goals": 8,
+        "on_ice_gf_pct": null,
+        "pct_a1": 55,
+        "pct_goals": 60,
+        "player_id": 8480830,
+        "points": 20,
+        "results_vs_process_diff": null,
+        "team": "CAR",
+        "war": 1.2,
+      },
+    ],
+    "statsSeason": null,
+    "statsStale": false,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:player-analytics:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player-analytics (default season) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: player_seasons?season=eq.20252026&game_type=eq.2&war=not.is.null&select=player_id,team,war,ev_off_pct,ev_def_inv,pp_xgf60,pk_xga60_inv,pp_icetime,pk_icetime,finishing,goals_per60,a1_per60,xgf_per60,penalties_per60,competition,teammates,game_score,pct_ev_off,pct_ev_def,pct_pp,pct_pk,pct_finishing,pct_goals,pct_a1,pct_penalties,pct_competition,pct_teammates,games_played,xga_per60,hdca_per60,hits,blocked_shots,takeaways,giveaways,on_ice_gf_pct,results_vs_process_diff,pct_games_played,pct_plus_minus,pct_sh_goals,pct_gw_goals,pct_shots,pct_toi_per_game,pct_faceoff_win_pct,pct_hits,pct_blocked_shots,pct_takeaways,pct_giveaways,pct_goals_conf,pct_goals_div,pct_a1_conf,pct_a1_div,pct_pp_conf,pct_pp_div,pct_penalties_conf,pct_penalties_div,pct_finishing_conf,pct_finishing_div,pct_games_played_conf,pct_games_played_div,pct_plus_minus_conf,pct_plus_minus_div,pct_sh_goals_conf,pct_sh_goals_div,pct_gw_goals_conf,pct_gw_goals_div,pct_shots_conf,pct_shots_div,pct_toi_per_game_conf,pct_toi_per_game_div,pct_faceoff_win_pct_conf,pct_faceoff_win_pct_div,pct_hits_conf,pct_hits_div,pct_blocked_shots_conf,pct_blocked_shots_div,pct_takeaways_conf,pct_takeaways_div,pct_giveaways_conf,pct_giveaways_div&limit=2000",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player-analytics (default season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "poRows": [
+      {
+        "blocked_shots": 2,
+        "giveaways": 0,
+        "hits": 5,
+        "player_id": 8478427,
+        "takeaways": 1,
+      },
+    ],
+    "rows": [
+      {
+        "assists": 22,
+        "games_played": 40,
+        "goals": 18,
+        "on_ice_gf_pct": 0.56,
+        "pct_a1": 81,
+        "pct_goals": 92,
+        "player_id": 8478427,
+        "points": 40,
+        "results_vs_process_diff": 0.02,
+        "team": "CAR",
+        "war": 3.1,
+      },
+      {
+        "assists": 12,
+        "games_played": 38,
+        "goals": 8,
+        "on_ice_gf_pct": null,
+        "pct_a1": 55,
+        "pct_goals": 60,
+        "player_id": 8480830,
+        "points": 20,
+        "results_vs_process_diff": null,
+        "team": "CAR",
+        "war": 1.2,
+      },
+    ],
+    "statsSeason": null,
+    "statsStale": false,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:player-analytics:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/player_seasons?season=eq.20252026&game_type=eq.2&war=not.is.null&select=player_id,team,war,ev_off_pct,ev_def_inv,pp_xgf60,pk_xga60_inv,pp_icetime,pk_icetime,finishing,goals_per60,a1_per60,xgf_per60,penalties_per60,competition,teammates,game_score,pct_ev_off,pct_ev_def,pct_pp,pct_pk,pct_finishing,pct_goals,pct_a1,pct_penalties,pct_competition,pct_teammates,games_played,xga_per60,hdca_per60,hits,blocked_shots,takeaways,giveaways,on_ice_gf_pct,results_vs_process_diff,pct_games_played,pct_plus_minus,pct_sh_goals,pct_gw_goals,pct_shots,pct_toi_per_game,pct_faceoff_win_pct,pct_hits,pct_blocked_shots,pct_takeaways,pct_giveaways,pct_goals_conf,pct_goals_div,pct_a1_conf,pct_a1_div,pct_pp_conf,pct_pp_div,pct_penalties_conf,pct_penalties_div,pct_finishing_conf,pct_finishing_div,pct_games_played_conf,pct_games_played_div,pct_plus_minus_conf,pct_plus_minus_div,pct_sh_goals_conf,pct_sh_goals_div,pct_gw_goals_conf,pct_gw_goals_div,pct_shots_conf,pct_shots_div,pct_toi_per_game_conf,pct_toi_per_game_div,pct_faceoff_win_pct_conf,pct_faceoff_win_pct_div,pct_hits_conf,pct_hits_div,pct_blocked_shots_conf,pct_blocked_shots_div,pct_takeaways_conf,pct_takeaways_div,pct_giveaways_conf,pct_giveaways_div&limit=2000",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/player_seasons?season=eq.20252026&game_type=eq.3&select=player_id,hits,blocked_shots,takeaways,giveaways&limit=2000",
+    },
+  ],
+}
+`;
+
+exports[`player-analytics (empty season, prior-s… > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "poRows": [],
+    "rows": [],
+    "statsSeason": null,
+    "statsStale": false,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:player-analytics:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player-analytics (empty season, prior-s… > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: player_seasons?season=eq.20252026&game_type=eq.2&war=not.is.null&select=player_id,team,war,ev_off_pct,ev_def_inv,pp_xgf60,pk_xga60_inv,pp_icetime,pk_icetime,finishing,goals_per60,a1_per60,xgf_per60,penalties_per60,competition,teammates,game_score,pct_ev_off,pct_ev_def,pct_pp,pct_pk,pct_finishing,pct_goals,pct_a1,pct_penalties,pct_competition,pct_teammates,games_played,xga_per60,hdca_per60,hits,blocked_shots,takeaways,giveaways,on_ice_gf_pct,results_vs_process_diff,pct_games_played,pct_plus_minus,pct_sh_goals,pct_gw_goals,pct_shots,pct_toi_per_game,pct_faceoff_win_pct,pct_hits,pct_blocked_shots,pct_takeaways,pct_giveaways,pct_goals_conf,pct_goals_div,pct_a1_conf,pct_a1_div,pct_pp_conf,pct_pp_div,pct_penalties_conf,pct_penalties_div,pct_finishing_conf,pct_finishing_div,pct_games_played_conf,pct_games_played_div,pct_plus_minus_conf,pct_plus_minus_div,pct_sh_goals_conf,pct_sh_goals_div,pct_gw_goals_conf,pct_gw_goals_div,pct_shots_conf,pct_shots_div,pct_toi_per_game_conf,pct_toi_per_game_div,pct_faceoff_win_pct_conf,pct_faceoff_win_pct_div,pct_hits_conf,pct_hits_div,pct_blocked_shots_conf,pct_blocked_shots_div,pct_takeaways_conf,pct_takeaways_div,pct_giveaways_conf,pct_giveaways_div&limit=2000",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player-analytics (empty season, prior-s… > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "poRows": [],
+    "rows": [],
+    "statsSeason": null,
+    "statsStale": false,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:player-analytics:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/player_seasons?season=eq.20252026&game_type=eq.2&war=not.is.null&select=player_id,team,war,ev_off_pct,ev_def_inv,pp_xgf60,pk_xga60_inv,pp_icetime,pk_icetime,finishing,goals_per60,a1_per60,xgf_per60,penalties_per60,competition,teammates,game_score,pct_ev_off,pct_ev_def,pct_pp,pct_pk,pct_finishing,pct_goals,pct_a1,pct_penalties,pct_competition,pct_teammates,games_played,xga_per60,hdca_per60,hits,blocked_shots,takeaways,giveaways,on_ice_gf_pct,results_vs_process_diff,pct_games_played,pct_plus_minus,pct_sh_goals,pct_gw_goals,pct_shots,pct_toi_per_game,pct_faceoff_win_pct,pct_hits,pct_blocked_shots,pct_takeaways,pct_giveaways,pct_goals_conf,pct_goals_div,pct_a1_conf,pct_a1_div,pct_pp_conf,pct_pp_div,pct_penalties_conf,pct_penalties_div,pct_finishing_conf,pct_finishing_div,pct_games_played_conf,pct_games_played_div,pct_plus_minus_conf,pct_plus_minus_div,pct_sh_goals_conf,pct_sh_goals_div,pct_gw_goals_conf,pct_gw_goals_div,pct_shots_conf,pct_shots_div,pct_toi_per_game_conf,pct_toi_per_game_div,pct_faceoff_win_pct_conf,pct_faceoff_win_pct_div,pct_hits_conf,pct_hits_div,pct_blocked_shots_conf,pct_blocked_shots_div,pct_takeaways_conf,pct_takeaways_div,pct_giveaways_conf,pct_giveaways_div&limit=2000",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/player_seasons?season=eq.20252026&game_type=eq.3&select=player_id,hits,blocked_shots,takeaways,giveaways&limit=2000",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/player_seasons?season=eq.20242025&game_type=eq.2&war=not.is.null&select=player_id,team,war,ev_off_pct,ev_def_inv,pp_xgf60,pk_xga60_inv,pp_icetime,pk_icetime,finishing,goals_per60,a1_per60,xgf_per60,penalties_per60,competition,teammates,game_score,pct_ev_off,pct_ev_def,pct_pp,pct_pk,pct_finishing,pct_goals,pct_a1,pct_penalties,pct_competition,pct_teammates,games_played,xga_per60,hdca_per60,hits,blocked_shots,takeaways,giveaways,on_ice_gf_pct,results_vs_process_diff,pct_games_played,pct_plus_minus,pct_sh_goals,pct_gw_goals,pct_shots,pct_toi_per_game,pct_faceoff_win_pct,pct_hits,pct_blocked_shots,pct_takeaways,pct_giveaways,pct_goals_conf,pct_goals_div,pct_a1_conf,pct_a1_div,pct_pp_conf,pct_pp_div,pct_penalties_conf,pct_penalties_div,pct_finishing_conf,pct_finishing_div,pct_games_played_conf,pct_games_played_div,pct_plus_minus_conf,pct_plus_minus_div,pct_sh_goals_conf,pct_sh_goals_div,pct_gw_goals_conf,pct_gw_goals_div,pct_shots_conf,pct_shots_div,pct_toi_per_game_conf,pct_toi_per_game_div,pct_faceoff_win_pct_conf,pct_faceoff_win_pct_div,pct_hits_conf,pct_hits_div,pct_blocked_shots_conf,pct_blocked_shots_div,pct_takeaways_conf,pct_takeaways_div,pct_giveaways_conf,pct_giveaways_div&limit=2000",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/player_seasons?season=eq.20242025&game_type=eq.3&select=player_id,hits,blocked_shots,takeaways,giveaways&limit=2000",
+    },
+  ],
+}
+`;
+
+exports[`player-analytics > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "poRows": [
+      {
+        "blocked_shots": 2,
+        "giveaways": 0,
+        "hits": 5,
+        "player_id": 8478427,
+        "takeaways": 1,
+      },
+    ],
+    "rows": [
+      {
+        "assists": 22,
+        "games_played": 40,
+        "goals": 18,
+        "on_ice_gf_pct": 0.56,
+        "pct_a1": 81,
+        "pct_goals": 92,
+        "player_id": 8478427,
+        "points": 40,
+        "results_vs_process_diff": 0.02,
+        "team": "CAR",
+        "war": 3.1,
+      },
+      {
+        "assists": 12,
+        "games_played": 38,
+        "goals": 8,
+        "on_ice_gf_pct": null,
+        "pct_a1": 55,
+        "pct_goals": 60,
+        "player_id": 8480830,
+        "points": 20,
+        "results_vs_process_diff": null,
+        "team": "CAR",
+        "war": 1.2,
+      },
+    ],
+    "statsSeason": null,
+    "statsStale": false,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:player-analytics:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player-analytics > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: player_seasons?season=eq.20252026&game_type=eq.2&war=not.is.null&select=player_id,team,war,ev_off_pct,ev_def_inv,pp_xgf60,pk_xga60_inv,pp_icetime,pk_icetime,finishing,goals_per60,a1_per60,xgf_per60,penalties_per60,competition,teammates,game_score,pct_ev_off,pct_ev_def,pct_pp,pct_pk,pct_finishing,pct_goals,pct_a1,pct_penalties,pct_competition,pct_teammates,games_played,xga_per60,hdca_per60,hits,blocked_shots,takeaways,giveaways,on_ice_gf_pct,results_vs_process_diff,pct_games_played,pct_plus_minus,pct_sh_goals,pct_gw_goals,pct_shots,pct_toi_per_game,pct_faceoff_win_pct,pct_hits,pct_blocked_shots,pct_takeaways,pct_giveaways,pct_goals_conf,pct_goals_div,pct_a1_conf,pct_a1_div,pct_pp_conf,pct_pp_div,pct_penalties_conf,pct_penalties_div,pct_finishing_conf,pct_finishing_div,pct_games_played_conf,pct_games_played_div,pct_plus_minus_conf,pct_plus_minus_div,pct_sh_goals_conf,pct_sh_goals_div,pct_gw_goals_conf,pct_gw_goals_div,pct_shots_conf,pct_shots_div,pct_toi_per_game_conf,pct_toi_per_game_div,pct_faceoff_win_pct_conf,pct_faceoff_win_pct_div,pct_hits_conf,pct_hits_div,pct_blocked_shots_conf,pct_blocked_shots_div,pct_takeaways_conf,pct_takeaways_div,pct_giveaways_conf,pct_giveaways_div&limit=2000",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player-analytics > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "poRows": [
+      {
+        "blocked_shots": 2,
+        "giveaways": 0,
+        "hits": 5,
+        "player_id": 8478427,
+        "takeaways": 1,
+      },
+    ],
+    "rows": [
+      {
+        "assists": 22,
+        "games_played": 40,
+        "goals": 18,
+        "on_ice_gf_pct": 0.56,
+        "pct_a1": 81,
+        "pct_goals": 92,
+        "player_id": 8478427,
+        "points": 40,
+        "results_vs_process_diff": 0.02,
+        "team": "CAR",
+        "war": 3.1,
+      },
+      {
+        "assists": 12,
+        "games_played": 38,
+        "goals": 8,
+        "on_ice_gf_pct": null,
+        "pct_a1": 55,
+        "pct_goals": 60,
+        "player_id": 8480830,
+        "points": 20,
+        "results_vs_process_diff": null,
+        "team": "CAR",
+        "war": 1.2,
+      },
+    ],
+    "statsSeason": null,
+    "statsStale": false,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:player-analytics:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/player_seasons?season=eq.20252026&game_type=eq.2&war=not.is.null&select=player_id,team,war,ev_off_pct,ev_def_inv,pp_xgf60,pk_xga60_inv,pp_icetime,pk_icetime,finishing,goals_per60,a1_per60,xgf_per60,penalties_per60,competition,teammates,game_score,pct_ev_off,pct_ev_def,pct_pp,pct_pk,pct_finishing,pct_goals,pct_a1,pct_penalties,pct_competition,pct_teammates,games_played,xga_per60,hdca_per60,hits,blocked_shots,takeaways,giveaways,on_ice_gf_pct,results_vs_process_diff,pct_games_played,pct_plus_minus,pct_sh_goals,pct_gw_goals,pct_shots,pct_toi_per_game,pct_faceoff_win_pct,pct_hits,pct_blocked_shots,pct_takeaways,pct_giveaways,pct_goals_conf,pct_goals_div,pct_a1_conf,pct_a1_div,pct_pp_conf,pct_pp_div,pct_penalties_conf,pct_penalties_div,pct_finishing_conf,pct_finishing_div,pct_games_played_conf,pct_games_played_div,pct_plus_minus_conf,pct_plus_minus_div,pct_sh_goals_conf,pct_sh_goals_div,pct_gw_goals_conf,pct_gw_goals_div,pct_shots_conf,pct_shots_div,pct_toi_per_game_conf,pct_toi_per_game_div,pct_faceoff_win_pct_conf,pct_faceoff_win_pct_div,pct_hits_conf,pct_hits_div,pct_blocked_shots_conf,pct_blocked_shots_div,pct_takeaways_conf,pct_takeaways_div,pct_giveaways_conf,pct_giveaways_div&limit=2000",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/player_seasons?season=eq.20252026&game_type=eq.3&select=player_id,hits,blocked_shots,takeaways,giveaways&limit=2000",
+    },
+  ],
+}
+`;
+
+exports[`player-results-vs-process > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "generated_at": "2026-01-10T00:00:00Z",
+      "narrative_text": "Results vs process text.",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:player-results-vs-process:8478427:20252026:fr",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player-results-vs-process > Supabase unavailable 1`] = `
+{
+  "body": [],
+  "kvWrites": [
+    {
+      "key": "nhl:player-results-vs-process:8478427:20252026:fr",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player-results-vs-process > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "playerId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`player-results-vs-process > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "generated_at": "2026-01-10T00:00:00Z",
+      "narrative_text": "Results vs process text.",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:player-results-vs-process:8478427:20252026:fr",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/player_narratives?player_id=eq.8478427&season=eq.20252026&narrative_type=eq.results_vs_process&locale=eq.fr&select=narrative_text,generated_at&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`player-scouting > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "generated_at": "2026-01-10T00:00:00Z",
+      "scouting_text": "Scouting text.",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:player-scouting:8478427:20252026:en",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player-scouting > Supabase unavailable 1`] = `
+{
+  "body": [],
+  "kvWrites": [
+    {
+      "key": "nhl:player-scouting:8478427:20252026:en",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player-scouting > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "playerId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`player-scouting > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "generated_at": "2026-01-10T00:00:00Z",
+      "scouting_text": "Scouting text.",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:player-scouting:8478427:20252026:en",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/player_scouting?player_id=eq.8478427&season=eq.20252026&locale=eq.en&select=scouting_text,generated_at&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`player-shots > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "event_type": "goal",
+      "game_id": 2025020498,
+      "period": 1,
+      "shot_type": "wrist",
+      "team": "CAR",
+      "time_in_period": "04:00",
+      "x": 70,
+      "y": -10,
+    },
+    {
+      "event_type": "shot-on-goal",
+      "game_id": 2025020498,
+      "period": 2,
+      "shot_type": "slap",
+      "team": "BOS",
+      "time_in_period": "11:30",
+      "x": -60,
+      "y": 20,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:player-shots:8478427:20252026:CAR",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player-shots > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: shot_events?player_id=eq.8478427&season=eq.20252026&team=eq.CAR&select=x,y,event_type,period,time_in_period,shot_type&limit=2000",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player-shots > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "playerId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`player-shots > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "event_type": "goal",
+      "game_id": 2025020498,
+      "period": 1,
+      "shot_type": "wrist",
+      "team": "CAR",
+      "time_in_period": "04:00",
+      "x": 70,
+      "y": -10,
+    },
+    {
+      "event_type": "shot-on-goal",
+      "game_id": 2025020498,
+      "period": 2,
+      "shot_type": "slap",
+      "team": "BOS",
+      "time_in_period": "11:30",
+      "x": -60,
+      "y": 20,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:player-shots:8478427:20252026:CAR",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/shot_events?player_id=eq.8478427&season=eq.20252026&team=eq.CAR&select=x,y,event_type,period,time_in_period,shot_type&limit=2000",
+    },
+  ],
+}
+`;
+
+exports[`players-list > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "id": 8478427,
+      "name": "Sebastian Aho",
+      "position": "C",
+    },
+    {
+      "id": 8481611,
+      "name": "Pyotr Kochetkov",
+      "position": "G",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:players-list",
+      "ttl": 21600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`players-list > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`players-list > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "id": 8478427,
+      "name": "Sebastian Aho",
+      "position": "C",
+    },
+    {
+      "id": 8481611,
+      "name": "Pyotr Kochetkov",
+      "position": "G",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:players-list",
+      "ttl": 21600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/players?select=id,name,position",
+    },
+  ],
+}
+`;
+
+exports[`playoff-odds (no runs yet) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "history": [],
+    "latest": null,
+    "nextGames": [],
+    "runDate": null,
+    "season": 20252026,
+    "stale": false,
+    "team": "CAR",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`playoff-odds (no runs yet) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "history": [],
+    "latest": null,
+    "nextGames": [],
+    "runDate": null,
+    "season": 20252026,
+    "stale": false,
+    "team": "CAR",
+    "unavailable": true,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`playoff-odds (no runs yet) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "history": [],
+    "latest": null,
+    "nextGames": [],
+    "runDate": null,
+    "season": 20252026,
+    "stale": false,
+    "team": "CAR",
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/playoff_odds?select=season,run_date,playoff_pct,division_pct,proj_points,points_p10,points_p90,current_points,games_played,games_remaining,elo_rating,sims,change&team=eq.CAR&season=eq.20252026&order=run_date.desc&limit=1",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/playoff_odds?select=season,run_date,playoff_pct&team=eq.CAR&season=eq.20252026&order=run_date.desc&limit=250",
+    },
+  ],
+}
+`;
+
+exports[`playoff-odds > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "history": [
+      {
+        "playoff_pct": 0.91,
+        "run_date": "2026-01-15",
+      },
+    ],
+    "latest": {
+      "change": null,
+      "current_points": 55,
+      "division_pct": 0.4,
+      "elo_rating": 1560,
+      "games_played": 40,
+      "games_remaining": 42,
+      "playoff_pct": 0.91,
+      "points_p10": 97,
+      "points_p90": 111,
+      "proj_points": 104,
+      "run_date": "2026-01-15",
+      "season": 20252026,
+      "sims": 10000,
+    },
+    "nextGames": [],
+    "runDate": "2026-01-15",
+    "season": 20252026,
+    "stale": false,
+    "team": "CAR",
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:playoff-odds:CAR:latest",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`playoff-odds > Supabase unavailable 1`] = `
+{
+  "body": {
+    "history": [],
+    "latest": null,
+    "nextGames": [],
+    "runDate": null,
+    "season": null,
+    "stale": false,
+    "team": "CAR",
+    "unavailable": true,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`playoff-odds > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "invalid team or season",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`playoff-odds > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "history": [
+      {
+        "playoff_pct": 0.91,
+        "run_date": "2026-01-15",
+      },
+    ],
+    "latest": {
+      "change": null,
+      "current_points": 55,
+      "division_pct": 0.4,
+      "elo_rating": 1560,
+      "games_played": 40,
+      "games_remaining": 42,
+      "playoff_pct": 0.91,
+      "points_p10": 97,
+      "points_p90": 111,
+      "proj_points": 104,
+      "run_date": "2026-01-15",
+      "season": 20252026,
+      "sims": 10000,
+    },
+    "nextGames": [],
+    "runDate": "2026-01-15",
+    "season": 20252026,
+    "stale": false,
+    "team": "CAR",
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:playoff-odds:CAR:latest",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/playoff_odds?select=season,run_date,playoff_pct,division_pct,proj_points,points_p10,points_p90,current_points,games_played,games_remaining,elo_rating,sims,change&team=eq.CAR&order=run_date.desc&limit=1",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/playoff_odds?select=season,run_date,playoff_pct&team=eq.CAR&order=run_date.desc&limit=250",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/playoff_odds_game_impacts?select=game_id,game_date,home_team,away_team,outcome,playoff_pct&season=eq.20252026&run_date=eq.2026-01-15&team=eq.CAR",
+    },
+  ],
+}
+`;
+
+exports[`poll (no secret) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`poll (no secret) > Supabase unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`poll (no secret) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+  "upstream": [],
+}
+`;
+
+exports[`power-rankings > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "generated_date": "2026-01-14",
+      "narrative": "Carolina keeps rolling.",
+      "prior_rank": 5,
+      "rank": 3,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:power-rankings:CAR:20252026:1",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`power-rankings > Supabase unavailable 1`] = `
+{
+  "body": [],
+  "kvWrites": [
+    {
+      "key": "nhl:power-rankings:CAR:20252026:1",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`power-rankings > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "generated_date": "2026-01-14",
+      "narrative": "Carolina keeps rolling.",
+      "prior_rank": 5,
+      "rank": 3,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:power-rankings:CAR:20252026:1",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/power_rankings_narratives?team=eq.CAR&season=eq.20252026&order=generated_date.desc&limit=1&select=narrative,rank,prior_rank,generated_date",
+    },
+  ],
+}
+`;
+
+exports[`pp-units/refresh (no secret) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`pp-units/refresh (no secret) > Supabase unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`pp-units/refresh (no secret) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+  "upstream": [],
+}
+`;
+
+exports[`prediction/analyze (force regenerate) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "Game not found in schedule",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`prediction/analyze (force regenerate) > Supabase unavailable 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+  ],
+  "threw": "Supabase 503: team_elo_ratings?team=in.(CAR,BOS)&select=team,rating",
+}
+`;
+
+exports[`prediction/analyze (force regenerate) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "carCF": "54.0",
+    "carStreak": "W3",
+    "carWinPct": 62,
+    "correction": "elo",
+    "corsiCaveat": "All-situations shot-attempt share (goals+shots+blocked+missed), not 5-on-5 filtered.",
+    "corsiForPct": {
+      "car": 54,
+      "opp": 49,
+    },
+    "expCar": 3.2,
+    "expOpp": 2.6,
+    "gameId": "2025020500",
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "h2hRecord": "1-1",
+    "isHome": true,
+    "isPlayoff": false,
+    "narrative": "Fixture NHL narrative.",
+    "oppAbbr": "BOS",
+    "oppStreak": "L1",
+    "regime": "in-season",
+  },
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+    {
+      "key": "prediction:2025020500:CAR",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/club-schedule-season/CAR/20252026",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_seasons?team=in.(CAR,BOS)&season=eq.20252026&game_type=eq.2&select=team,corsi_for_pct,corsi_for_pct_5v5",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_elo_ratings?team=in.(CAR,BOS)&select=team,rating",
+    },
+    {
+      "aiPrompt": "You are EyeWall Analytics, a Carolina Hurricanes hockey analytics assistant. Write a sharp, data-driven pre-game analysis for Carolina Hurricanes fans. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener.
+
+Game: CAR (HOME) vs BOS
+Context: Regular Season
+
+CAR stats:
+- Record: 25-10-5 (55 pts)
+- GF/GA per game: 3.25 / 2.50
+- PP%: 24.1% · PK%: 82.3%
+- SOG/GP: 31.2 for / 27.5 against
+- Corsi (real shot-attempt share): 54.0%
+- Current streak: W3
+
+BOS stats:
+- Record: 20-15-5 (45 pts)
+- GF/GA per game: 2.88 / 2.95
+- PP%: 22.0% · PK%: 82.3%
+- SOG/GP: 31.2 for / 27.5 against
+- Corsi (real shot-attempt share): 49.0%
+- Current streak: L1
+
+Head-to-head this season: CAR 1-1
+Expected score (Pythagorean): CAR 3.2 - BOS 2.6
+Model win probability: CAR 62%
+
+Note: the Corsi figure above is All-situations shot-attempt share (goals+shots+blocked+missed), not 5-on-5 filtered. Describe it as "shot-attempt share" or "Corsi," accurately reflecting that scope.
+
+Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`prediction/analyze (game not in schedul… > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "Game not found in schedule",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`prediction/analyze (game not in schedul… > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Game not found in schedule",
+  },
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`prediction/analyze (game not in schedul… > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "error": "Game not found in schedule",
+  },
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/club-schedule-season/CAR/20252026",
+    },
+  ],
+}
+`;
+
+exports[`prediction/analyze (in season) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "Game not found in schedule",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`prediction/analyze (in season) > Supabase unavailable 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+  ],
+  "threw": "Supabase 503: team_elo_ratings?team=in.(CAR,BOS)&select=team,rating",
+}
+`;
+
+exports[`prediction/analyze (in season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "carCF": "54.0",
+    "carStreak": "W3",
+    "carWinPct": 62,
+    "correction": "elo",
+    "corsiCaveat": "All-situations shot-attempt share (goals+shots+blocked+missed), not 5-on-5 filtered.",
+    "corsiForPct": {
+      "car": 54,
+      "opp": 49,
+    },
+    "expCar": 3.2,
+    "expOpp": 2.6,
+    "gameId": "2025020500",
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "h2hRecord": "1-1",
+    "isHome": true,
+    "isPlayoff": false,
+    "narrative": "Fixture NHL narrative.",
+    "oppAbbr": "BOS",
+    "oppStreak": "L1",
+    "regime": "in-season",
+  },
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+    {
+      "key": "prediction:2025020500:CAR",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/club-schedule-season/CAR/20252026",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_seasons?team=in.(CAR,BOS)&season=eq.20252026&game_type=eq.2&select=team,corsi_for_pct,corsi_for_pct_5v5",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_elo_ratings?team=in.(CAR,BOS)&select=team,rating",
+    },
+    {
+      "aiPrompt": "You are EyeWall Analytics, a Carolina Hurricanes hockey analytics assistant. Write a sharp, data-driven pre-game analysis for Carolina Hurricanes fans. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener.
+
+Game: CAR (HOME) vs BOS
+Context: Regular Season
+
+CAR stats:
+- Record: 25-10-5 (55 pts)
+- GF/GA per game: 3.25 / 2.50
+- PP%: 24.1% · PK%: 82.3%
+- SOG/GP: 31.2 for / 27.5 against
+- Corsi (real shot-attempt share): 54.0%
+- Current streak: W3
+
+BOS stats:
+- Record: 20-15-5 (45 pts)
+- GF/GA per game: 2.88 / 2.95
+- PP%: 22.0% · PK%: 82.3%
+- SOG/GP: 31.2 for / 27.5 against
+- Corsi (real shot-attempt share): 49.0%
+- Current streak: L1
+
+Head-to-head this season: CAR 1-1
+Expected score (Pythagorean): CAR 3.2 - BOS 2.6
+Model win probability: CAR 62%
+
+Note: the Corsi figure above is All-situations shot-attempt share (goals+shots+blocked+missed), not 5-on-5 filtered. Describe it as "shot-attempt share" or "Corsi," accurately reflecting that scope.
+
+Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`prediction/analyze (no gameId) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`prediction/analyze (no gameId) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`prediction/analyze (no gameId) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [],
+}
+`;
+
+exports[`prediction/analyze (preseason fallback) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "Game not found in schedule",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`prediction/analyze (preseason fallback) > Supabase unavailable 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+  ],
+  "threw": "Supabase 503: team_seasons?team=in.(CAR,BOS)&season=eq.20242025&game_type=eq.2&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,corsi_for_pct,corsi_for_pct_5v5",
+}
+`;
+
+exports[`prediction/analyze (preseason fallback) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "carCF": "54.0",
+    "carStreak": "N/A (preseason)",
+    "carWinPct": 62,
+    "correction": "elo",
+    "corsiCaveat": "All-situations shot-attempt share from 20242025, Carolina Hurricanes's last completed season — not this season's form.",
+    "corsiForPct": {
+      "car": 54,
+      "opp": 49,
+    },
+    "dataSeason": 20242025,
+    "expCar": 3.2,
+    "expOpp": 2.6,
+    "gameId": "2025020500",
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "h2hRecord": "no games played yet this season",
+    "isFallback": true,
+    "isHome": true,
+    "isPlayoff": false,
+    "narrative": "Fixture NHL narrative.",
+    "oppAbbr": "BOS",
+    "oppStreak": "N/A (preseason)",
+    "regime": "preseason",
+  },
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+    {
+      "key": "prediction:2025020500:CAR",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/club-schedule-season/CAR/20252026",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_seasons?team=in.(CAR,BOS)&season=eq.20242025&game_type=eq.2&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,corsi_for_pct,corsi_for_pct_5v5",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_elo_ratings?team=in.(CAR,BOS)&select=team,rating",
+    },
+    {
+      "aiPrompt": "You are EyeWall Analytics, a Carolina Hurricanes hockey analytics assistant. Write a sharp, data-driven PRESEASON analysis for Carolina Hurricanes fans — no games have been played yet this season. The win probability below is from a live-updated Elo rating (carries over from last season, so it already reflects each team's recent trajectory); everything else is last season's (20242025) final numbers for context. 2-3 sentences only. Be specific about the numbers and be clear this is a preseason estimate, not current form. No filler. No "In this matchup" opener.
+
+Game: CAR (HOME) vs BOS
+Context: Preseason estimate
+
+CAR last season (20242025): 55 pts, GF/GA per game: 3.25 / 2.50, PP%: 24.1%
+BOS last season (20242025): 45 pts, GF/GA per game: 2.90 / 2.95, PP%: 22.0%
+
+Expected score (Pythagorean, from last season's rates): CAR 3.2 - BOS 2.6
+Model win probability (Elo): CAR 62%
+
+Write the analysis now. Mention the single most decisive factor from last season and a concrete expected-score range.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`probable-starters (not in the window ye… > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "gameDate": null,
+    "gameId": 2025020500,
+    "runDate": null,
+    "teams": {},
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`probable-starters (not in the window ye… > Supabase unavailable 1`] = `
+{
+  "body": {
+    "gameDate": null,
+    "gameId": 2025020500,
+    "runDate": null,
+    "teams": {},
+    "unavailable": true,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`probable-starters (not in the window ye… > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "gameDate": null,
+    "gameId": 2025020500,
+    "runDate": null,
+    "teams": {},
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/goalie_start_probs?select=team,goalie_id,goalie_name,start_prob,factors,game_date,run_date&game_id=eq.2025020500",
+    },
+  ],
+}
+`;
+
+exports[`probable-starters > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "gameDate": "2026-01-16",
+    "gameId": 2025020500,
+    "runDate": "2026-01-15",
+    "teams": {
+      "CAR": [
+        {
+          "factors": {},
+          "goalie_id": 8481611,
+          "goalie_name": "Pyotr Kochetkov",
+          "start_prob": 0.7,
+        },
+      ],
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:probable-starters:2025020500",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`probable-starters > Supabase unavailable 1`] = `
+{
+  "body": {
+    "gameDate": null,
+    "gameId": 2025020500,
+    "runDate": null,
+    "teams": {},
+    "unavailable": true,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`probable-starters > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "invalid game",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`probable-starters > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "gameDate": "2026-01-16",
+    "gameId": 2025020500,
+    "runDate": "2026-01-15",
+    "teams": {
+      "CAR": [
+        {
+          "factors": {},
+          "goalie_id": 8481611,
+          "goalie_name": "Pyotr Kochetkov",
+          "start_prob": 0.7,
+        },
+      ],
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:probable-starters:2025020500",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/goalie_start_probs?select=team,goalie_id,goalie_name,start_prob,factors,game_date,run_date&game_id=eq.2025020500",
+    },
+  ],
+}
+`;
+
+exports[`push subscriptions > subscribe upserts Web Push and iOS subscribers; unsubscribe removes them 1`] = `
+{
+  "afterSubscribe": [
+    {
+      "endpoint": "https://push.example/old",
+      "keys": {
+        "auth": "y",
+        "p256dh": "x",
+      },
+      "prefs": {
+        "goal": false,
+      },
+      "teamAbbr": "NHL:BOS",
+    },
+    {
+      "platform": "ios",
+      "prefs": null,
+      "teamAbbr": "PWHL:MTL",
+      "token": "tok-1",
+    },
+  ],
+  "ios": {
+    "body": {
+      "ok": true,
+      "total": 2,
+    },
+    "status": 200,
+  },
+  "kvWrites": [
+    {
+      "key": "push:subs",
+      "ttl": 31536000,
+    },
+    {
+      "key": "push:subs",
+      "ttl": 31536000,
+    },
+    {
+      "key": "push:subs",
+      "ttl": 31536000,
+    },
+    {
+      "key": "push:subs",
+      "ttl": 31536000,
+    },
+  ],
+  "unsubIos": {
+    "body": {
+      "ok": true,
+      "total": 1,
+    },
+    "status": 200,
+  },
+  "unsubWeb": {
+    "body": {
+      "ok": true,
+      "total": 0,
+    },
+    "status": 200,
+  },
+  "web": {
+    "body": {
+      "ok": true,
+      "total": 1,
+    },
+    "status": 200,
+  },
+}
+`;
+
+exports[`push/test (no secret) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`push/test (no secret) > Supabase unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`push/test (no secret) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+  "upstream": [],
+}
+`;
+
+exports[`roster > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "defensemen": [],
+    "forwards": [],
+    "goalies": [],
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`roster > Supabase unavailable 1`] = `
+{
+  "body": {
+    "defensemen": [],
+    "forwards": [
+      {
+        "firstName": {
+          "default": "Sebastian",
+        },
+        "id": 8478427,
+      },
+    ],
+    "goalies": [
+      {
+        "id": 8481611,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "roster:BOS",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`roster > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "defensemen": [],
+    "forwards": [
+      {
+        "firstName": {
+          "default": "Sebastian",
+        },
+        "id": 8478427,
+      },
+    ],
+    "goalies": [
+      {
+        "id": 8481611,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "roster:BOS",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/roster/BOS/current",
+    },
+  ],
+}
+`;
+
+exports[`schedule (historical season) > NHL API and AI unavailable 1`] = `
+{
+  "body": [],
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`schedule (historical season) > Supabase unavailable 1`] = `
+{
+  "body": [
+    {
+      "awayTeam": {
+        "abbrev": "BOS",
+        "score": 2,
+      },
+      "gameDate": "2026-01-10",
+      "gameState": "OFF",
+      "gameType": 2,
+      "homeTeam": {
+        "abbrev": "BOS",
+        "score": 4,
+      },
+      "id": 2025020498,
+    },
+    {
+      "awayTeam": {
+        "abbrev": "BOS",
+        "score": 1,
+      },
+      "gameDate": "2026-01-12",
+      "gameState": "FINAL",
+      "gameType": 2,
+      "homeTeam": {
+        "abbrev": "BOS",
+        "score": 3,
+      },
+      "id": 2025020499,
+    },
+    {
+      "awayTeam": {
+        "abbrev": "BOS",
+      },
+      "gameDate": "2026-01-16",
+      "gameState": "FUT",
+      "gameType": 2,
+      "homeTeam": {
+        "abbrev": "BOS",
+      },
+      "id": 2025020500,
+      "neutralSite": false,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "schedule:BOS:20242025",
+      "ttl": 5184000,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`schedule (historical season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "awayTeam": {
+        "abbrev": "BOS",
+        "score": 2,
+      },
+      "gameDate": "2026-01-10",
+      "gameState": "OFF",
+      "gameType": 2,
+      "homeTeam": {
+        "abbrev": "BOS",
+        "score": 4,
+      },
+      "id": 2025020498,
+    },
+    {
+      "awayTeam": {
+        "abbrev": "BOS",
+        "score": 1,
+      },
+      "gameDate": "2026-01-12",
+      "gameState": "FINAL",
+      "gameType": 2,
+      "homeTeam": {
+        "abbrev": "BOS",
+        "score": 3,
+      },
+      "id": 2025020499,
+    },
+    {
+      "awayTeam": {
+        "abbrev": "BOS",
+      },
+      "gameDate": "2026-01-16",
+      "gameState": "FUT",
+      "gameType": 2,
+      "homeTeam": {
+        "abbrev": "BOS",
+      },
+      "id": 2025020500,
+      "neutralSite": false,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "schedule:BOS:20242025",
+      "ttl": 5184000,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/club-schedule-season/BOS/20242025",
+    },
+  ],
+}
+`;
+
+exports[`scorecard (empty table) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "models": {},
+    "updatedAt": null,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`scorecard (empty table) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "models": {},
+    "unavailable": true,
+    "updatedAt": null,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`scorecard (empty table) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "models": {},
+    "updatedAt": null,
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/prediction_scorecard?select=model,kind,period,status,n,accuracy,brier,log_loss,baseline,calibration,recent,note,updated_at",
+    },
+  ],
+}
+`;
+
+exports[`scorecard > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "models": {
+      "game_winner": {
+        "backtest": null,
+        "live": {
+          "accuracy": 0.58,
+          "baseline": 0.5,
+          "brier": 0.24,
+          "calibration": [],
+          "kind": "live",
+          "log_loss": 0.67,
+          "model": "game_winner",
+          "n": 500,
+          "note": null,
+          "period": "2025-26",
+          "recent": [],
+          "status": "ok",
+          "updated_at": "2026-01-15T08:00:00Z",
+        },
+      },
+    },
+    "updatedAt": "2026-01-15T08:00:00Z",
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:scorecard",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`scorecard > Supabase unavailable 1`] = `
+{
+  "body": {
+    "models": {},
+    "unavailable": true,
+    "updatedAt": null,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`scorecard > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "models": {
+      "game_winner": {
+        "backtest": null,
+        "live": {
+          "accuracy": 0.58,
+          "baseline": 0.5,
+          "brier": 0.24,
+          "calibration": [],
+          "kind": "live",
+          "log_loss": 0.67,
+          "model": "game_winner",
+          "n": 500,
+          "note": null,
+          "period": "2025-26",
+          "recent": [],
+          "status": "ok",
+          "updated_at": "2026-01-15T08:00:00Z",
+        },
+      },
+    },
+    "updatedAt": "2026-01-15T08:00:00Z",
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:scorecard",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/prediction_scorecard?select=model,kind,period,status,n,accuracy,brier,log_loss,baseline,calibration,recent,note,updated_at",
+    },
+  ],
+}
+`;
+
+exports[`scratches (empty season, prior-season f… > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "classified": false,
+    "gameType": 2,
+    "games_with_scratches": 0,
+    "players": [],
+    "season": 20252026,
+    "stale": false,
+    "team": "CAR",
+    "totals": {
+      "healthy": 0,
+      "injured": 0,
+      "suspended": 0,
+      "unknown": 0,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:scratches:CAR:auto:2",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`scratches (empty season, prior-season f… > Supabase unavailable 1`] = `
+{
+  "body": {
+    "classified": false,
+    "gameType": 2,
+    "games_with_scratches": 0,
+    "players": [],
+    "season": 20252026,
+    "stale": false,
+    "team": "CAR",
+    "totals": {
+      "healthy": 0,
+      "injured": 0,
+      "suspended": 0,
+      "unknown": 0,
+    },
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`scratches (empty season, prior-season f… > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "classified": false,
+    "gameType": 2,
+    "games_with_scratches": 0,
+    "players": [],
+    "season": 20252026,
+    "stale": false,
+    "team": "CAR",
+    "totals": {
+      "healthy": 0,
+      "injured": 0,
+      "suspended": 0,
+      "unknown": 0,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:scratches:CAR:auto:2",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_scratches?team=eq.CAR&season=eq.20252026&game_type=eq.2&select=game_id,game_date,player_id,player_name,scratch_type&order=game_date.asc,id.asc&limit=1000",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_scratches?team=eq.CAR&season=eq.20242025&game_type=eq.2&select=game_id,game_date,player_id,player_name,scratch_type&order=game_date.asc,id.asc&limit=1000",
+    },
+  ],
+}
+`;
+
+exports[`scratches (explicit season, playoffs) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "classified": true,
+    "gameType": 3,
+    "games_with_scratches": 2,
+    "players": [
+      {
+        "healthy": 1,
+        "injured": 0,
+        "last_date": "2026-01-10",
+        "player_id": 8482000,
+        "player_name": "Healthy Scratch",
+        "suspended": 0,
+        "total": 1,
+        "unknown": 0,
+      },
+      {
+        "healthy": 0,
+        "injured": 1,
+        "last_date": "2026-01-12",
+        "player_id": 8476882,
+        "player_name": "Some Defenseman",
+        "suspended": 0,
+        "total": 1,
+        "unknown": 0,
+      },
+    ],
+    "season": 20242025,
+    "stale": false,
+    "team": "CAR",
+    "totals": {
+      "healthy": 1,
+      "injured": 1,
+      "suspended": 0,
+      "unknown": 0,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:scratches:CAR:20242025:3",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`scratches (explicit season, playoffs) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "classified": false,
+    "gameType": 3,
+    "games_with_scratches": 0,
+    "players": [],
+    "season": 20242025,
+    "stale": false,
+    "team": "CAR",
+    "totals": {
+      "healthy": 0,
+      "injured": 0,
+      "suspended": 0,
+      "unknown": 0,
+    },
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`scratches (explicit season, playoffs) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "classified": true,
+    "gameType": 3,
+    "games_with_scratches": 2,
+    "players": [
+      {
+        "healthy": 1,
+        "injured": 0,
+        "last_date": "2026-01-10",
+        "player_id": 8482000,
+        "player_name": "Healthy Scratch",
+        "suspended": 0,
+        "total": 1,
+        "unknown": 0,
+      },
+      {
+        "healthy": 0,
+        "injured": 1,
+        "last_date": "2026-01-12",
+        "player_id": 8476882,
+        "player_name": "Some Defenseman",
+        "suspended": 0,
+        "total": 1,
+        "unknown": 0,
+      },
+    ],
+    "season": 20242025,
+    "stale": false,
+    "team": "CAR",
+    "totals": {
+      "healthy": 1,
+      "injured": 1,
+      "suspended": 0,
+      "unknown": 0,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:scratches:CAR:20242025:3",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_scratches?team=eq.CAR&season=eq.20242025&game_type=eq.3&select=game_id,game_date,player_id,player_name,scratch_type&order=game_date.asc,id.asc&limit=1000",
+    },
+  ],
+}
+`;
+
+exports[`scratches > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "classified": true,
+    "gameType": 2,
+    "games_with_scratches": 2,
+    "players": [
+      {
+        "healthy": 1,
+        "injured": 0,
+        "last_date": "2026-01-10",
+        "player_id": 8482000,
+        "player_name": "Healthy Scratch",
+        "suspended": 0,
+        "total": 1,
+        "unknown": 0,
+      },
+      {
+        "healthy": 0,
+        "injured": 1,
+        "last_date": "2026-01-12",
+        "player_id": 8476882,
+        "player_name": "Some Defenseman",
+        "suspended": 0,
+        "total": 1,
+        "unknown": 0,
+      },
+    ],
+    "season": 20252026,
+    "stale": false,
+    "team": "CAR",
+    "totals": {
+      "healthy": 1,
+      "injured": 1,
+      "suspended": 0,
+      "unknown": 0,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:scratches:CAR:auto:2",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`scratches > Supabase unavailable 1`] = `
+{
+  "body": {
+    "classified": false,
+    "gameType": 2,
+    "games_with_scratches": 0,
+    "players": [],
+    "season": 20252026,
+    "stale": false,
+    "team": "CAR",
+    "totals": {
+      "healthy": 0,
+      "injured": 0,
+      "suspended": 0,
+      "unknown": 0,
+    },
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`scratches > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "invalid team, season, or gameType",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`scratches > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "classified": true,
+    "gameType": 2,
+    "games_with_scratches": 2,
+    "players": [
+      {
+        "healthy": 1,
+        "injured": 0,
+        "last_date": "2026-01-10",
+        "player_id": 8482000,
+        "player_name": "Healthy Scratch",
+        "suspended": 0,
+        "total": 1,
+        "unknown": 0,
+      },
+      {
+        "healthy": 0,
+        "injured": 1,
+        "last_date": "2026-01-12",
+        "player_id": 8476882,
+        "player_name": "Some Defenseman",
+        "suspended": 0,
+        "total": 1,
+        "unknown": 0,
+      },
+    ],
+    "season": 20252026,
+    "stale": false,
+    "team": "CAR",
+    "totals": {
+      "healthy": 1,
+      "injured": 1,
+      "suspended": 0,
+      "unknown": 0,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:scratches:CAR:auto:2",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_scratches?team=eq.CAR&season=eq.20252026&game_type=eq.2&select=game_id,game_date,player_id,player_name,scratch_type&order=game_date.asc,id.asc&limit=1000",
+    },
+  ],
+}
+`;
+
+exports[`social/test (no secret) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`social/test (no secret) > Supabase unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`social/test (no secret) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+  "upstream": [],
+}
+`;
+
+exports[`social/test (preview) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "length": 195,
+    "ok": true,
+    "preview": "🌀 WIN: CAR 4-2 BOS · Home
+
+The Canes controlled this one from the drop of the puck.
+
+#LetsGoCanes #Canes #NHL #CarolinaHurricanes #SoundTheSiren #BostonBruins #GameRecap
+
+📊 eyewallanalytics.com",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`social/test (preview) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "length": 195,
+    "ok": true,
+    "preview": "🌀 WIN: CAR 4-2 BOS · Home
+
+The Canes controlled this one from the drop of the puck.
+
+#LetsGoCanes #Canes #NHL #CarolinaHurricanes #SoundTheSiren #BostonBruins #GameRecap
+
+📊 eyewallanalytics.com",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`social/test (preview) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "length": 195,
+    "ok": true,
+    "preview": "🌀 WIN: CAR 4-2 BOS · Home
+
+The Canes controlled this one from the drop of the puck.
+
+#LetsGoCanes #Canes #NHL #CarolinaHurricanes #SoundTheSiren #BostonBruins #GameRecap
+
+📊 eyewallanalytics.com",
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [],
+}
+`;
+
+exports[`special-teams (cold cache) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "BOS": {
+      "PK": {},
+      "PP": {
+        "2": [
+          8477956,
+        ],
+      },
+    },
+    "CAR": {
+      "PK": {
+        "1": [
+          8476882,
+        ],
+      },
+      "PP": {
+        "1": [
+          8478427,
+          8480830,
+        ],
+      },
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "pp_units:all",
+      "ttl": 14400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`special-teams (cold cache) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`special-teams (cold cache) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "BOS": {
+      "PK": {},
+      "PP": {
+        "2": [
+          8477956,
+        ],
+      },
+    },
+    "CAR": {
+      "PK": {
+        "1": [
+          8476882,
+        ],
+      },
+      "PP": {
+        "1": [
+          8478427,
+          8480830,
+        ],
+      },
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "pp_units:all",
+      "ttl": 14400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/special_teams_units?season=eq.20252026&select=team,unit_type,unit_number,player_ids&limit=256",
+    },
+  ],
+}
+`;
+
+exports[`special-teams (warm cache) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "CAR": {
+      "PK": {},
+      "PP": {
+        "1": [
+          1,
+          2,
+        ],
+      },
+    },
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`special-teams (warm cache) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "CAR": {
+      "PK": {},
+      "PP": {
+        "1": [
+          1,
+          2,
+        ],
+      },
+    },
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`special-teams (warm cache) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "CAR": {
+      "PK": {},
+      "PP": {
+        "1": [
+          1,
+          2,
+        ],
+      },
+    },
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [],
+}
+`;
+
+exports[`summary/generate (no completed game cac… > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "No completed games found",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`summary/generate (no completed game cac… > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "No completed games found",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`summary/generate (no completed game cac… > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "error": "No completed games found",
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [],
+}
+`;
+
+exports[`summary/generate (no secret) > NHL API and AI unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`summary/generate (no secret) > Supabase unavailable 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+}
+`;
+
+exports[`summary/generate (no secret) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Unauthorized",
+  "kvWrites": [],
+  "status": 401,
+  "upstream": [],
+}
+`;
+
+exports[`summary/narrative (game) > NHL API and AI unavailable 1`] = `
+{
+  "kvWrites": [],
+  "threw": "OpenRouter 503",
+}
+`;
+
+exports[`summary/narrative (game) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "cardNarrative": "Fixture NHL narrative.",
+    "gameId": "2025020500",
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "narrative": "Fixture NHL narrative.",
+    "period": "game",
+  },
+  "kvWrites": [
+    {
+      "key": "narrative:game:2025020500:CAR",
+      "ttl": 2592000,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`summary/narrative (game) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "cardNarrative": "Fixture NHL narrative.",
+    "gameId": "2025020500",
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "narrative": "Fixture NHL narrative.",
+    "period": "game",
+  },
+  "kvWrites": [
+    {
+      "key": "narrative:game:2025020500:CAR",
+      "ttl": 2592000,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "aiPrompt": "You are EyeWall, an analytics assistant for CAR hockey fans.
+  Write a sharp 3-4 sentence final game summary for CAR vs BOS.
+  Tone: analytical, knowledgeable fan. No fluff. No bullet points.
+
+  Game stats:
+  - Final: CAR 4 - 2 BOS
+  - Game Corsi For%: 56.1%
+  - CAR shots: 31, OPP shots: 25
+  - CAR high danger chances: 11 vs OPP 7
+  - Best period for CAR: P2 (62% CF)
+  - Worst period: P3 (45% CF)
+  - CAR hits: 20, CAR faceoffs: 52%
+  - Goals: CAR goal by Sebastian Aho at P1 4:00 (PP); BOS goal by unknown at P2 12:00 (EV)
+
+  Players you may name: Sebastian Aho, Pyotr Kochetkov. Do not name any other player — not linemates, not defensemen, not anyone not listed here.
+
+  Summarize how the game went, key turning points, and whether the result matched the underlying play. Under 80 words.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+    {
+      "aiPrompt": "You are EyeWall, an analytics assistant for CAR hockey fans.
+  Write a sharp 3-4 sentence final game summary for CAR vs BOS.
+  Tone: analytical, knowledgeable fan. No fluff. No bullet points.
+
+  Game stats:
+  - Final: CAR 4 - 2 BOS
+  - Game Corsi For%: 56.1%
+  - CAR shots: 31, OPP shots: 25
+  - CAR high danger chances: 11 vs OPP 7
+  - Best period for CAR: P2 (62% CF)
+  - Worst period: P3 (45% CF)
+  - CAR hits: 20, CAR faceoffs: 52%
+  - Goals: CAR goal by Sebastian Aho at P1 4:00 (PP); BOS goal by unknown at P2 12:00 (EV)
+
+  Players you may name: Sebastian Aho, Pyotr Kochetkov. Do not name any other player — not linemates, not defensemen, not anyone not listed here.
+
+  Write a 2-3 sentence shareable card caption. Hit the key result, one standout moment, and the underlying play if telling. Under 50 words. Plain text only.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`summary/narrative (no period) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "gameId and period required",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`summary/narrative (no period) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "gameId and period required",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`summary/narrative (no period) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "error": "gameId and period required",
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [],
+}
+`;
+
+exports[`summary/narrative (period) > NHL API and AI unavailable 1`] = `
+{
+  "kvWrites": [],
+  "threw": "OpenRouter 503",
+}
+`;
+
+exports[`summary/narrative (period) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "cardNarrative": null,
+    "gameId": "2025020500",
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "narrative": "Fixture NHL narrative.",
+    "period": "2",
+  },
+  "kvWrites": [
+    {
+      "key": "narrative:2:2025020500:CAR",
+      "ttl": 2592000,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`summary/narrative (period) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "cardNarrative": null,
+    "gameId": "2025020500",
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "narrative": "Fixture NHL narrative.",
+    "period": "2",
+  },
+  "kvWrites": [
+    {
+      "key": "narrative:2:2025020500:CAR",
+      "ttl": 2592000,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "aiPrompt": "You are EyeWall, an analytics assistant for CAR hockey fans.
+  Write a tight 2-3 sentence period summary for 2nd Period of a CAR vs BOS game.
+  Tone: sharp, analytical, knowledgeable fan. No fluff. No bullet points. Just sentences.
+
+  Stats:
+  - CAR Corsi For%: 56.1%
+  - CAR shots on goal: 31, OPP shots on goal: 25
+  - CAR goals: 4, OPP goals: 2
+  - CAR hits: 20
+  - Penalties: 5 total (2 against CAR)
+  - Goals: CAR goal by Sebastian Aho at 4:00 (PP); BOS goal by unknown at 12:00 (EV)
+
+  Players you may name: Sebastian Aho, Pyotr Kochetkov. Do not name any other player — not linemates, not defensemen, not anyone not listed here.
+
+  Focus on what mattered most — possession dominance, momentum, key goals. Under 60 words.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`team-lines > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "name_a": "Aho",
+      "name_b": "Svechnikov",
+      "name_c": "Jarvis",
+      "pos_a": "C",
+      "pos_b": "LW",
+      "pos_c": "RW",
+      "rank": 1,
+      "toi_secs": 5400,
+      "unit_type": "F",
+      "xgf_pct": 0.58,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:team-lines:CAR:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-lines > Supabase unavailable 1`] = `
+{
+  "body": [],
+  "kvWrites": [
+    {
+      "key": "nhl:team-lines:CAR:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-lines > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "name_a": "Aho",
+      "name_b": "Svechnikov",
+      "name_c": "Jarvis",
+      "pos_a": "C",
+      "pos_b": "LW",
+      "pos_c": "RW",
+      "rank": 1,
+      "toi_secs": 5400,
+      "unit_type": "F",
+      "xgf_pct": 0.58,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:team-lines:CAR:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/line_combinations?team=eq.CAR&season=eq.20252026&order=unit_type.asc,rank.asc&select=unit_type,rank,name_a,name_b,name_c,pos_a,pos_b,pos_c,toi_secs,xgf_pct",
+    },
+  ],
+}
+`;
+
+exports[`team-seasons > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "clinched": false,
+      "corsi_for_pct": 0.54,
+      "corsi_for_pct_5v5": 0.55,
+      "eliminated": false,
+      "games_played": 40,
+      "goals_ag_pg": 2.5,
+      "goals_against": 100,
+      "goals_for": 130,
+      "goals_for_pg": 3.25,
+      "hits": 900,
+      "losses": 10,
+      "magic_number": null,
+      "ot_losses": 5,
+      "penalties": 150,
+      "pk_pct": 82.3,
+      "points": 55,
+      "pp_pct": 24.1,
+      "roster_war_score": 71,
+      "season": 20252026,
+      "team": "CAR",
+      "tragic_number": null,
+      "wins": 25,
+      "xgf_pct": 0.55,
+    },
+    {
+      "clinched": false,
+      "corsi_for_pct": 0.49,
+      "corsi_for_pct_5v5": null,
+      "eliminated": false,
+      "games_played": 40,
+      "goals_ag_pg": 2.95,
+      "goals_against": 118,
+      "goals_for": 115,
+      "goals_for_pg": 2.9,
+      "hits": 1000,
+      "losses": 15,
+      "magic_number": null,
+      "ot_losses": 5,
+      "penalties": 170,
+      "pk_pct": 79.1,
+      "points": 45,
+      "pp_pct": null,
+      "roster_war_score": 60,
+      "season": 20252026,
+      "team": "BOS",
+      "tragic_number": null,
+      "wins": 20,
+      "xgf_pct": 0.49,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:team-seasons:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: team_seasons?season=eq.20252026&game_type=eq.2&select=team,xgf_pct,roster_war_score,games_played,magic_number,tragic_number,clinched,eliminated,hits,penalties&limit=32",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`team-seasons > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "clinched": false,
+      "corsi_for_pct": 0.54,
+      "corsi_for_pct_5v5": 0.55,
+      "eliminated": false,
+      "games_played": 40,
+      "goals_ag_pg": 2.5,
+      "goals_against": 100,
+      "goals_for": 130,
+      "goals_for_pg": 3.25,
+      "hits": 900,
+      "losses": 10,
+      "magic_number": null,
+      "ot_losses": 5,
+      "penalties": 150,
+      "pk_pct": 82.3,
+      "points": 55,
+      "pp_pct": 24.1,
+      "roster_war_score": 71,
+      "season": 20252026,
+      "team": "CAR",
+      "tragic_number": null,
+      "wins": 25,
+      "xgf_pct": 0.55,
+    },
+    {
+      "clinched": false,
+      "corsi_for_pct": 0.49,
+      "corsi_for_pct_5v5": null,
+      "eliminated": false,
+      "games_played": 40,
+      "goals_ag_pg": 2.95,
+      "goals_against": 118,
+      "goals_for": 115,
+      "goals_for_pg": 2.9,
+      "hits": 1000,
+      "losses": 15,
+      "magic_number": null,
+      "ot_losses": 5,
+      "penalties": 170,
+      "pk_pct": 79.1,
+      "points": 45,
+      "pp_pct": null,
+      "roster_war_score": 60,
+      "season": 20252026,
+      "team": "BOS",
+      "tragic_number": null,
+      "wins": 20,
+      "xgf_pct": 0.49,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:team-seasons:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_seasons?season=eq.20252026&game_type=eq.2&select=team,xgf_pct,roster_war_score,games_played,magic_number,tragic_number,clinched,eliminated,hits,penalties&limit=32",
+    },
+  ],
+}
+`;
+
+exports[`team-seasons/compare > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "clinched": false,
+      "corsi_for_pct": 0.54,
+      "corsi_for_pct_5v5": 0.55,
+      "eliminated": false,
+      "games_played": 40,
+      "goals_ag_pg": 2.5,
+      "goals_against": 100,
+      "goals_for": 130,
+      "goals_for_pg": 3.25,
+      "hits": 900,
+      "losses": 10,
+      "magic_number": null,
+      "ot_losses": 5,
+      "penalties": 150,
+      "pk_pct": 82.3,
+      "points": 55,
+      "pp_pct": 24.1,
+      "roster_war_score": 71,
+      "season": 20252026,
+      "team": "CAR",
+      "tragic_number": null,
+      "wins": 25,
+      "xgf_pct": 0.55,
+    },
+    {
+      "clinched": false,
+      "corsi_for_pct": 0.49,
+      "corsi_for_pct_5v5": null,
+      "eliminated": false,
+      "games_played": 40,
+      "goals_ag_pg": 2.95,
+      "goals_against": 118,
+      "goals_for": 115,
+      "goals_for_pg": 2.9,
+      "hits": 1000,
+      "losses": 15,
+      "magic_number": null,
+      "ot_losses": 5,
+      "penalties": 170,
+      "pk_pct": 79.1,
+      "points": 45,
+      "pp_pct": null,
+      "roster_war_score": 60,
+      "season": 20252026,
+      "team": "BOS",
+      "tragic_number": null,
+      "wins": 20,
+      "xgf_pct": 0.49,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:team-seasons:compare:CAR:20242025,20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons/compare > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: team_seasons?team=eq.CAR&season=in.(20252026,20242025)&game_type=eq.2&select=season,games_played,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`team-seasons/compare > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "team and seasons (comma-separated) are required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`team-seasons/compare > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "clinched": false,
+      "corsi_for_pct": 0.54,
+      "corsi_for_pct_5v5": 0.55,
+      "eliminated": false,
+      "games_played": 40,
+      "goals_ag_pg": 2.5,
+      "goals_against": 100,
+      "goals_for": 130,
+      "goals_for_pg": 3.25,
+      "hits": 900,
+      "losses": 10,
+      "magic_number": null,
+      "ot_losses": 5,
+      "penalties": 150,
+      "pk_pct": 82.3,
+      "points": 55,
+      "pp_pct": 24.1,
+      "roster_war_score": 71,
+      "season": 20252026,
+      "team": "CAR",
+      "tragic_number": null,
+      "wins": 25,
+      "xgf_pct": 0.55,
+    },
+    {
+      "clinched": false,
+      "corsi_for_pct": 0.49,
+      "corsi_for_pct_5v5": null,
+      "eliminated": false,
+      "games_played": 40,
+      "goals_ag_pg": 2.95,
+      "goals_against": 118,
+      "goals_for": 115,
+      "goals_for_pg": 2.9,
+      "hits": 1000,
+      "losses": 15,
+      "magic_number": null,
+      "ot_losses": 5,
+      "penalties": 170,
+      "pk_pct": 79.1,
+      "points": 45,
+      "pp_pct": null,
+      "roster_war_score": 60,
+      "season": 20252026,
+      "team": "BOS",
+      "tragic_number": null,
+      "wins": 20,
+      "xgf_pct": 0.49,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:team-seasons:compare:CAR:20242025,20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_seasons?team=eq.CAR&season=in.(20252026,20242025)&game_type=eq.2&select=season,games_played,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct",
+    },
+  ],
+}
+`;
+
+exports[`team-seasons/compare-teams > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "clinched": false,
+      "corsi_for_pct": 0.54,
+      "corsi_for_pct_5v5": 0.55,
+      "eliminated": false,
+      "games_played": 40,
+      "goals_ag_pg": 2.5,
+      "goals_against": 100,
+      "goals_for": 130,
+      "goals_for_pg": 3.25,
+      "hits": 900,
+      "losses": 10,
+      "magic_number": null,
+      "ot_losses": 5,
+      "penalties": 150,
+      "pk_pct": 82.3,
+      "points": 55,
+      "pp_pct": 24.1,
+      "roster_war_score": 71,
+      "season": 20252026,
+      "team": "CAR",
+      "tragic_number": null,
+      "wins": 25,
+      "xgf_pct": 0.55,
+    },
+    {
+      "clinched": false,
+      "corsi_for_pct": 0.49,
+      "corsi_for_pct_5v5": null,
+      "eliminated": false,
+      "games_played": 40,
+      "goals_ag_pg": 2.95,
+      "goals_against": 118,
+      "goals_for": 115,
+      "goals_for_pg": 2.9,
+      "hits": 1000,
+      "losses": 15,
+      "magic_number": null,
+      "ot_losses": 5,
+      "penalties": 170,
+      "pk_pct": 79.1,
+      "points": 45,
+      "pp_pct": null,
+      "roster_war_score": 60,
+      "season": 20252026,
+      "team": "BOS",
+      "tragic_number": null,
+      "wins": 20,
+      "xgf_pct": 0.49,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:team-seasons:compare-teams:BOS,CAR:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons/compare-teams > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: team_seasons?team=in.(CAR,BOS)&season=eq.20252026&game_type=eq.2&select=team,season,games_played,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`team-seasons/compare-teams > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "teams (exactly two, comma-separated) and season are required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`team-seasons/compare-teams > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "clinched": false,
+      "corsi_for_pct": 0.54,
+      "corsi_for_pct_5v5": 0.55,
+      "eliminated": false,
+      "games_played": 40,
+      "goals_ag_pg": 2.5,
+      "goals_against": 100,
+      "goals_for": 130,
+      "goals_for_pg": 3.25,
+      "hits": 900,
+      "losses": 10,
+      "magic_number": null,
+      "ot_losses": 5,
+      "penalties": 150,
+      "pk_pct": 82.3,
+      "points": 55,
+      "pp_pct": 24.1,
+      "roster_war_score": 71,
+      "season": 20252026,
+      "team": "CAR",
+      "tragic_number": null,
+      "wins": 25,
+      "xgf_pct": 0.55,
+    },
+    {
+      "clinched": false,
+      "corsi_for_pct": 0.49,
+      "corsi_for_pct_5v5": null,
+      "eliminated": false,
+      "games_played": 40,
+      "goals_ag_pg": 2.95,
+      "goals_against": 118,
+      "goals_for": 115,
+      "goals_for_pg": 2.9,
+      "hits": 1000,
+      "losses": 15,
+      "magic_number": null,
+      "ot_losses": 5,
+      "penalties": 170,
+      "pk_pct": 79.1,
+      "points": 45,
+      "pp_pct": null,
+      "roster_war_score": 60,
+      "season": 20252026,
+      "team": "BOS",
+      "tragic_number": null,
+      "wins": 20,
+      "xgf_pct": 0.49,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:team-seasons:compare-teams:BOS,CAR:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_seasons?team=in.(CAR,BOS)&season=eq.20252026&game_type=eq.2&select=team,season,games_played,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct",
+    },
+  ],
+}
+`;
+
+exports[`team-seasons/head-to-head > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "allTimeRecord": {
+      "teamAWins": 1,
+      "teamBWins": 1,
+    },
+    "currentStreak": {
+      "count": 1,
+      "holder": "B",
+    },
+    "games": [
+      {
+        "gameDate": "2026-01-10",
+        "gameId": 2025020498,
+        "homeTeam": "CAR",
+        "season": 20252026,
+        "teamAScore": 4,
+        "teamAWon": true,
+        "teamBScore": 2,
+      },
+      {
+        "gameDate": "2026-01-12",
+        "gameId": 2025020499,
+        "homeTeam": "BOS",
+        "season": 20252026,
+        "teamAScore": 1,
+        "teamAWon": false,
+        "teamBScore": 3,
+      },
+    ],
+    "isThinSample": true,
+    "recentWindow": {
+      "size": 2,
+      "teamAWins": 1,
+      "teamBWins": 1,
+    },
+    "teamA": "CAR",
+    "teamB": "BOS",
+    "totalMeetings": 2,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:team-seasons:head-to-head:BOS,CAR",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons/head-to-head > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: game_log?team=eq.CAR&opponent=eq.BOS&select=game_id,season,game_date,team_score,opp_score,home_team&order=season.asc,game_id.asc",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`team-seasons/head-to-head > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "teams (exactly two, comma-separated) are required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`team-seasons/head-to-head > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "allTimeRecord": {
+      "teamAWins": 1,
+      "teamBWins": 1,
+    },
+    "currentStreak": {
+      "count": 1,
+      "holder": "B",
+    },
+    "games": [
+      {
+        "gameDate": "2026-01-10",
+        "gameId": 2025020498,
+        "homeTeam": "CAR",
+        "season": 20252026,
+        "teamAScore": 4,
+        "teamAWon": true,
+        "teamBScore": 2,
+      },
+      {
+        "gameDate": "2026-01-12",
+        "gameId": 2025020499,
+        "homeTeam": "BOS",
+        "season": 20252026,
+        "teamAScore": 1,
+        "teamAWon": false,
+        "teamBScore": 3,
+      },
+    ],
+    "isThinSample": true,
+    "recentWindow": {
+      "size": 2,
+      "teamAWins": 1,
+      "teamBWins": 1,
+    },
+    "teamA": "CAR",
+    "teamB": "BOS",
+    "totalMeetings": 2,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:team-seasons:head-to-head:BOS,CAR",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_log?team=eq.CAR&opponent=eq.BOS&select=game_id,season,game_date,team_score,opp_score,home_team&order=season.asc,game_id.asc",
+    },
+  ],
+}
+`;
+
+exports[`team-seasons/head-to-head/narrative (in… > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "narrative": null,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons/head-to-head/narrative (in… > Supabase unavailable 1`] = `
+{
+  "body": {
+    "narrative": null,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons/head-to-head/narrative (in… > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "narrative": null,
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [],
+}
+`;
+
+exports[`team-seasons/head-to-head/narrative > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "AI generation failed",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`team-seasons/head-to-head/narrative > Supabase unavailable 1`] = `
+{
+  "body": {
+    "narrative": "Fixture NHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:h2h-narrative:BOS,CAR",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons/head-to-head/narrative > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "narrative": "Fixture NHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:h2h-narrative:BOS,CAR",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "aiPrompt": "You are EyeWall, a neutral hockey analytics assistant. Write a punchy 2-3 sentence head-to-head summary for Carolina Hurricanes vs Boston Bruins.
+
+All-time record (since 2023-24): Carolina Hurricanes 2-1 Boston Bruins, across 3 meetings.
+Last 3: Carolina Hurricanes 2-1 Boston Bruins.
+Current streak: Carolina Hurricanes has won 1 straight.
+
+IMPORTANT: Only 3 meetings exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.
+Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.",
+      "maxTokens": 100,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`team-skaters > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "blocked_shots": 2,
+      "giveaways": 0,
+      "hits": 5,
+      "player_id": 8478427,
+      "takeaways": 1,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:team-skaters:CAR:20252026:3",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-skaters > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: player_seasons?team=eq.CAR&season=eq.20252026&game_type=eq.3&select=player_id,games_played,goals,assists,primary_assists,secondary_assists,points,plus_minus,pim,pp_goals,sh_goals,gw_goals,shots,shooting_pct,toi_per_game&order=points.desc.nullslast",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`team-skaters > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "blocked_shots": 2,
+      "giveaways": 0,
+      "hits": 5,
+      "player_id": 8478427,
+      "takeaways": 1,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:team-skaters:CAR:20252026:3",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/player_seasons?team=eq.CAR&season=eq.20252026&game_type=eq.3&select=player_id,games_played,goals,assists,primary_assists,secondary_assists,points,plus_minus,pim,pp_goals,sh_goals,gw_goals,shots,shooting_pct,toi_per_game&order=points.desc.nullslast",
+    },
+  ],
+}
+`;
+
+exports[`trades/tree > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "found": true,
+    "origins": [
+      {
+        "assets": [
+          {
+            "from": "MTL",
+            "next": "0123456789abcdef",
+            "pick": {
+              "conditional": false,
+              "draftedId": null,
+              "draftedName": null,
+              "note": "future",
+              "originalTeam": "MTL",
+              "overall": null,
+              "raw": null,
+              "resolvedOverall": null,
+              "resolvedYear": null,
+              "round": 2,
+              "uncertain": false,
+              "year": 2026,
+            },
+            "to": "CAR",
+            "type": "pick",
+          },
+        ],
+        "date": "2024-06-28",
+        "id": "aaaabbbbccccdddd",
+        "teams": [
+          "CAR",
+          "MTL",
+        ],
+      },
+    ],
+    "root": "0123456789abcdef",
+    "trades": {
+      "0123456789abcdef": {
+        "date": "2025-07-01",
+        "descriptions": [
+          "Acquired F A from BOS for a 2026 2nd.",
+        ],
+        "id": "0123456789abcdef",
+        "sides": [
+          {
+            "received": [
+              {
+                "from": "BOS",
+                "name": "Forward A",
+                "next": null,
+                "playerId": 8479000,
+                "position": "C",
+                "rights": false,
+                "to": "CAR",
+                "type": "player",
+              },
+            ],
+            "team": "CAR",
+          },
+          {
+            "received": [
+              {
+                "from": "CAR",
+                "next": "fedcba9876543210",
+                "pick": {
+                  "conditional": false,
+                  "draftedId": null,
+                  "draftedName": null,
+                  "note": "future",
+                  "originalTeam": "MTL",
+                  "overall": null,
+                  "raw": null,
+                  "resolvedOverall": null,
+                  "resolvedYear": null,
+                  "round": 2,
+                  "uncertain": false,
+                  "year": 2026,
+                },
+                "to": "BOS",
+                "type": "pick",
+              },
+            ],
+            "team": "BOS",
+          },
+        ],
+        "teams": [
+          "CAR",
+          "BOS",
+        ],
+        "via": [],
+      },
+      "fedcba9876543210": {
+        "date": "2026-01-05",
+        "descriptions": [
+          "Traded the 2026 2nd to TOR.",
+        ],
+        "id": "fedcba9876543210",
+        "sides": [
+          {
+            "received": [],
+            "team": "BOS",
+          },
+          {
+            "received": [
+              {
+                "from": "BOS",
+                "next": null,
+                "pick": {
+                  "conditional": false,
+                  "draftedId": null,
+                  "draftedName": null,
+                  "note": "future",
+                  "originalTeam": "MTL",
+                  "overall": null,
+                  "raw": null,
+                  "resolvedOverall": null,
+                  "resolvedYear": null,
+                  "round": 2,
+                  "uncertain": false,
+                  "year": 2026,
+                },
+                "to": "TOR",
+                "type": "pick",
+              },
+            ],
+            "team": "TOR",
+          },
+        ],
+        "teams": [
+          "BOS",
+          "TOR",
+        ],
+        "via": [],
+      },
+    },
+    "truncated": false,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:trades:tree:501",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`trades/tree > Supabase unavailable 1`] = `
+{
+  "body": {
+    "found": false,
+    "origins": [],
+    "root": null,
+    "trades": {},
+    "truncated": false,
+    "unavailable": true,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`trades/tree > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "invalid tx",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`trades/tree > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "found": true,
+    "origins": [
+      {
+        "assets": [
+          {
+            "from": "MTL",
+            "next": "0123456789abcdef",
+            "pick": {
+              "conditional": false,
+              "draftedId": null,
+              "draftedName": null,
+              "note": "future",
+              "originalTeam": "MTL",
+              "overall": null,
+              "raw": null,
+              "resolvedOverall": null,
+              "resolvedYear": null,
+              "round": 2,
+              "uncertain": false,
+              "year": 2026,
+            },
+            "to": "CAR",
+            "type": "pick",
+          },
+        ],
+        "date": "2024-06-28",
+        "id": "aaaabbbbccccdddd",
+        "teams": [
+          "CAR",
+          "MTL",
+        ],
+      },
+    ],
+    "root": "0123456789abcdef",
+    "trades": {
+      "0123456789abcdef": {
+        "date": "2025-07-01",
+        "descriptions": [
+          "Acquired F A from BOS for a 2026 2nd.",
+        ],
+        "id": "0123456789abcdef",
+        "sides": [
+          {
+            "received": [
+              {
+                "from": "BOS",
+                "name": "Forward A",
+                "next": null,
+                "playerId": 8479000,
+                "position": "C",
+                "rights": false,
+                "to": "CAR",
+                "type": "player",
+              },
+            ],
+            "team": "CAR",
+          },
+          {
+            "received": [
+              {
+                "from": "CAR",
+                "next": "fedcba9876543210",
+                "pick": {
+                  "conditional": false,
+                  "draftedId": null,
+                  "draftedName": null,
+                  "note": "future",
+                  "originalTeam": "MTL",
+                  "overall": null,
+                  "raw": null,
+                  "resolvedOverall": null,
+                  "resolvedYear": null,
+                  "round": 2,
+                  "uncertain": false,
+                  "year": 2026,
+                },
+                "to": "BOS",
+                "type": "pick",
+              },
+            ],
+            "team": "BOS",
+          },
+        ],
+        "teams": [
+          "CAR",
+          "BOS",
+        ],
+        "via": [],
+      },
+      "fedcba9876543210": {
+        "date": "2026-01-05",
+        "descriptions": [
+          "Traded the 2026 2nd to TOR.",
+        ],
+        "id": "fedcba9876543210",
+        "sides": [
+          {
+            "received": [],
+            "team": "BOS",
+          },
+          {
+            "received": [
+              {
+                "from": "BOS",
+                "next": null,
+                "pick": {
+                  "conditional": false,
+                  "draftedId": null,
+                  "draftedName": null,
+                  "note": "future",
+                  "originalTeam": "MTL",
+                  "overall": null,
+                  "raw": null,
+                  "resolvedOverall": null,
+                  "resolvedYear": null,
+                  "round": 2,
+                  "uncertain": false,
+                  "year": 2026,
+                },
+                "to": "TOR",
+                "type": "pick",
+              },
+            ],
+            "team": "TOR",
+          },
+        ],
+        "teams": [
+          "BOS",
+          "TOR",
+        ],
+        "via": [],
+      },
+    },
+    "truncated": false,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:trades:tree:501",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trades?select=trade_id,tx_date,teams,via,descriptions&source_tx_ids=cs.%7B501%7D&limit=1",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trade_assets?select=trade_id,idx,from_team,to_team,asset_type,player_name,player_id,position,rights,pick_year,pick_round,pick_conditional,pick_overall,pick_original_team,pick_raw,pairing_uncertain,resolved_year,resolved_overall,drafted_player_name,drafted_player_id,pick_note,next_trade_id&trade_id=in.(0123456789abcdef)&order=trade_id,idx",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trades?select=trade_id,tx_date,teams,via,descriptions&trade_id=in.(fedcba9876543210)",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trade_assets?select=trade_id,idx,from_team,to_team,asset_type,player_name,player_id,position,rights,pick_year,pick_round,pick_conditional,pick_overall,pick_original_team,pick_raw,pairing_uncertain,resolved_year,resolved_overall,drafted_player_name,drafted_player_id,pick_note,next_trade_id&trade_id=in.(fedcba9876543210)&order=trade_id,idx",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trade_assets?select=trade_id,idx,from_team,to_team,asset_type,player_name,player_id,position,rights,pick_year,pick_round,pick_conditional,pick_overall,pick_original_team,pick_raw,pairing_uncertain,resolved_year,resolved_overall,drafted_player_name,drafted_player_id,pick_note,next_trade_id&next_trade_id=eq.0123456789abcdef",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trades?select=trade_id,tx_date,teams,via,descriptions&trade_id=in.(aaaabbbbccccdddd)",
+    },
+  ],
+}
+`;
+
+exports[`transactions (league) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "items": [
+      {
+        "categories": [
+          "recall",
+        ],
+        "category": "recall",
+        "counterparties": [],
+        "date": "2026-01-12",
+        "description": "Recalled F Joe Prospect from Chicago (AHL).",
+        "id": 501,
+        "kind": "move",
+        "team": "CAR",
+      },
+      {
+        "categories": [
+          "waivers",
+        ],
+        "category": "waivers",
+        "counterparties": [],
+        "date": "2026-01-10",
+        "description": "Placed D Some Guy on waivers.",
+        "id": 502,
+        "kind": "move",
+        "team": "BOS",
+      },
+    ],
+    "scope": "league",
+    "team": null,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:transactions:league",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`transactions (league) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "items": [],
+    "scope": "league",
+    "team": null,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`transactions (league) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "items": [
+      {
+        "categories": [
+          "recall",
+        ],
+        "category": "recall",
+        "counterparties": [],
+        "date": "2026-01-12",
+        "description": "Recalled F Joe Prospect from Chicago (AHL).",
+        "id": 501,
+        "kind": "move",
+        "team": "CAR",
+      },
+      {
+        "categories": [
+          "waivers",
+        ],
+        "category": "waivers",
+        "counterparties": [],
+        "date": "2026-01-10",
+        "description": "Placed D Some Guy on waivers.",
+        "id": 502,
+        "kind": "move",
+        "team": "BOS",
+      },
+    ],
+    "scope": "league",
+    "team": null,
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:transactions:league",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/nhl_transactions?select=id,tx_date,team,description,categories,primary_category,counterparties&order=tx_date.desc,id.desc&limit=150",
+    },
+  ],
+}
+`;
+
+exports[`transactions (team) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "items": [
+      {
+        "categories": [
+          "recall",
+        ],
+        "category": "recall",
+        "counterparties": [],
+        "date": "2026-01-12",
+        "description": "Recalled F Joe Prospect from Chicago (AHL).",
+        "id": 501,
+        "kind": "move",
+        "team": "CAR",
+      },
+      {
+        "categories": [
+          "waivers",
+        ],
+        "category": "waivers",
+        "counterparties": [],
+        "date": "2026-01-10",
+        "description": "Placed D Some Guy on waivers.",
+        "id": 502,
+        "kind": "move",
+        "team": "BOS",
+      },
+    ],
+    "scope": "team",
+    "team": "CAR",
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:transactions:team:CAR",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`transactions (team) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "items": [],
+    "scope": "team",
+    "team": "CAR",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`transactions (team) > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "invalid team",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`transactions (team) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "items": [
+      {
+        "categories": [
+          "recall",
+        ],
+        "category": "recall",
+        "counterparties": [],
+        "date": "2026-01-12",
+        "description": "Recalled F Joe Prospect from Chicago (AHL).",
+        "id": 501,
+        "kind": "move",
+        "team": "CAR",
+      },
+      {
+        "categories": [
+          "waivers",
+        ],
+        "category": "waivers",
+        "counterparties": [],
+        "date": "2026-01-10",
+        "description": "Placed D Some Guy on waivers.",
+        "id": 502,
+        "kind": "move",
+        "team": "BOS",
+      },
+    ],
+    "scope": "team",
+    "team": "CAR",
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:transactions:team:CAR",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/nhl_transactions?select=id,tx_date,team,description,categories,primary_category,counterparties&or=(team.eq.CAR,counterparties.cs.%7BCAR%7D)&order=tx_date.desc,id.desc&limit=150",
+    },
+  ],
+}
+`;
+
+exports[`unknown route > NHL API and AI unavailable 1`] = `
+{
+  "body": "Not found",
+  "kvWrites": [],
+  "status": 404,
+}
+`;
+
+exports[`unknown route > Supabase unavailable 1`] = `
+{
+  "body": "Not found",
+  "kvWrites": [],
+  "status": 404,
+}
+`;
+
+exports[`unknown route > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "Not found",
+  "kvWrites": [],
+  "status": 404,
+  "upstream": [],
+}
+`;
+
+exports[`xg-trend > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "game_id": 2025020498,
+      "team": "CAR",
+      "xga": 2.2,
+      "xgf": 3.1,
+      "xgf_pct": 0.585,
+    },
+    {
+      "game_id": 2025020498,
+      "team": "BOS",
+      "xga": 3.1,
+      "xgf": 2.2,
+      "xgf_pct": 0.415,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:xg-trend:CAR:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`xg-trend > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: game_xg?team=eq.CAR&season=eq.20252026&situation=eq.5on5&select=game_id,xgf_pct&limit=999",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`xg-trend > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "game_id": 2025020498,
+      "team": "CAR",
+      "xga": 2.2,
+      "xgf": 3.1,
+      "xgf_pct": 0.585,
+    },
+    {
+      "game_id": 2025020498,
+      "team": "BOS",
+      "xga": 3.1,
+      "xgf": 2.2,
+      "xgf_pct": 0.415,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:xg-trend:CAR:20252026",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_xg?team=eq.CAR&season=eq.20252026&situation=eq.5on5&select=game_id,xgf_pct&limit=999",
+    },
+  ],
+}
+`;
