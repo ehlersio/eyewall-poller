@@ -320,7 +320,7 @@ async function pollAHLGame(env, game) {
       if (scorerId && scorerGoalCounts[scorerId] === 3) {
         await broadcastAHL(env, {
           title: `🎩 HAT TRICK! ${scorer}`,
-          body:  `${scorer} scores her 3rd goal of the game for ${abbr}!`,
+          body:  `${scorer} scores their 3rd goal of the game for ${abbr}!`,
           tag:   `ahl-hattrick-${gameId}-${scorerId}`,
           url:   '/ahl/shots',
         }, `AHL:${abbr}`, 'hatTrick');
