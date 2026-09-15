@@ -1,5 +1,29 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`AI unavailable on its own > prediction/analyze (in season) 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+  ],
+  "threw": "OpenRouter 503",
+}
+`;
+
+exports[`AI unavailable on its own > prediction/analyze (preseason fallback) 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+  ],
+  "threw": "OpenRouter 503",
+}
+`;
+
 exports[`atom/ingest (no secret) > NHL API and AI unavailable 1`] = `
 {
   "body": "Unauthorized",
