@@ -1,0 +1,6043 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ahl > game-box > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase error",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > game-box > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > game-box > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "awayTeamId": 323,
+    "gameId": 1028992,
+    "goalies": [
+      {
+        "game_id": 1028992,
+        "goals_against": 4,
+        "player_id": 7001,
+        "player_name": "Gus Keeper",
+        "saves": 30,
+        "season_id": 90,
+        "shots_against": 34,
+        "team_id": 323,
+        "toi_seconds": 3600,
+      },
+    ],
+    "homeTeamId": 335,
+    "skaters": [
+      {
+        "assists": 1,
+        "game_id": 1028992,
+        "goals": 2,
+        "penalty_minutes": 2,
+        "player_id": 6681,
+        "player_name": "Alex Skater",
+        "plus_minus": 2,
+        "points": 3,
+        "season_id": 90,
+        "shots": 5,
+        "team_id": 335,
+      },
+      {
+        "assists": 1,
+        "game_id": 1028990,
+        "goals": 0,
+        "penalty_minutes": 0,
+        "player_id": 6682,
+        "player_name": "Sam Winger",
+        "plus_minus": -1,
+        "points": 1,
+        "season_id": 90,
+        "shots": 2,
+        "team_id": 335,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:gamebox:1028992",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_skater_game_box?game_id=eq.1028992&order=points.desc",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goalie_game_box?game_id=eq.1028992",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_id=eq.1028992&select=home_team_id,away_team_id",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=in.(6681,6682,7001)&select=player_id,first_name,last_name",
+    },
+  ],
+}
+`;
+
+exports[`ahl > lastgame > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > lastgame > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > lastgame > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "gameDate": "2026-01-15",
+    "gameId": 1028992,
+    "isHome": true,
+    "oppScore": 2,
+    "opponentAbbr": "ROC",
+    "opponentId": 323,
+    "teamScore": 4,
+    "won": true,
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:lastgame:335:90",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&or=(home_team_id.eq.335,away_team_id.eq.335)&order=game_id.desc&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`ahl > league-players > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase error",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > league-players > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "first_name": "Gus",
+        "gaa": 2.61,
+        "goals_against": 79,
+        "gp": 30,
+        "last_name": "Keeper",
+        "losses": 9,
+        "ot_losses": 4,
+        "player_id": 7001,
+        "player_name": "Gus Keeper",
+        "position": "G",
+        "saves": 820,
+        "season_id": 90,
+        "season_type": "regular",
+        "shutouts": 2,
+        "sv_pct": 0.912,
+        "team_id": 323,
+        "wins": 17,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 20,
+        "first_name": "Alex",
+        "goals": 15,
+        "gp": 40,
+        "last_name": "Skater",
+        "pim": 12,
+        "player_id": 6681,
+        "player_name": "Alex Skater",
+        "plus_minus": 8,
+        "points": 35,
+        "position": "C",
+        "pp_goals": 5,
+        "season_id": 90,
+        "season_type": "regular",
+        "sh_goals": 1,
+        "shots": 110,
+        "team_id": 335,
+      },
+      {
+        "assists": 11,
+        "first_name": "Sam",
+        "goals": 9,
+        "gp": 38,
+        "last_name": "Winger",
+        "pim": 20,
+        "player_id": 6682,
+        "player_name": "Sam Winger",
+        "plus_minus": -3,
+        "points": 20,
+        "position": "LW",
+        "pp_goals": 2,
+        "season_id": 90,
+        "season_type": "regular",
+        "sh_goals": 0,
+        "shots": 80,
+        "team_id": 335,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:leagueplayers:90",
+      "ttl": 7200,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?season_id=eq.90&season_type=eq.regular&select=player_id,team_id,goals,assists,points,gp,shots,pp_goals,sh_goals,pim,plus_minus&order=points.desc&limit=600",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goalie_seasons?season_id=eq.90&season_type=eq.regular&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against&order=sv_pct.desc&limit=80",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?select=player_id,first_name,last_name,position,team_id&limit=1500",
+    },
+  ],
+}
+`;
+
+exports[`ahl > live/:gameId > Supabase unavailable 1`] = `
+{
+  "body": {
+    "awayScore": 0,
+    "awayTeamId": null,
+    "events": [
+      {
+        "eventType": "shot",
+        "goalie": {
+          "firstName": "Home",
+          "id": 7003,
+          "jerseyNumber": null,
+          "lastName": "Goalie",
+        },
+        "isGoal": false,
+        "period": 1,
+        "shooter": {
+          "firstName": "Opp",
+          "id": 7002,
+          "jerseyNumber": null,
+          "lastName": "Shooter",
+        },
+        "shotQuality": "Quality",
+        "shotType": "Wrist",
+        "teamId": 323,
+        "time": "1:10",
+        "timeSeconds": 70,
+        "x": 100,
+        "y": 50,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": false,
+        "isGameWinner": false,
+        "isPenaltyShot": false,
+        "isPowerPlay": true,
+        "isShortHanded": false,
+        "minusPlayers": [],
+        "period": 1,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 6681,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "HOME",
+        "teamId": 335,
+        "time": "4:00",
+        "timeSeconds": 240,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "description": "Min-Hooking",
+        "eventType": "penalty",
+        "isBench": false,
+        "isPowerPlay": true,
+        "minutes": 2,
+        "period": 1,
+        "servedBy": null,
+        "takenBy": {
+          "firstName": "Opp",
+          "id": 7002,
+          "jerseyNumber": null,
+          "lastName": "Shooter",
+        },
+        "teamAbbrev": "AWY",
+        "teamId": 323,
+        "time": "8:00",
+        "timeSeconds": 480,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": false,
+        "isGameWinner": false,
+        "isPenaltyShot": false,
+        "isPowerPlay": false,
+        "isShortHanded": true,
+        "minusPlayers": [],
+        "period": 2,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 6681,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "HOME",
+        "teamId": 335,
+        "time": "2:00",
+        "timeSeconds": 120,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "eventType": "penaltyshot",
+        "goalie": {
+          "firstName": "Home",
+          "id": 7003,
+          "jerseyNumber": null,
+          "lastName": "Goalie",
+        },
+        "isGoal": false,
+        "period": 2,
+        "shooter": {
+          "firstName": "Opp",
+          "id": 7002,
+          "jerseyNumber": null,
+          "lastName": "Shooter",
+        },
+        "teamId": 323,
+        "time": "10:00",
+        "timeSeconds": 600,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": true,
+        "isGameWinner": true,
+        "isPenaltyShot": false,
+        "isPowerPlay": false,
+        "isShortHanded": false,
+        "minusPlayers": [],
+        "period": 3,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 6681,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "HOME",
+        "teamId": 335,
+        "time": "15:00",
+        "timeSeconds": 900,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "eventType": "goalie_change",
+        "goalieIn": null,
+        "goalieOut": {
+          "firstName": "Gus",
+          "id": 7001,
+          "jerseyNumber": null,
+          "lastName": "Keeper",
+        },
+        "period": 3,
+        "teamId": 323,
+        "time": "18:00",
+        "timeSeconds": 1080,
+      },
+    ],
+    "gameId": 1028992,
+    "gameStatus": "pre",
+    "homeScore": 0,
+    "homeTeamId": null,
+  },
+  "status": 200,
+}
+`;
+
+exports[`ahl > live/:gameId > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > live/:gameId > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "awayScore": 0,
+    "awayTeamId": 323,
+    "events": [
+      {
+        "eventType": "shot",
+        "goalie": {
+          "firstName": "Home",
+          "id": 7003,
+          "jerseyNumber": null,
+          "lastName": "Goalie",
+        },
+        "isGoal": false,
+        "period": 1,
+        "shooter": {
+          "firstName": "Opp",
+          "id": 7002,
+          "jerseyNumber": null,
+          "lastName": "Shooter",
+        },
+        "shotQuality": "Quality",
+        "shotType": "Wrist",
+        "teamId": 323,
+        "time": "1:10",
+        "timeSeconds": 70,
+        "x": 100,
+        "y": 50,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": false,
+        "isGameWinner": false,
+        "isPenaltyShot": false,
+        "isPowerPlay": true,
+        "isShortHanded": false,
+        "minusPlayers": [],
+        "period": 1,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 6681,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "HOME",
+        "teamId": 335,
+        "time": "4:00",
+        "timeSeconds": 240,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "description": "Min-Hooking",
+        "eventType": "penalty",
+        "isBench": false,
+        "isPowerPlay": true,
+        "minutes": 2,
+        "period": 1,
+        "servedBy": null,
+        "takenBy": {
+          "firstName": "Opp",
+          "id": 7002,
+          "jerseyNumber": null,
+          "lastName": "Shooter",
+        },
+        "teamAbbrev": "AWY",
+        "teamId": 323,
+        "time": "8:00",
+        "timeSeconds": 480,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": false,
+        "isGameWinner": false,
+        "isPenaltyShot": false,
+        "isPowerPlay": false,
+        "isShortHanded": true,
+        "minusPlayers": [],
+        "period": 2,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 6681,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "HOME",
+        "teamId": 335,
+        "time": "2:00",
+        "timeSeconds": 120,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "eventType": "penaltyshot",
+        "goalie": {
+          "firstName": "Home",
+          "id": 7003,
+          "jerseyNumber": null,
+          "lastName": "Goalie",
+        },
+        "isGoal": false,
+        "period": 2,
+        "shooter": {
+          "firstName": "Opp",
+          "id": 7002,
+          "jerseyNumber": null,
+          "lastName": "Shooter",
+        },
+        "teamId": 323,
+        "time": "10:00",
+        "timeSeconds": 600,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": true,
+        "isGameWinner": true,
+        "isPenaltyShot": false,
+        "isPowerPlay": false,
+        "isShortHanded": false,
+        "minusPlayers": [],
+        "period": 3,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 6681,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "HOME",
+        "teamId": 335,
+        "time": "15:00",
+        "timeSeconds": 900,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "eventType": "goalie_change",
+        "goalieIn": null,
+        "goalieOut": {
+          "firstName": "Gus",
+          "id": 7001,
+          "jerseyNumber": null,
+          "lastName": "Keeper",
+        },
+        "period": 3,
+        "teamId": 323,
+        "time": "18:00",
+        "timeSeconds": 1080,
+      },
+    ],
+    "gameId": 1028992,
+    "gameStatus": "final",
+    "homeScore": 3,
+    "homeTeamId": 335,
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:live:1028992",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://theahl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=1028992&key=ccb91f29d6744675&client_code=ahl&lang=en&league_id=",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_id=eq.1028992&select=home_team_id,away_team_id,game_state,game_status_code&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`ahl > news > GET /news with a cold cache returns [] and fetches every source in the background 1`] = `
+{
+  "health": {
+    "health:ahl:hockeywriters-ahl": {
+      "consecutiveFailures": 0,
+      "itemCount": 2,
+      "key": "ahl:hockeywriters-ahl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+    "health:ahl:official-ahl": {
+      "consecutiveFailures": 0,
+      "itemCount": 2,
+      "key": "ahl:official-ahl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+    "health:ahl:osc-ahl": {
+      "consecutiveFailures": 0,
+      "itemCount": 2,
+      "key": "ahl:osc-ahl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "health:ahl:official-ahl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:ahl:hockeywriters-ahl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:ahl:osc-ahl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "ahl:news",
+      "ttl": 90000,
+    },
+  ],
+  "res": {
+    "body": [],
+    "status": 200,
+  },
+  "stored": [
+    {
+      "excerpt": "Second story",
+      "id": "official-ahl-1sv7gr",
+      "imageUrl": null,
+      "publishedAt": "2026-01-15T09:00:00.000Z",
+      "source": "official-ahl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "TheAHL.com",
+      "title": "theahl.com headline two",
+      "url": "https://news.example/theahl.com/two",
+    },
+    {
+      "excerpt": "Second story",
+      "id": "hockeywriters-ahl-d5uqtv",
+      "imageUrl": null,
+      "publishedAt": "2026-01-15T09:00:00.000Z",
+      "source": "hockeywriters-ahl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "The Hockey Writers",
+      "title": "thehockeywriters.com headline two",
+      "url": "https://news.example/thehockeywriters.com/two",
+    },
+    {
+      "excerpt": "Second story",
+      "id": "osc-ahl-3r44e",
+      "imageUrl": null,
+      "publishedAt": "2026-01-15T09:00:00.000Z",
+      "source": "osc-ahl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "OurSports Central",
+      "title": "www.oursportscentral.com headline two",
+      "url": "https://news.example/www.oursportscentral.com/two",
+    },
+    {
+      "excerpt": "First & story",
+      "id": "official-ahl-1svbe9",
+      "imageUrl": null,
+      "publishedAt": "2026-01-14T12:00:00.000Z",
+      "source": "official-ahl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "TheAHL.com",
+      "title": "theahl.com headline one",
+      "url": "https://news.example/theahl.com/one",
+    },
+    {
+      "excerpt": "First & story",
+      "id": "hockeywriters-ahl-d5uurd",
+      "imageUrl": null,
+      "publishedAt": "2026-01-14T12:00:00.000Z",
+      "source": "hockeywriters-ahl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "The Hockey Writers",
+      "title": "thehockeywriters.com headline one",
+      "url": "https://news.example/thehockeywriters.com/one",
+    },
+    {
+      "excerpt": "First & story",
+      "id": "osc-ahl-3r81w",
+      "imageUrl": null,
+      "publishedAt": "2026-01-14T12:00:00.000Z",
+      "source": "osc-ahl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "OurSports Central",
+      "title": "www.oursportscentral.com headline one",
+      "url": "https://news.example/www.oursportscentral.com/one",
+    },
+  ],
+  "upstream": [
+    {
+      "url": "https://theahl.com/feed",
+    },
+    {
+      "url": "https://thehockeywriters.com/category/ahl/feed/",
+    },
+    {
+      "url": "https://www.oursportscentral.com/feeds/l17.xml",
+    },
+  ],
+}
+`;
+
+exports[`ahl > news > POST /news/bust requires the secret, then clears the cache 1`] = `
+{
+  "busted": {
+    "body": {
+      "busted": [
+        "ahl:news",
+      ],
+      "ok": true,
+    },
+    "status": 200,
+  },
+  "denied": {
+    "body": "Unauthorized",
+    "status": 401,
+  },
+  "kvWrites": [
+    {
+      "deleted": true,
+      "key": "ahl:news",
+    },
+  ],
+  "remaining": null,
+}
+`;
+
+exports[`ahl > news > POST /news/ingest requires the secret, rejects non-arrays, and merges with the cached list 1`] = `
+{
+  "bad": {
+    "body": "Bad request: Expected array",
+    "status": 400,
+  },
+  "denied": {
+    "body": "Unauthorized",
+    "status": 401,
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:news",
+      "ttl": 90000,
+    },
+    {
+      "key": "health:ahl:pipeline-ingest",
+      "ttl": 2592000,
+    },
+  ],
+  "ok": {
+    "body": {
+      "ok": true,
+      "received": 2,
+      "total": 3,
+    },
+    "status": 200,
+  },
+  "stored": [
+    {
+      "id": "new-1",
+      "publishedAt": "2026-01-14T00:00:00.000Z",
+      "title": "New A (same link)",
+      "url": "https://news.example/a",
+    },
+    {
+      "id": "new-2",
+      "publishedAt": "2026-01-12T00:00:00.000Z",
+      "title": "New C",
+      "url": "https://news.example/c",
+    },
+    {
+      "id": "old-2",
+      "publishedAt": "2026-01-01T00:00:00.000Z",
+      "title": "Old B",
+      "url": "https://news.example/b",
+    },
+  ],
+}
+`;
+
+exports[`ahl > news > fetchNews: a failing source is recorded in health and skipped; cached articles are merged in 1`] = `
+{
+  "health": {
+    "health:ahl:hockeywriters-ahl": {
+      "consecutiveFailures": 0,
+      "itemCount": 2,
+      "key": "ahl:hockeywriters-ahl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+    "health:ahl:official-ahl": {
+      "consecutiveFailures": 0,
+      "itemCount": 2,
+      "key": "ahl:official-ahl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+    "health:ahl:osc-ahl": {
+      "consecutiveFailures": 1,
+      "error": "HTTP 503",
+      "key": "ahl:osc-ahl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": "HTTP 503",
+      "lastErrorAt": "2026-01-15T23:30:00.000Z",
+      "lastSuccessAt": null,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "health:ahl:official-ahl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:ahl:hockeywriters-ahl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:ahl:osc-ahl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "ahl:news",
+      "ttl": 90000,
+    },
+  ],
+  "merged": [
+    {
+      "excerpt": "Second story",
+      "id": "official-ahl-1sv7gr",
+      "imageUrl": null,
+      "publishedAt": "2026-01-15T09:00:00.000Z",
+      "source": "official-ahl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "TheAHL.com",
+      "title": "theahl.com headline two",
+      "url": "https://news.example/theahl.com/two",
+    },
+    {
+      "excerpt": "Second story",
+      "id": "hockeywriters-ahl-d5uqtv",
+      "imageUrl": null,
+      "publishedAt": "2026-01-15T09:00:00.000Z",
+      "source": "hockeywriters-ahl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "The Hockey Writers",
+      "title": "thehockeywriters.com headline two",
+      "url": "https://news.example/thehockeywriters.com/two",
+    },
+    {
+      "excerpt": "First & story",
+      "id": "official-ahl-1svbe9",
+      "imageUrl": null,
+      "publishedAt": "2026-01-14T12:00:00.000Z",
+      "source": "official-ahl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "TheAHL.com",
+      "title": "theahl.com headline one",
+      "url": "https://news.example/theahl.com/one",
+    },
+    {
+      "excerpt": "First & story",
+      "id": "hockeywriters-ahl-d5uurd",
+      "imageUrl": null,
+      "publishedAt": "2026-01-14T12:00:00.000Z",
+      "source": "hockeywriters-ahl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "The Hockey Writers",
+      "title": "thehockeywriters.com headline one",
+      "url": "https://news.example/thehockeywriters.com/one",
+    },
+    {
+      "id": "kept-1",
+      "publishedAt": "2026-01-01T00:00:00.000Z",
+      "title": "Kept",
+      "url": "https://news.example/kept",
+    },
+  ],
+  "upstream": [
+    {
+      "url": "https://theahl.com/feed",
+    },
+    {
+      "url": "https://thehockeywriters.com/category/ahl/feed/",
+    },
+    {
+      "url": "https://www.oursportscentral.com/feeds/l17.xml",
+    },
+  ],
+}
+`;
+
+exports[`ahl > player/career > Supabase unavailable 1`] = `
+{
+  "body": {
+    "bioPoints": [
+      "Captain & leader",
+      "All-Star in 2025",
+    ],
+    "draft": {
+      "draft_round": 3,
+      "draft_team": "Home",
+      "draft_year": 2019,
+    },
+    "photo": {
+      "height": 240,
+      "url": "https://img.example/b.jpg",
+      "width": 240,
+    },
+    "player_id": 6681,
+    "playoffs": {
+      "games_played": 8,
+      "goals": 3,
+    },
+    "recentGames": [
+      {
+        "assists": 1,
+        "game": "Jan 7",
+        "goals": 0,
+        "points": 1,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 6",
+        "goals": 1,
+        "points": 2,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 5",
+        "goals": 0,
+        "points": 1,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 4",
+        "goals": 1,
+        "points": 2,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 3",
+        "goals": 0,
+        "points": 1,
+      },
+    ],
+    "regularSeason": {
+      "games_played": 120,
+      "goals": 41,
+      "points": 95,
+      "shooting_percentage": 12.5,
+    },
+  },
+  "status": 200,
+}
+`;
+
+exports[`ahl > player/career > missing required param 1`] = `
+{
+  "body": {
+    "error": "id required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > player/career > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "bioPoints": [
+      "Captain & leader",
+      "All-Star in 2025",
+    ],
+    "draft": {
+      "draft_round": 3,
+      "draft_team": "Home",
+      "draft_year": 2019,
+    },
+    "photo": {
+      "height": 240,
+      "url": "https://img.example/b.jpg",
+      "width": 240,
+    },
+    "player_id": 6681,
+    "playoffs": {
+      "games_played": 8,
+      "goals": 3,
+    },
+    "recentGames": [
+      {
+        "assists": 1,
+        "game": "Jan 7",
+        "goals": 0,
+        "points": 1,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 6",
+        "goals": 1,
+        "points": 2,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 5",
+        "goals": 0,
+        "points": 1,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 4",
+        "goals": 1,
+        "points": 2,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 3",
+        "goals": 0,
+        "points": 1,
+      },
+    ],
+    "regularSeason": {
+      "games_played": 120,
+      "goals": 41,
+      "points": 95,
+      "shooting_percentage": 12.5,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:player:career:6681",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://theahl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=player&player_id=6681&site_id=0&key=ccb91f29d6744675&client_code=ahl&lang=en&league_id=&statsType=standard",
+    },
+  ],
+}
+`;
+
+exports[`ahl > player/landing (goalie, latest season) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > player/landing (goalie, latest season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "birth_date": "1999-11-12",
+    "birth_place": "Oslo, NO",
+    "first_name": "Gus",
+    "gaa": 2.61,
+    "goals_against": 79,
+    "gp": 30,
+    "height_inches": 75,
+    "jersey_number": 30,
+    "last_name": "Keeper",
+    "losses": 9,
+    "ot_losses": 4,
+    "player_id": 7001,
+    "position": "G",
+    "saves": 820,
+    "season_id": 90,
+    "season_type": "regular",
+    "shoots": "L",
+    "shutouts": 2,
+    "sv_pct": 0.912,
+    "team_id": 323,
+    "weight_lbs": 200,
+    "wins": 17,
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:player:landing:7001:latest",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=eq.7001&select=*",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goalie_seasons?player_id=eq.7001&season_type=eq.regular&order=season_id.desc&limit=1&select=*",
+    },
+  ],
+}
+`;
+
+exports[`ahl > player/landing (skater) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > player/landing (skater) > missing required param 1`] = `
+{
+  "body": {
+    "error": "id required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > player/landing (skater) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "assists": 20,
+    "birth_date": "2001-03-04",
+    "birth_place": "Toronto, ON",
+    "first_name": "Alex",
+    "goals": 15,
+    "gp": 40,
+    "height_inches": 72,
+    "jersey_number": 19,
+    "last_name": "Skater",
+    "pim": 12,
+    "player_id": 6681,
+    "plus_minus": 8,
+    "points": 35,
+    "position": "C",
+    "pp_goals": 5,
+    "season_id": 90,
+    "season_type": "regular",
+    "sh_goals": 1,
+    "shoots": "L",
+    "shots": 110,
+    "team_id": 335,
+    "weight_lbs": 190,
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:player:landing:6681:90",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=eq.6681&select=*",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?player_id=eq.6681&season_id=eq.90&season_type=eq.regular&limit=1&select=*",
+    },
+  ],
+}
+`;
+
+exports[`ahl > player/landing (unknown player) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > player/landing (unknown player) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "error": "Player not found",
+  },
+  "kvWrites": [],
+  "status": 404,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=eq.1&select=*",
+    },
+  ],
+}
+`;
+
+exports[`ahl > player-game-log > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase error",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > player-game-log > missing required param 1`] = `
+{
+  "body": {
+    "error": "playerId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > player-game-log > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "game_id": 1028992,
+        "goals_against": 4,
+        "player_id": 7001,
+        "saves": 30,
+        "season_id": 90,
+        "shots_against": 34,
+        "team_id": 323,
+        "toi_seconds": 3600,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 1,
+        "game_id": 1028992,
+        "goals": 2,
+        "penalty_minutes": 2,
+        "player_id": 6681,
+        "plus_minus": 2,
+        "points": 3,
+        "season_id": 90,
+        "shots": 5,
+        "team_id": 335,
+      },
+      {
+        "assists": 1,
+        "game_id": 1028990,
+        "goals": 0,
+        "penalty_minutes": 0,
+        "player_id": 6682,
+        "plus_minus": -1,
+        "points": 1,
+        "season_id": 90,
+        "shots": 2,
+        "team_id": 335,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:pgamelog:6681:90",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_skater_game_box?player_id=eq.6681&season_id=eq.90&order=game_id.asc",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goalie_game_box?player_id=eq.6681&season_id=eq.90&order=game_id.asc",
+    },
+  ],
+}
+`;
+
+exports[`ahl > player-shots > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > player-shots > missing required param 1`] = `
+{
+  "body": {
+    "error": "playerId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > player-shots > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "shots": [
+      {
+        "p": 1,
+        "t": "g",
+        "x": 80.5,
+        "y": -10.2,
+      },
+      {
+        "p": 2,
+        "t": "s",
+        "x": 60,
+        "y": -42,
+      },
+      {
+        "p": 2,
+        "t": "s",
+        "x": 70,
+        "y": 12,
+      },
+    ],
+    "total": 3,
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:pshots:6681:90",
+      "ttl": 21600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_shot_events?shooter_id=eq.6681&season_id=eq.90&select=event_type,period_id,time_seconds,x_norm,y_norm&limit=500",
+    },
+  ],
+}
+`;
+
+exports[`ahl > players > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase error",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > players > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > players > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "birth_date": "1999-11-12",
+        "birth_place": "Oslo, NO",
+        "first_name": "Gus",
+        "gaa": 2.61,
+        "goals_against": 79,
+        "gp": 30,
+        "headshot": "https://assets.leaguestat.com/ahl/240x240/7001.jpg",
+        "height_inches": 75,
+        "jersey_number": 30,
+        "last_name": "Keeper",
+        "losses": 9,
+        "ot_losses": 4,
+        "player_id": 7001,
+        "player_name": "Gus Keeper",
+        "position": "G",
+        "saves": 820,
+        "season_id": 90,
+        "season_type": "regular",
+        "shoots": "L",
+        "shutouts": 2,
+        "sv_pct": 0.912,
+        "team_id": 323,
+        "weight_lbs": 200,
+        "wins": 17,
+      },
+    ],
+    "roster": [
+      {
+        "birth_date": "2001-03-04",
+        "birth_place": "Toronto, ON",
+        "first_name": "Alex",
+        "headshot": "https://assets.leaguestat.com/ahl/240x240/6681.jpg",
+        "height_inches": 72,
+        "jersey_number": 19,
+        "last_name": "Skater",
+        "player_id": 6681,
+        "position": "C",
+        "shoots": "L",
+        "team_id": 335,
+        "weight_lbs": 190,
+      },
+      {
+        "birth_date": "1999-11-12",
+        "birth_place": "Oslo, NO",
+        "first_name": "Gus",
+        "headshot": "https://assets.leaguestat.com/ahl/240x240/7001.jpg",
+        "height_inches": 75,
+        "jersey_number": 30,
+        "last_name": "Keeper",
+        "player_id": 7001,
+        "position": "G",
+        "shoots": "L",
+        "team_id": 323,
+        "weight_lbs": 200,
+      },
+      {
+        "birth_date": "2002-06-07",
+        "birth_place": null,
+        "first_name": "Sam",
+        "headshot": "https://assets.leaguestat.com/ahl/240x240/6682.jpg",
+        "height_inches": 70,
+        "jersey_number": null,
+        "last_name": "Winger",
+        "player_id": 6682,
+        "position": "LW",
+        "shoots": "R",
+        "team_id": 335,
+        "weight_lbs": 180,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 20,
+        "birth_date": "2001-03-04",
+        "birth_place": "Toronto, ON",
+        "first_name": "Alex",
+        "goals": 15,
+        "gp": 40,
+        "headshot": "https://assets.leaguestat.com/ahl/240x240/6681.jpg",
+        "height_inches": 72,
+        "jersey_number": 19,
+        "last_name": "Skater",
+        "pim": 12,
+        "player_id": 6681,
+        "player_name": "Alex Skater",
+        "plus_minus": 8,
+        "points": 35,
+        "position": "C",
+        "pp_goals": 5,
+        "season_id": 90,
+        "season_type": "regular",
+        "sh_goals": 1,
+        "shoots": "L",
+        "shots": 110,
+        "team_id": 335,
+        "weight_lbs": 190,
+      },
+      {
+        "assists": 11,
+        "birth_date": "2002-06-07",
+        "birth_place": null,
+        "first_name": "Sam",
+        "goals": 9,
+        "gp": 38,
+        "headshot": "https://assets.leaguestat.com/ahl/240x240/6682.jpg",
+        "height_inches": 70,
+        "jersey_number": null,
+        "last_name": "Winger",
+        "pim": 20,
+        "player_id": 6682,
+        "player_name": "Sam Winger",
+        "plus_minus": -3,
+        "points": 20,
+        "position": "LW",
+        "pp_goals": 2,
+        "season_id": 90,
+        "season_type": "regular",
+        "sh_goals": 0,
+        "shoots": "R",
+        "shots": 80,
+        "team_id": 335,
+        "weight_lbs": 180,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:players:335:90",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?team_id=eq.335&season_id=eq.90&season_type=eq.regular&order=points.desc&limit=40",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goalie_seasons?team_id=eq.335&season_id=eq.90&season_type=eq.regular&order=gp.desc&limit=5",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?team_id=eq.335&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=80",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=1500",
+    },
+  ],
+}
+`;
+
+exports[`ahl > poll > a game that is already final when polled is skipped (records current behavior: no game-over push) 1`] = `
+{
+  "kvWrites": [],
+  "pushes": [],
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_date=eq.2026-01-15&season_id=eq.90&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+  ],
+}
+`;
+
+exports[`ahl > poll > live game: start, period, goal, hat-trick, power-play and pulled-goalie pushes; a second poll sends nothing new 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "ahl:push:start:1028992",
+      "ttl": 86400,
+    },
+    {
+      "key": "ahl:push:goal:1",
+      "ttl": 86400,
+    },
+    {
+      "key": "ahl:push:pen:901",
+      "ttl": 86400,
+    },
+    {
+      "key": "ahl:push:goal:2",
+      "ttl": 86400,
+    },
+    {
+      "key": "ahl:push:goal:3",
+      "ttl": 86400,
+    },
+    {
+      "key": "ahl:push:pull:1028992-18:00",
+      "ttl": 86400,
+    },
+    {
+      "key": "ahl:push:state:1028992",
+      "ttl": 86400,
+    },
+  ],
+  "pushes": [
+    {
+      "body": "TOR vs ROC — puck drop!",
+      "tag": "ahl-start-1028992",
+      "title": "🏒 AHL Game Starting!",
+      "to": "https://push.example/home",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "TOR vs ROC — puck drop!",
+      "tag": "ahl-start-1028992",
+      "title": "🏒 AHL Game Starting!",
+      "to": "https://push.example/away",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "TOR vs ROC — puck drop!",
+      "tag": "ahl-start-1028992",
+      "title": "🏒 AHL Game Starting!",
+      "to": "https://push.example/away-no-opp-goals",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "Alex Skater scores! (PP) Assists: Sam Winger",
+      "tag": "ahl-goal-ahl:push:goal:1",
+      "title": "🚨 GOAL! TOR 1–0 ROC",
+      "to": "https://push.example/home",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "Alex Skater scores for TOR (PP)",
+      "tag": "ahl-opp-goal-ahl:push:goal:1",
+      "title": "TOR scores. ROC 0–1 TOR",
+      "to": "https://push.example/away",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "ROC — 2 min Hooking",
+      "tag": "ahl-pp-ahl:push:pen:901",
+      "title": "⚡ TOR Power Play!",
+      "to": "https://push.example/home",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "Alex Skater scores! (SH) Assists: Sam Winger",
+      "tag": "ahl-goal-ahl:push:goal:2",
+      "title": "🚨 GOAL! TOR 1–0 ROC",
+      "to": "https://push.example/home",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "Alex Skater scores for TOR (SH)",
+      "tag": "ahl-opp-goal-ahl:push:goal:2",
+      "title": "TOR scores. ROC 0–1 TOR",
+      "to": "https://push.example/away",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "Alex Skater scores! (EN) Assists: Sam Winger",
+      "tag": "ahl-goal-ahl:push:goal:3",
+      "title": "🚨 GOAL! TOR 1–0 ROC",
+      "to": "https://push.example/home",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "Alex Skater scores for TOR (EN)",
+      "tag": "ahl-opp-goal-ahl:push:goal:3",
+      "title": "TOR scores. ROC 0–1 TOR",
+      "to": "https://push.example/away",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "Alex Skater scores their 3rd goal of the game for TOR!",
+      "tag": "ahl-hattrick-1028992-6681",
+      "title": "🎩 HAT TRICK! Alex Skater",
+      "to": "https://push.example/home",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "6-on-5 — empty net opportunity for TOR!",
+      "tag": "ahl-pull-ahl:push:pull:1028992-18:00",
+      "title": "🥅 ROC pulled their goalie!",
+      "to": "https://push.example/home",
+      "url": "/ahl/shots",
+    },
+  ],
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_date=eq.2026-01-15&season_id=eq.90&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+    {
+      "referer": "https://theahl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=1028992&key=ccb91f29d6744675&client_code=ahl&lang=en&league_id=",
+    },
+  ],
+}
+`;
+
+exports[`ahl > poll > prunes subscriptions whose push endpoint has expired 1`] = `
+[
+  "https://push.example/home",
+  "https://push.example/away-no-opp-goals",
+  "https://push.example/nhl",
+]
+`;
+
+exports[`ahl > prediction > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > prediction > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > prediction > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "awayAbbr": "ROC",
+    "awayStreak": "L1",
+    "awayTeamId": 323,
+    "awayWinPct": 0,
+    "expAway": 2.6,
+    "expHome": 3.2,
+    "gameId": 1028992,
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "h2hRecord": "2-1",
+    "homeAbbr": "TOR",
+    "homeStreak": "W1",
+    "homeTeamId": 335,
+    "homeWinPct": 100,
+    "isPlayoff": false,
+    "narrative": "Fixture AHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:prediction:1028992",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_id=eq.1028992&select=game_id,season_id,home_team_id,away_team_id",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?team_id=in.(335,323)&season_id=eq.90&season_type=eq.regular",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+    },
+    {
+      "aiPrompt": "You are EyeWall Analytics, an AHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. Shot-attempt/possession data is not available for AHL -- do not reference Corsi, possession, or shot-attempt share.
+
+Game: TOR (HOME) vs ROC (AWAY)
+Context: Regular Season
+
+TOR stats:
+- Record: 24-12-3-1 (52 pts)
+- GF/GA per game: 3.25 / 2.63
+- PP%: 21.0% · PK%: 83.0%
+- Current streak: W1
+
+ROC stats:
+- Record: 18-17-4-1 (41 pts)
+- GF/GA per game: 2.80 / 2.95
+- PP%: 17.0% · PK%: 80.0%
+- Current streak: L1
+
+Head-to-head this season: TOR 2-1
+Expected score (Pythagorean): TOR 3.2 - ROC 2.6
+Model win probability: TOR 100%
+
+Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`ahl > preview > Supabase unavailable 1`] = `
+{
+  "body": {
+    "headToHeadRecords": [
+      {
+        "wins": 2,
+      },
+    ],
+    "homeTeam": {
+      "info": {
+        "id": "335",
+      },
+    },
+    "visitingTeam": {
+      "info": {
+        "id": "323",
+      },
+    },
+  },
+  "status": 200,
+}
+`;
+
+exports[`ahl > preview > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > preview > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "headToHeadRecords": [
+      {
+        "wins": 2,
+      },
+    ],
+    "homeTeam": {
+      "info": {
+        "id": "335",
+      },
+    },
+    "visitingTeam": {
+      "info": {
+        "id": "323",
+      },
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:gcpreview:1028992",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://theahl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPreview&game_id=1028992&key=ccb91f29d6744675&client_code=ahl&lang=en&league_id=",
+    },
+  ],
+}
+`;
+
+exports[`ahl > roster > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > roster > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > roster > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "birth_date": "2001-03-04",
+      "birth_place": "Toronto, ON",
+      "first_name": "Alex",
+      "height_inches": 72,
+      "jersey_number": 19,
+      "last_name": "Skater",
+      "player_id": 6681,
+      "position": "C",
+      "shoots": "L",
+      "team_id": 335,
+      "weight_lbs": 190,
+    },
+    {
+      "birth_date": "2002-06-07",
+      "birth_place": null,
+      "first_name": "Sam",
+      "height_inches": 70,
+      "jersey_number": null,
+      "last_name": "Winger",
+      "player_id": 6682,
+      "position": "LW",
+      "shoots": "R",
+      "team_id": 335,
+      "weight_lbs": 180,
+    },
+    {
+      "birth_date": "1999-11-12",
+      "birth_place": "Oslo, NO",
+      "first_name": "Gus",
+      "height_inches": 75,
+      "jersey_number": 30,
+      "last_name": "Keeper",
+      "player_id": 7001,
+      "position": "G",
+      "shoots": "L",
+      "team_id": 323,
+      "weight_lbs": 200,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "ahl:roster:335",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?team_id=eq.335&select=player_id,first_name,last_name,position,jersey_number&limit=60",
+    },
+  ],
+}
+`;
+
+exports[`ahl > schedule > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > schedule > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > schedule > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "away_score": 2,
+      "away_team_id": 323,
+      "game_date": "2026-01-15",
+      "game_id": 1028992,
+      "game_state": "Final",
+      "game_status_code": 4,
+      "home_score": 4,
+      "home_team_id": 335,
+      "season_id": 90,
+    },
+    {
+      "away_score": 1,
+      "away_team_id": 335,
+      "game_date": "2026-01-10",
+      "game_id": 1028991,
+      "game_state": "Final",
+      "game_status_code": 4,
+      "home_score": 3,
+      "home_team_id": 323,
+      "season_id": 90,
+    },
+    {
+      "away_score": 3,
+      "away_team_id": 323,
+      "game_date": "2026-01-05",
+      "game_id": 1028990,
+      "game_state": "Final",
+      "game_status_code": 4,
+      "home_score": 5,
+      "home_team_id": 335,
+      "season_id": 90,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "ahl:schedule:335:90",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&or=(home_team_id.eq.335,away_team_id.eq.335)&order=game_date.asc&limit=150",
+    },
+  ],
+}
+`;
+
+exports[`ahl > shots > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > shots > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > shots > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "event_type": "goal",
+      "game_id": 1028992,
+      "period_id": 1,
+      "shooter_id": 6681,
+      "team_id": 335,
+      "time_seconds": 300,
+      "x_norm": 80.5,
+      "y_norm": -10.2,
+    },
+    {
+      "event_type": "shot",
+      "game_id": 1028992,
+      "period_id": 2,
+      "shooter_id": 6681,
+      "team_id": 335,
+      "time_seconds": 900,
+      "x_norm": -60,
+      "y_norm": 50,
+    },
+    {
+      "event_type": "shot",
+      "game_id": 1028992,
+      "period_id": 2,
+      "shooter_id": 7001,
+      "team_id": 323,
+      "time_seconds": 1000,
+      "x_norm": 70,
+      "y_norm": 12,
+    },
+    {
+      "event_type": "blocked_shot",
+      "game_id": 1028991,
+      "period_id": 3,
+      "shooter_id": 6682,
+      "team_id": 335,
+      "time_seconds": 100,
+      "x_norm": "n/a",
+      "y_norm": 0,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "ahl:shots:335:90",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_shot_events?team_id=eq.335&season_id=eq.90&order=game_id.asc",
+    },
+  ],
+}
+`;
+
+exports[`ahl > standings (default season) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > standings (default season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "goals_against": 105,
+      "goals_for": 130,
+      "gp": 40,
+      "l10L": 1,
+      "l10W": 2,
+      "losses": 12,
+      "ot_losses": 3,
+      "pk_pct": 0.83,
+      "points": 52,
+      "pp_pct": 0.21,
+      "season_id": 90,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "streakCount": 1,
+      "streakType": "W",
+      "team_id": 335,
+      "wins": 24,
+    },
+    {
+      "goals_against": 118,
+      "goals_for": 112,
+      "gp": 40,
+      "l10L": 2,
+      "l10W": 1,
+      "losses": 17,
+      "ot_losses": 4,
+      "pk_pct": 0.8,
+      "points": 41,
+      "pp_pct": 0.17,
+      "season_id": 90,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "streakCount": 1,
+      "streakType": "L",
+      "team_id": 323,
+      "wins": 18,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "ahl:standings:90",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?season_id=eq.90&season_type=eq.regular&order=points.desc&limit=32",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+    },
+  ],
+}
+`;
+
+exports[`ahl > standings (playoff season) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > standings (playoff season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "goals_against": 105,
+      "goals_for": 130,
+      "gp": 40,
+      "l10L": 1,
+      "l10W": 2,
+      "losses": 12,
+      "ot_losses": 3,
+      "pk_pct": 0.83,
+      "points": 52,
+      "pp_pct": 0.21,
+      "season_id": 90,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "streakCount": 1,
+      "streakType": "W",
+      "team_id": 335,
+      "wins": 24,
+    },
+    {
+      "goals_against": 118,
+      "goals_for": 112,
+      "gp": 40,
+      "l10L": 2,
+      "l10W": 1,
+      "losses": 17,
+      "ot_losses": 4,
+      "pk_pct": 0.8,
+      "points": 41,
+      "pp_pct": 0.17,
+      "season_id": 90,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "streakCount": 1,
+      "streakType": "L",
+      "team_id": 323,
+      "wins": 18,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "ahl:standings:92",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?season_id=eq.92&season_type=eq.playoffs&order=points.desc&limit=32",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.92&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+    },
+  ],
+}
+`;
+
+exports[`ahl > standings > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > standings > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "goals_against": 105,
+      "goals_for": 130,
+      "gp": 40,
+      "l10L": 1,
+      "l10W": 2,
+      "losses": 12,
+      "ot_losses": 3,
+      "pk_pct": 0.83,
+      "points": 52,
+      "pp_pct": 0.21,
+      "season_id": 90,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "streakCount": 1,
+      "streakType": "W",
+      "team_id": 335,
+      "wins": 24,
+    },
+    {
+      "goals_against": 118,
+      "goals_for": 112,
+      "gp": 40,
+      "l10L": 2,
+      "l10W": 1,
+      "losses": 17,
+      "ot_losses": 4,
+      "pk_pct": 0.8,
+      "points": 41,
+      "pp_pct": 0.17,
+      "season_id": 90,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "streakCount": 1,
+      "streakType": "L",
+      "team_id": 323,
+      "wins": 18,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "ahl:standings:90",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?season_id=eq.90&season_type=eq.regular&order=points.desc&limit=32",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+    },
+  ],
+}
+`;
+
+exports[`ahl > summary > Supabase unavailable 1`] = `
+{
+  "body": {
+    "coaches": {
+      "away": null,
+      "home": {
+        "firstName": "Head",
+        "lastName": "Home",
+      },
+    },
+    "homeTeamStats": {
+      "goals": 4,
+      "powerPlayGoals": 1,
+      "shots": 34,
+    },
+    "mvps": [
+      {
+        "homeTeam": true,
+        "isGoalie": false,
+        "player": {
+          "info": {
+            "firstName": "Alex",
+            "id": 6681,
+            "jerseyNumber": "19",
+            "lastName": "Skater",
+            "playerImageURL": "https://assets.leaguestat.com/x/120x160/6681.jpg",
+            "position": "C",
+          },
+          "stats": {
+            "goals": 2,
+          },
+        },
+        "playerImage": "https://assets.leaguestat.com/x/240x240/6681.jpg",
+        "team": {
+          "abbreviation": "HOME",
+          "id": 335,
+          "name": "Home Club",
+        },
+      },
+      {
+        "homeTeam": false,
+        "isGoalie": true,
+        "player": {
+          "info": {
+            "firstName": "Gus",
+            "id": 7001,
+            "jerseyNumber": "30",
+            "lastName": "Keeper",
+            "playerImageURL": null,
+            "position": "G",
+          },
+          "stats": {
+            "saves": 30,
+          },
+        },
+        "playerImage": "https://img.example/g.jpg",
+        "team": {
+          "abbreviation": "AWY",
+          "id": 323,
+          "name": "Away Club",
+        },
+      },
+    ],
+    "officials": {
+      "linesmen": [
+        {
+          "firstName": "Line",
+          "jerseyNumber": null,
+          "lastName": "Two",
+        },
+      ],
+      "referees": [
+        {
+          "firstName": "Ref",
+          "jerseyNumber": 12,
+          "lastName": "One",
+        },
+      ],
+    },
+    "periods": [
+      {
+        "goals": [
+          {
+            "assists": [
+              {
+                "firstName": "Sam",
+                "id": 6682,
+                "lastName": "Winger",
+              },
+            ],
+            "game_goal_id": "555",
+            "properties": {
+              "isEmptyNet": "0",
+              "isGameWinningGoal": "0",
+              "isPenaltyShot": "0",
+              "isPowerPlay": "1",
+              "isShortHanded": "0",
+            },
+            "scoredBy": {
+              "firstName": "Alex",
+              "id": 6681,
+              "lastName": "Skater",
+              "playerImageURL": "https://assets.leaguestat.com/x/120x160/6681.jpg",
+            },
+            "team": {
+              "abbreviation": "HOME",
+              "id": 335,
+            },
+            "time": "5:00",
+          },
+        ],
+        "info": {
+          "id": 1,
+          "longName": "1st Period",
+          "shortName": "1st",
+        },
+        "stats": {
+          "homeGoals": 2,
+          "homeShots": 12,
+          "visitingGoals": 1,
+          "visitingShots": 9,
+        },
+      },
+      {
+        "goals": [],
+        "info": {
+          "id": 1,
+          "longName": "",
+          "shortName": "",
+        },
+        "stats": {
+          "homeGoals": 0,
+          "homeShots": 0,
+          "visitingGoals": 0,
+          "visitingShots": 0,
+        },
+      },
+    ],
+    "venue": "Fixture Arena",
+    "visitingTeamStats": {
+      "goals": 2,
+      "shots": 28,
+    },
+  },
+  "status": 200,
+}
+`;
+
+exports[`ahl > summary > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > summary > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "coaches": {
+      "away": null,
+      "home": {
+        "firstName": "Head",
+        "lastName": "Home",
+      },
+    },
+    "homeTeamStats": {
+      "goals": 4,
+      "powerPlayGoals": 1,
+      "shots": 34,
+    },
+    "mvps": [
+      {
+        "homeTeam": true,
+        "isGoalie": false,
+        "player": {
+          "info": {
+            "firstName": "Alex",
+            "id": 6681,
+            "jerseyNumber": "19",
+            "lastName": "Skater",
+            "playerImageURL": "https://assets.leaguestat.com/x/120x160/6681.jpg",
+            "position": "C",
+          },
+          "stats": {
+            "goals": 2,
+          },
+        },
+        "playerImage": "https://assets.leaguestat.com/x/240x240/6681.jpg",
+        "team": {
+          "abbreviation": "HOME",
+          "id": 335,
+          "name": "Home Club",
+        },
+      },
+      {
+        "homeTeam": false,
+        "isGoalie": true,
+        "player": {
+          "info": {
+            "firstName": "Gus",
+            "id": 7001,
+            "jerseyNumber": "30",
+            "lastName": "Keeper",
+            "playerImageURL": null,
+            "position": "G",
+          },
+          "stats": {
+            "saves": 30,
+          },
+        },
+        "playerImage": "https://img.example/g.jpg",
+        "team": {
+          "abbreviation": "AWY",
+          "id": 323,
+          "name": "Away Club",
+        },
+      },
+    ],
+    "officials": {
+      "linesmen": [
+        {
+          "firstName": "Line",
+          "jerseyNumber": null,
+          "lastName": "Two",
+        },
+      ],
+      "referees": [
+        {
+          "firstName": "Ref",
+          "jerseyNumber": 12,
+          "lastName": "One",
+        },
+      ],
+    },
+    "periods": [
+      {
+        "goals": [
+          {
+            "assists": [
+              {
+                "firstName": "Sam",
+                "id": 6682,
+                "lastName": "Winger",
+              },
+            ],
+            "game_goal_id": "555",
+            "properties": {
+              "isEmptyNet": "0",
+              "isGameWinningGoal": "0",
+              "isPenaltyShot": "0",
+              "isPowerPlay": "1",
+              "isShortHanded": "0",
+            },
+            "scoredBy": {
+              "firstName": "Alex",
+              "id": 6681,
+              "lastName": "Skater",
+              "playerImageURL": "https://assets.leaguestat.com/x/120x160/6681.jpg",
+            },
+            "team": {
+              "abbreviation": "HOME",
+              "id": 335,
+            },
+            "time": "5:00",
+          },
+        ],
+        "info": {
+          "id": 1,
+          "longName": "1st Period",
+          "shortName": "1st",
+        },
+        "stats": {
+          "homeGoals": 2,
+          "homeShots": 12,
+          "visitingGoals": 1,
+          "visitingShots": 9,
+        },
+      },
+      {
+        "goals": [],
+        "info": {
+          "id": 1,
+          "longName": "",
+          "shortName": "",
+        },
+        "stats": {
+          "homeGoals": 0,
+          "homeShots": 0,
+          "visitingGoals": 0,
+          "visitingShots": 0,
+        },
+      },
+    ],
+    "venue": "Fixture Arena",
+    "visitingTeamStats": {
+      "goals": 2,
+      "shots": 28,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:gamesummary:1028992",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://theahl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=1028992&key=ccb91f29d6744675&client_code=ahl&lang=en&league_id=",
+    },
+  ],
+}
+`;
+
+exports[`ahl > team code map 1`] = `
+{
+  "307": "HFD",
+  "309": "PRO",
+  "313": "LV",
+  "316": "WBS",
+  "317": "BRI",
+  "319": "HER",
+  "321": "MB",
+  "323": "ROC",
+  "324": "SYR",
+  "327": "MIL",
+  "328": "GR",
+  "330": "CHI",
+  "335": "TOR",
+  "372": "RFD",
+  "373": "CLE",
+  "380": "TEX",
+  "384": "CLT",
+  "389": "IA",
+  "390": "UTC",
+  "402": "BAK",
+  "403": "ONT",
+  "404": "SD",
+  "405": "SJ",
+  "411": "SPR",
+  "412": "TUC",
+  "413": "BEL",
+  "415": "LAV",
+  "419": "COL",
+  "437": "HSK",
+  "440": "ABB",
+  "444": "CGY",
+  "445": "CV",
+  "457": "HAM",
+}
+`;
+
+exports[`ahl > team-season-summary > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > team-season-summary > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > team-season-summary > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "gamesPlayed": 3,
+    "pkPct": 0.83,
+    "ppPct": 0.21,
+    "season": 90,
+    "sog": {
+      "car": 2,
+      "opp": 1,
+    },
+    "teamId": 335,
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:team-season-summary:335:90",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&or=(home_team_id.eq.335,away_team_id.eq.335)&select=game_id",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?team_id=eq.335&season_id=eq.90&season_type=eq.regular&select=pp_pct,pk_pct",
+    },
+    {
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_shot_events?game_id=in.(1028992,1028991,1028990)&select=team_id,event_type",
+    },
+  ],
+}
+`;
+
+exports[`ahl > team-seasons/compare > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > team-seasons/compare > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId and seasons (comma-separated) are required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > team-seasons/compare > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "goals_against": 105,
+      "goals_for": 130,
+      "gp": 40,
+      "losses": 12,
+      "ot_losses": 3,
+      "pk_pct": 0.83,
+      "points": 52,
+      "pp_pct": 0.21,
+      "season_id": 90,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "team_id": 335,
+      "wins": 24,
+    },
+    {
+      "goals_against": 118,
+      "goals_for": 112,
+      "gp": 40,
+      "losses": 17,
+      "ot_losses": 4,
+      "pk_pct": 0.8,
+      "points": 41,
+      "pp_pct": 0.17,
+      "season_id": 90,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "team_id": 323,
+      "wins": 18,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "ahl:team-seasons:compare:335:90,92",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?team_id=eq.335&season_id=in.(90,92)&select=season_id,season_type,gp,wins,losses,ot_losses,shootout_losses,points,goals_for,goals_against,pp_pct,pk_pct",
+    },
+  ],
+}
+`;
+
+exports[`ahl > team-seasons/compare-teams > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > team-seasons/compare-teams > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamIds (exactly two, comma-separated) and season are required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > team-seasons/compare-teams > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "goals_against": 105,
+      "goals_for": 130,
+      "gp": 40,
+      "losses": 12,
+      "ot_losses": 3,
+      "pk_pct": 0.83,
+      "points": 52,
+      "pp_pct": 0.21,
+      "season_id": 90,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "team_id": 335,
+      "wins": 24,
+    },
+    {
+      "goals_against": 118,
+      "goals_for": 112,
+      "gp": 40,
+      "losses": 17,
+      "ot_losses": 4,
+      "pk_pct": 0.8,
+      "points": 41,
+      "pp_pct": 0.17,
+      "season_id": 90,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "team_id": 323,
+      "wins": 18,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "ahl:team-seasons:compare-teams:323,335:90",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?team_id=in.(335,323)&season_id=eq.90&select=team_id,season_id,season_type,gp,wins,losses,ot_losses,shootout_losses,points,goals_for,goals_against,pp_pct,pk_pct",
+    },
+  ],
+}
+`;
+
+exports[`ahl > team-seasons/head-to-head > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > team-seasons/head-to-head > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamIds (exactly two, comma-separated) are required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`ahl > team-seasons/head-to-head > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "allTimeRecord": {
+      "teamAWins": 2,
+      "teamBWins": 1,
+    },
+    "currentStreak": {
+      "count": 1,
+      "holder": "A",
+    },
+    "games": [
+      {
+        "gameDate": "2026-01-15",
+        "gameId": 1028992,
+        "homeTeam": 335,
+        "season": 90,
+        "teamAScore": 4,
+        "teamAWon": true,
+        "teamBScore": 2,
+      },
+      {
+        "gameDate": "2026-01-10",
+        "gameId": 1028991,
+        "homeTeam": 323,
+        "season": 90,
+        "teamAScore": 1,
+        "teamAWon": false,
+        "teamBScore": 3,
+      },
+      {
+        "gameDate": "2026-01-05",
+        "gameId": 1028990,
+        "homeTeam": 335,
+        "season": 90,
+        "teamAScore": 5,
+        "teamAWon": true,
+        "teamBScore": 3,
+      },
+    ],
+    "isThinSample": true,
+    "recentWindow": {
+      "size": 3,
+      "teamAWins": 2,
+      "teamBWins": 1,
+    },
+    "teamA": 335,
+    "teamB": 323,
+    "totalMeetings": 3,
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:team-seasons:head-to-head:323,335",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_state=eq.Final&or=(and(home_team_id.eq.335,away_team_id.eq.323),and(home_team_id.eq.323,away_team_id.eq.335))&select=game_id,season_id,game_date,home_team_id,away_team_id,home_score,away_score&order=season_id.asc,game_id.asc",
+    },
+  ],
+}
+`;
+
+exports[`ahl > team-seasons/head-to-head/narrative > Supabase unavailable 1`] = `
+{
+  "body": {
+    "narrative": "Fixture AHL narrative.",
+  },
+  "status": 200,
+}
+`;
+
+exports[`ahl > team-seasons/head-to-head/narrative > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "narrative": "Fixture AHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:h2h-narrative:323,335",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "aiPrompt": "You are Sticks, EyeWall's hockey analyst. Write a punchy 2-3 sentence head-to-head summary for Home Club vs Away Club.
+
+All-time record (since 2025-26): Home Club 2-1 Away Club, across 3 meetings.
+Last 3: Home Club 2-1 Away Club.
+Current streak: Home Club has won 1 straight.
+
+IMPORTANT: Only 3 meetings exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.
+Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.",
+      "maxTokens": 100,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`ahl > today > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > today > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "awayScore": 2,
+      "awayTeamCode": "ROC",
+      "awayTeamId": 323,
+      "gameId": 1028992,
+      "homeScore": 4,
+      "homeTeamCode": "TOR",
+      "homeTeamId": 335,
+      "status": "final",
+    },
+    {
+      "awayScore": 1,
+      "awayTeamCode": "TOR",
+      "awayTeamId": 335,
+      "gameId": 1028991,
+      "homeScore": 3,
+      "homeTeamCode": "ROC",
+      "homeTeamId": 323,
+      "status": "final",
+    },
+    {
+      "awayScore": 3,
+      "awayTeamCode": "ROC",
+      "awayTeamId": 323,
+      "gameId": 1028990,
+      "homeScore": 5,
+      "homeTeamCode": "TOR",
+      "homeTeamId": 335,
+      "status": "final",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "ahl:today:90",
+      "ttl": 60,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_date=eq.2026-01-15&season_id=eq.90&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&limit=10",
+    },
+  ],
+}
+`;
+
+exports[`ahl > unknown route > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Not found",
+  },
+  "status": 404,
+}
+`;
+
+exports[`ahl > unknown route > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "error": "Not found",
+  },
+  "kvWrites": [],
+  "status": 404,
+  "upstream": [],
+}
+`;
+
+exports[`echl > game-box > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase error",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > game-box > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > game-box > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "awayTeamId": 99,
+    "gameId": 1028992,
+    "goalies": [
+      {
+        "game_id": 1028992,
+        "goals_against": 4,
+        "player_id": 7001,
+        "player_name": "Gus Keeper",
+        "saves": 30,
+        "season_id": 73,
+        "shots_against": 34,
+        "team_id": 99,
+        "toi_seconds": 3600,
+      },
+    ],
+    "homeTeamId": 8,
+    "skaters": [
+      {
+        "assists": 1,
+        "game_id": 1028992,
+        "goals": 2,
+        "penalty_minutes": 2,
+        "player_id": 6681,
+        "player_name": "Alex Skater",
+        "plus_minus": 2,
+        "points": 3,
+        "season_id": 73,
+        "shots": 5,
+        "team_id": 8,
+      },
+      {
+        "assists": 1,
+        "game_id": 1028990,
+        "goals": 0,
+        "penalty_minutes": 0,
+        "player_id": 6682,
+        "player_name": "Sam Winger",
+        "plus_minus": -1,
+        "points": 1,
+        "season_id": 73,
+        "shots": 2,
+        "team_id": 8,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "echl:gamebox:1028992",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_skater_game_box?game_id=eq.1028992&order=points.desc",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goalie_game_box?game_id=eq.1028992",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_id=eq.1028992&select=home_team_id,away_team_id",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=in.(6681,6682,7001)&select=player_id,first_name,last_name",
+    },
+  ],
+}
+`;
+
+exports[`echl > lastgame > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > lastgame > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > lastgame > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "gameDate": "2026-01-15",
+    "gameId": 1028992,
+    "isHome": true,
+    "oppScore": 2,
+    "opponentAbbr": "TR",
+    "opponentId": 99,
+    "teamScore": 4,
+    "won": true,
+  },
+  "kvWrites": [
+    {
+      "key": "echl:lastgame:8:73",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&or=(home_team_id.eq.8,away_team_id.eq.8)&order=game_id.desc&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`echl > league-players > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase error",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > league-players > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "first_name": "Gus",
+        "gaa": 2.61,
+        "goals_against": 79,
+        "gp": 30,
+        "last_name": "Keeper",
+        "losses": 9,
+        "ot_losses": 4,
+        "player_id": 7001,
+        "player_name": "Gus Keeper",
+        "position": "G",
+        "saves": 820,
+        "season_id": 73,
+        "season_type": "regular",
+        "shutouts": 2,
+        "sv_pct": 0.912,
+        "team_id": 99,
+        "wins": 17,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 20,
+        "first_name": "Alex",
+        "goals": 15,
+        "gp": 40,
+        "last_name": "Skater",
+        "pim": 12,
+        "player_id": 6681,
+        "player_name": "Alex Skater",
+        "plus_minus": 8,
+        "points": 35,
+        "position": "C",
+        "pp_goals": 5,
+        "season_id": 73,
+        "season_type": "regular",
+        "sh_goals": 1,
+        "shots": 110,
+        "team_id": 8,
+      },
+      {
+        "assists": 11,
+        "first_name": "Sam",
+        "goals": 9,
+        "gp": 38,
+        "last_name": "Winger",
+        "pim": 20,
+        "player_id": 6682,
+        "player_name": "Sam Winger",
+        "plus_minus": -3,
+        "points": 20,
+        "position": "LW",
+        "pp_goals": 2,
+        "season_id": 73,
+        "season_type": "regular",
+        "sh_goals": 0,
+        "shots": 80,
+        "team_id": 8,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "echl:leagueplayers:73",
+      "ttl": 7200,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?season_id=eq.73&season_type=eq.regular&select=player_id,team_id,goals,assists,points,gp,shots,pp_goals,sh_goals,pim,plus_minus&order=points.desc&limit=600",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goalie_seasons?season_id=eq.73&season_type=eq.regular&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against&order=sv_pct.desc&limit=80",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?select=player_id,first_name,last_name,position,team_id&limit=1500",
+    },
+  ],
+}
+`;
+
+exports[`echl > live/:gameId > Supabase unavailable 1`] = `
+{
+  "body": {
+    "awayScore": 0,
+    "awayTeamId": null,
+    "events": [
+      {
+        "eventType": "shot",
+        "goalie": {
+          "firstName": "Home",
+          "id": 7003,
+          "jerseyNumber": null,
+          "lastName": "Goalie",
+        },
+        "isGoal": false,
+        "period": 1,
+        "shooter": {
+          "firstName": "Opp",
+          "id": 7002,
+          "jerseyNumber": null,
+          "lastName": "Shooter",
+        },
+        "shotQuality": "Quality",
+        "shotType": "Wrist",
+        "teamId": 99,
+        "time": "1:10",
+        "timeSeconds": 70,
+        "x": 100,
+        "y": 50,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": false,
+        "isGameWinner": false,
+        "isPenaltyShot": false,
+        "isPowerPlay": true,
+        "isShortHanded": false,
+        "minusPlayers": [],
+        "period": 1,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 6681,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "HOME",
+        "teamId": 8,
+        "time": "4:00",
+        "timeSeconds": 240,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "description": "Min-Hooking",
+        "eventType": "penalty",
+        "isBench": false,
+        "isPowerPlay": true,
+        "minutes": 2,
+        "period": 1,
+        "servedBy": null,
+        "takenBy": {
+          "firstName": "Opp",
+          "id": 7002,
+          "jerseyNumber": null,
+          "lastName": "Shooter",
+        },
+        "teamAbbrev": "AWY",
+        "teamId": 99,
+        "time": "8:00",
+        "timeSeconds": 480,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": false,
+        "isGameWinner": false,
+        "isPenaltyShot": false,
+        "isPowerPlay": false,
+        "isShortHanded": true,
+        "minusPlayers": [],
+        "period": 2,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 6681,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "HOME",
+        "teamId": 8,
+        "time": "2:00",
+        "timeSeconds": 120,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "eventType": "penaltyshot",
+        "goalie": {
+          "firstName": "Home",
+          "id": 7003,
+          "jerseyNumber": null,
+          "lastName": "Goalie",
+        },
+        "isGoal": false,
+        "period": 2,
+        "shooter": {
+          "firstName": "Opp",
+          "id": 7002,
+          "jerseyNumber": null,
+          "lastName": "Shooter",
+        },
+        "teamId": 99,
+        "time": "10:00",
+        "timeSeconds": 600,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": true,
+        "isGameWinner": true,
+        "isPenaltyShot": false,
+        "isPowerPlay": false,
+        "isShortHanded": false,
+        "minusPlayers": [],
+        "period": 3,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 6681,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "HOME",
+        "teamId": 8,
+        "time": "15:00",
+        "timeSeconds": 900,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "eventType": "goalie_change",
+        "goalieIn": null,
+        "goalieOut": {
+          "firstName": "Gus",
+          "id": 7001,
+          "jerseyNumber": null,
+          "lastName": "Keeper",
+        },
+        "period": 3,
+        "teamId": 99,
+        "time": "18:00",
+        "timeSeconds": 1080,
+      },
+    ],
+    "gameId": 1028992,
+    "gameStatus": "pre",
+    "homeScore": 0,
+    "homeTeamId": null,
+  },
+  "status": 200,
+}
+`;
+
+exports[`echl > live/:gameId > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > live/:gameId > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "awayScore": 0,
+    "awayTeamId": 99,
+    "events": [
+      {
+        "eventType": "shot",
+        "goalie": {
+          "firstName": "Home",
+          "id": 7003,
+          "jerseyNumber": null,
+          "lastName": "Goalie",
+        },
+        "isGoal": false,
+        "period": 1,
+        "shooter": {
+          "firstName": "Opp",
+          "id": 7002,
+          "jerseyNumber": null,
+          "lastName": "Shooter",
+        },
+        "shotQuality": "Quality",
+        "shotType": "Wrist",
+        "teamId": 99,
+        "time": "1:10",
+        "timeSeconds": 70,
+        "x": 100,
+        "y": 50,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": false,
+        "isGameWinner": false,
+        "isPenaltyShot": false,
+        "isPowerPlay": true,
+        "isShortHanded": false,
+        "minusPlayers": [],
+        "period": 1,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 6681,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "HOME",
+        "teamId": 8,
+        "time": "4:00",
+        "timeSeconds": 240,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "description": "Min-Hooking",
+        "eventType": "penalty",
+        "isBench": false,
+        "isPowerPlay": true,
+        "minutes": 2,
+        "period": 1,
+        "servedBy": null,
+        "takenBy": {
+          "firstName": "Opp",
+          "id": 7002,
+          "jerseyNumber": null,
+          "lastName": "Shooter",
+        },
+        "teamAbbrev": "AWY",
+        "teamId": 99,
+        "time": "8:00",
+        "timeSeconds": 480,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": false,
+        "isGameWinner": false,
+        "isPenaltyShot": false,
+        "isPowerPlay": false,
+        "isShortHanded": true,
+        "minusPlayers": [],
+        "period": 2,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 6681,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "HOME",
+        "teamId": 8,
+        "time": "2:00",
+        "timeSeconds": 120,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "eventType": "penaltyshot",
+        "goalie": {
+          "firstName": "Home",
+          "id": 7003,
+          "jerseyNumber": null,
+          "lastName": "Goalie",
+        },
+        "isGoal": false,
+        "period": 2,
+        "shooter": {
+          "firstName": "Opp",
+          "id": 7002,
+          "jerseyNumber": null,
+          "lastName": "Shooter",
+        },
+        "teamId": 99,
+        "time": "10:00",
+        "timeSeconds": 600,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": true,
+        "isGameWinner": true,
+        "isPenaltyShot": false,
+        "isPowerPlay": false,
+        "isShortHanded": false,
+        "minusPlayers": [],
+        "period": 3,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 6682,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 6681,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "HOME",
+        "teamId": 8,
+        "time": "15:00",
+        "timeSeconds": 900,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "eventType": "goalie_change",
+        "goalieIn": null,
+        "goalieOut": {
+          "firstName": "Gus",
+          "id": 7001,
+          "jerseyNumber": null,
+          "lastName": "Keeper",
+        },
+        "period": 3,
+        "teamId": 99,
+        "time": "18:00",
+        "timeSeconds": 1080,
+      },
+    ],
+    "gameId": 1028992,
+    "gameStatus": "final",
+    "homeScore": 3,
+    "homeTeamId": 8,
+  },
+  "kvWrites": [
+    {
+      "key": "echl:live:1028992",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://echl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=1028992&key=2c2b89ea7345cae8&client_code=echl&lang=en&league_id=",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_id=eq.1028992&select=home_team_id,away_team_id,game_state,game_status_code&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`echl > news > GET /news with a cold cache returns [] and fetches every source in the background 1`] = `
+{
+  "health": {
+    "health:echl:hockeywriters-echl": {
+      "consecutiveFailures": 0,
+      "itemCount": 2,
+      "key": "echl:hockeywriters-echl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+    "health:echl:osc-echl": {
+      "consecutiveFailures": 0,
+      "itemCount": 2,
+      "key": "echl:osc-echl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "health:echl:hockeywriters-echl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:echl:osc-echl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "echl:news",
+      "ttl": 90000,
+    },
+  ],
+  "res": {
+    "body": [],
+    "status": 200,
+  },
+  "stored": [
+    {
+      "excerpt": "Second story",
+      "id": "hockeywriters-echl-d5uqtv",
+      "imageUrl": null,
+      "publishedAt": "2026-01-15T09:00:00.000Z",
+      "source": "hockeywriters-echl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "The Hockey Writers",
+      "title": "thehockeywriters.com headline two",
+      "url": "https://news.example/thehockeywriters.com/two",
+    },
+    {
+      "excerpt": "Second story",
+      "id": "osc-echl-3r44e",
+      "imageUrl": null,
+      "publishedAt": "2026-01-15T09:00:00.000Z",
+      "source": "osc-echl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "OurSports Central",
+      "title": "www.oursportscentral.com headline two",
+      "url": "https://news.example/www.oursportscentral.com/two",
+    },
+    {
+      "excerpt": "First & story",
+      "id": "hockeywriters-echl-d5uurd",
+      "imageUrl": null,
+      "publishedAt": "2026-01-14T12:00:00.000Z",
+      "source": "hockeywriters-echl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "The Hockey Writers",
+      "title": "thehockeywriters.com headline one",
+      "url": "https://news.example/thehockeywriters.com/one",
+    },
+    {
+      "excerpt": "First & story",
+      "id": "osc-echl-3r81w",
+      "imageUrl": null,
+      "publishedAt": "2026-01-14T12:00:00.000Z",
+      "source": "osc-echl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "OurSports Central",
+      "title": "www.oursportscentral.com headline one",
+      "url": "https://news.example/www.oursportscentral.com/one",
+    },
+  ],
+  "upstream": [
+    {
+      "url": "https://thehockeywriters.com/category/echl/feed/",
+    },
+    {
+      "url": "https://www.oursportscentral.com/feeds/l18.xml",
+    },
+  ],
+}
+`;
+
+exports[`echl > news > POST /news/bust requires the secret, then clears the cache 1`] = `
+{
+  "busted": {
+    "body": {
+      "busted": [
+        "echl:news",
+      ],
+      "ok": true,
+    },
+    "status": 200,
+  },
+  "denied": {
+    "body": "Unauthorized",
+    "status": 401,
+  },
+  "kvWrites": [
+    {
+      "deleted": true,
+      "key": "echl:news",
+    },
+  ],
+  "remaining": null,
+}
+`;
+
+exports[`echl > news > POST /news/ingest requires the secret, rejects non-arrays, and merges with the cached list 1`] = `
+{
+  "bad": {
+    "body": "Bad request: Expected array",
+    "status": 400,
+  },
+  "denied": {
+    "body": "Unauthorized",
+    "status": 401,
+  },
+  "kvWrites": [
+    {
+      "key": "echl:news",
+      "ttl": 90000,
+    },
+    {
+      "key": "health:echl:pipeline-ingest",
+      "ttl": 2592000,
+    },
+  ],
+  "ok": {
+    "body": {
+      "ok": true,
+      "received": 2,
+      "total": 3,
+    },
+    "status": 200,
+  },
+  "stored": [
+    {
+      "id": "new-1",
+      "publishedAt": "2026-01-14T00:00:00.000Z",
+      "title": "New A (same link)",
+      "url": "https://news.example/a",
+    },
+    {
+      "id": "new-2",
+      "publishedAt": "2026-01-12T00:00:00.000Z",
+      "title": "New C",
+      "url": "https://news.example/c",
+    },
+    {
+      "id": "old-2",
+      "publishedAt": "2026-01-01T00:00:00.000Z",
+      "title": "Old B",
+      "url": "https://news.example/b",
+    },
+  ],
+}
+`;
+
+exports[`echl > news > fetchNews: a failing source is recorded in health and skipped; cached articles are merged in 1`] = `
+{
+  "health": {
+    "health:echl:hockeywriters-echl": {
+      "consecutiveFailures": 0,
+      "itemCount": 2,
+      "key": "echl:hockeywriters-echl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+    "health:echl:osc-echl": {
+      "consecutiveFailures": 1,
+      "error": "HTTP 503",
+      "key": "echl:osc-echl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": "HTTP 503",
+      "lastErrorAt": "2026-01-15T23:30:00.000Z",
+      "lastSuccessAt": null,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "health:echl:hockeywriters-echl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:echl:osc-echl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "echl:news",
+      "ttl": 90000,
+    },
+  ],
+  "merged": [
+    {
+      "excerpt": "Second story",
+      "id": "hockeywriters-echl-d5uqtv",
+      "imageUrl": null,
+      "publishedAt": "2026-01-15T09:00:00.000Z",
+      "source": "hockeywriters-echl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "The Hockey Writers",
+      "title": "thehockeywriters.com headline two",
+      "url": "https://news.example/thehockeywriters.com/two",
+    },
+    {
+      "excerpt": "First & story",
+      "id": "hockeywriters-echl-d5uurd",
+      "imageUrl": null,
+      "publishedAt": "2026-01-14T12:00:00.000Z",
+      "source": "hockeywriters-echl",
+      "sourceColor": "#FFFFFF",
+      "sourceName": "The Hockey Writers",
+      "title": "thehockeywriters.com headline one",
+      "url": "https://news.example/thehockeywriters.com/one",
+    },
+    {
+      "id": "kept-1",
+      "publishedAt": "2026-01-01T00:00:00.000Z",
+      "title": "Kept",
+      "url": "https://news.example/kept",
+    },
+  ],
+  "upstream": [
+    {
+      "url": "https://thehockeywriters.com/category/echl/feed/",
+    },
+    {
+      "url": "https://www.oursportscentral.com/feeds/l18.xml",
+    },
+  ],
+}
+`;
+
+exports[`echl > player/career > Supabase unavailable 1`] = `
+{
+  "body": {
+    "bioPoints": [
+      "Captain & leader",
+      "All-Star in 2025",
+    ],
+    "draft": {
+      "draft_round": 3,
+      "draft_team": "Home",
+      "draft_year": 2019,
+    },
+    "photo": {
+      "height": 240,
+      "url": "https://img.example/b.jpg",
+      "width": 240,
+    },
+    "player_id": 6681,
+    "playoffs": {
+      "games_played": 8,
+      "goals": 3,
+    },
+    "recentGames": [
+      {
+        "assists": 1,
+        "game": "Jan 7",
+        "goals": 0,
+        "points": 1,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 6",
+        "goals": 1,
+        "points": 2,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 5",
+        "goals": 0,
+        "points": 1,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 4",
+        "goals": 1,
+        "points": 2,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 3",
+        "goals": 0,
+        "points": 1,
+      },
+    ],
+    "regularSeason": {
+      "games_played": 120,
+      "goals": 41,
+      "points": 95,
+      "shooting_percentage": 12.5,
+    },
+  },
+  "status": 200,
+}
+`;
+
+exports[`echl > player/career > missing required param 1`] = `
+{
+  "body": {
+    "error": "id required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > player/career > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "bioPoints": [
+      "Captain & leader",
+      "All-Star in 2025",
+    ],
+    "draft": {
+      "draft_round": 3,
+      "draft_team": "Home",
+      "draft_year": 2019,
+    },
+    "photo": {
+      "height": 240,
+      "url": "https://img.example/b.jpg",
+      "width": 240,
+    },
+    "player_id": 6681,
+    "playoffs": {
+      "games_played": 8,
+      "goals": 3,
+    },
+    "recentGames": [
+      {
+        "assists": 1,
+        "game": "Jan 7",
+        "goals": 0,
+        "points": 1,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 6",
+        "goals": 1,
+        "points": 2,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 5",
+        "goals": 0,
+        "points": 1,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 4",
+        "goals": 1,
+        "points": 2,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 3",
+        "goals": 0,
+        "points": 1,
+      },
+    ],
+    "regularSeason": {
+      "games_played": 120,
+      "goals": 41,
+      "points": 95,
+      "shooting_percentage": 12.5,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "echl:player:career:6681",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://echl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=player&player_id=6681&site_id=0&key=2c2b89ea7345cae8&client_code=echl&lang=en&league_id=&statsType=standard",
+    },
+  ],
+}
+`;
+
+exports[`echl > player/landing (goalie, latest season) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > player/landing (goalie, latest season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "birth_date": "1999-11-12",
+    "birth_place": "Oslo, NO",
+    "first_name": "Gus",
+    "gaa": 2.61,
+    "goals_against": 79,
+    "gp": 30,
+    "height_inches": 75,
+    "jersey_number": 30,
+    "last_name": "Keeper",
+    "losses": 9,
+    "ot_losses": 4,
+    "player_id": 7001,
+    "position": "G",
+    "saves": 820,
+    "season_id": 73,
+    "season_type": "regular",
+    "shoots": "L",
+    "shutouts": 2,
+    "sv_pct": 0.912,
+    "team_id": 99,
+    "weight_lbs": 200,
+    "wins": 17,
+  },
+  "kvWrites": [
+    {
+      "key": "echl:player:landing:7001:latest",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=eq.7001&select=*",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goalie_seasons?player_id=eq.7001&season_type=eq.regular&order=season_id.desc&limit=1&select=*",
+    },
+  ],
+}
+`;
+
+exports[`echl > player/landing (skater) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > player/landing (skater) > missing required param 1`] = `
+{
+  "body": {
+    "error": "id required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > player/landing (skater) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "assists": 20,
+    "birth_date": "2001-03-04",
+    "birth_place": "Toronto, ON",
+    "first_name": "Alex",
+    "goals": 15,
+    "gp": 40,
+    "height_inches": 72,
+    "jersey_number": 19,
+    "last_name": "Skater",
+    "pim": 12,
+    "player_id": 6681,
+    "plus_minus": 8,
+    "points": 35,
+    "position": "C",
+    "pp_goals": 5,
+    "season_id": 73,
+    "season_type": "regular",
+    "sh_goals": 1,
+    "shoots": "L",
+    "shots": 110,
+    "team_id": 8,
+    "weight_lbs": 190,
+  },
+  "kvWrites": [
+    {
+      "key": "echl:player:landing:6681:73",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=eq.6681&select=*",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?player_id=eq.6681&season_id=eq.73&season_type=eq.regular&limit=1&select=*",
+    },
+  ],
+}
+`;
+
+exports[`echl > player/landing (unknown player) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > player/landing (unknown player) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "error": "Player not found",
+  },
+  "kvWrites": [],
+  "status": 404,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=eq.1&select=*",
+    },
+  ],
+}
+`;
+
+exports[`echl > player-game-log > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Not found",
+  },
+  "status": 404,
+}
+`;
+
+exports[`echl > player-game-log > missing required param 1`] = `
+{
+  "body": {
+    "error": "Not found",
+  },
+  "status": 404,
+  "upstream": [],
+}
+`;
+
+exports[`echl > player-game-log > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "error": "Not found",
+  },
+  "kvWrites": [],
+  "status": 404,
+  "upstream": [],
+}
+`;
+
+exports[`echl > player-shots > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > player-shots > missing required param 1`] = `
+{
+  "body": {
+    "error": "playerId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > player-shots > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "shots": [
+      {
+        "p": 1,
+        "t": "g",
+        "x": 80.5,
+        "y": -10.2,
+      },
+      {
+        "p": 2,
+        "t": "s",
+        "x": 60,
+        "y": -42,
+      },
+      {
+        "p": 2,
+        "t": "s",
+        "x": 70,
+        "y": 12,
+      },
+    ],
+    "total": 3,
+  },
+  "kvWrites": [
+    {
+      "key": "echl:pshots:6681:73",
+      "ttl": 21600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_shot_events?shooter_id=eq.6681&season_id=eq.73&select=event_type,period_id,time_seconds,x_norm,y_norm&limit=500",
+    },
+  ],
+}
+`;
+
+exports[`echl > players > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase error",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > players > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > players > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "birth_date": "1999-11-12",
+        "birth_place": "Oslo, NO",
+        "first_name": "Gus",
+        "gaa": 2.61,
+        "goals_against": 79,
+        "gp": 30,
+        "headshot": "https://assets.leaguestat.com/echl/120x160/7001.jpg",
+        "height_inches": 75,
+        "jersey_number": 30,
+        "last_name": "Keeper",
+        "losses": 9,
+        "ot_losses": 4,
+        "player_id": 7001,
+        "player_name": "Gus Keeper",
+        "position": "G",
+        "saves": 820,
+        "season_id": 73,
+        "season_type": "regular",
+        "shoots": "L",
+        "shutouts": 2,
+        "sv_pct": 0.912,
+        "team_id": 99,
+        "weight_lbs": 200,
+        "wins": 17,
+      },
+    ],
+    "roster": [
+      {
+        "birth_date": "2001-03-04",
+        "birth_place": "Toronto, ON",
+        "first_name": "Alex",
+        "headshot": "https://assets.leaguestat.com/echl/120x160/6681.jpg",
+        "height_inches": 72,
+        "jersey_number": 19,
+        "last_name": "Skater",
+        "player_id": 6681,
+        "position": "C",
+        "shoots": "L",
+        "team_id": 8,
+        "weight_lbs": 190,
+      },
+      {
+        "birth_date": "1999-11-12",
+        "birth_place": "Oslo, NO",
+        "first_name": "Gus",
+        "headshot": "https://assets.leaguestat.com/echl/120x160/7001.jpg",
+        "height_inches": 75,
+        "jersey_number": 30,
+        "last_name": "Keeper",
+        "player_id": 7001,
+        "position": "G",
+        "shoots": "L",
+        "team_id": 99,
+        "weight_lbs": 200,
+      },
+      {
+        "birth_date": "2002-06-07",
+        "birth_place": null,
+        "first_name": "Sam",
+        "headshot": "https://assets.leaguestat.com/echl/120x160/6682.jpg",
+        "height_inches": 70,
+        "jersey_number": null,
+        "last_name": "Winger",
+        "player_id": 6682,
+        "position": "LW",
+        "shoots": "R",
+        "team_id": 8,
+        "weight_lbs": 180,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 20,
+        "birth_date": "2001-03-04",
+        "birth_place": "Toronto, ON",
+        "first_name": "Alex",
+        "goals": 15,
+        "gp": 40,
+        "headshot": "https://assets.leaguestat.com/echl/120x160/6681.jpg",
+        "height_inches": 72,
+        "jersey_number": 19,
+        "last_name": "Skater",
+        "pim": 12,
+        "player_id": 6681,
+        "player_name": "Alex Skater",
+        "plus_minus": 8,
+        "points": 35,
+        "position": "C",
+        "pp_goals": 5,
+        "season_id": 73,
+        "season_type": "regular",
+        "sh_goals": 1,
+        "shoots": "L",
+        "shots": 110,
+        "team_id": 8,
+        "weight_lbs": 190,
+      },
+      {
+        "assists": 11,
+        "birth_date": "2002-06-07",
+        "birth_place": null,
+        "first_name": "Sam",
+        "goals": 9,
+        "gp": 38,
+        "headshot": "https://assets.leaguestat.com/echl/120x160/6682.jpg",
+        "height_inches": 70,
+        "jersey_number": null,
+        "last_name": "Winger",
+        "pim": 20,
+        "player_id": 6682,
+        "player_name": "Sam Winger",
+        "plus_minus": -3,
+        "points": 20,
+        "position": "LW",
+        "pp_goals": 2,
+        "season_id": 73,
+        "season_type": "regular",
+        "sh_goals": 0,
+        "shoots": "R",
+        "shots": 80,
+        "team_id": 8,
+        "weight_lbs": 180,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "echl:players:8:73",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?team_id=eq.8&season_id=eq.73&season_type=eq.regular&order=points.desc&limit=40",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goalie_seasons?team_id=eq.8&season_id=eq.73&season_type=eq.regular&order=gp.desc&limit=5",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?team_id=eq.8&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=80",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=1500",
+    },
+  ],
+}
+`;
+
+exports[`echl > poll > a game that is already final when polled is skipped (records current behavior: no game-over push) 1`] = `
+{
+  "kvWrites": [],
+  "pushes": [],
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_date=eq.2026-01-15&season_id=eq.73&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+  ],
+}
+`;
+
+exports[`echl > poll > live game: start, period, goal, hat-trick, power-play and pulled-goalie pushes; a second poll sends nothing new 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "echl:push:start:1028992",
+      "ttl": 86400,
+    },
+    {
+      "key": "echl:push:goal:1",
+      "ttl": 86400,
+    },
+    {
+      "key": "echl:push:pen:901",
+      "ttl": 86400,
+    },
+    {
+      "key": "echl:push:goal:2",
+      "ttl": 86400,
+    },
+    {
+      "key": "echl:push:goal:3",
+      "ttl": 86400,
+    },
+    {
+      "key": "echl:push:pull:1028992-18:00",
+      "ttl": 86400,
+    },
+    {
+      "key": "echl:push:state:1028992",
+      "ttl": 86400,
+    },
+  ],
+  "pushes": [
+    {
+      "body": "FLA vs TR — puck drop!",
+      "tag": "echl-start-1028992",
+      "title": "🏒 ECHL Game Starting!",
+      "to": "https://push.example/home",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "FLA vs TR — puck drop!",
+      "tag": "echl-start-1028992",
+      "title": "🏒 ECHL Game Starting!",
+      "to": "https://push.example/away",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "FLA vs TR — puck drop!",
+      "tag": "echl-start-1028992",
+      "title": "🏒 ECHL Game Starting!",
+      "to": "https://push.example/away-no-opp-goals",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "Alex Skater scores! (PP) Assists: Sam Winger",
+      "tag": "echl-goal-echl:push:goal:1",
+      "title": "🚨 GOAL! FLA 1–0 TR",
+      "to": "https://push.example/home",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "Alex Skater scores for FLA (PP)",
+      "tag": "echl-opp-goal-echl:push:goal:1",
+      "title": "FLA scores. TR 0–1 FLA",
+      "to": "https://push.example/away",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "TR — 2 min Hooking",
+      "tag": "echl-pp-echl:push:pen:901",
+      "title": "⚡ FLA Power Play!",
+      "to": "https://push.example/home",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "Alex Skater scores! (SH) Assists: Sam Winger",
+      "tag": "echl-goal-echl:push:goal:2",
+      "title": "🚨 GOAL! FLA 1–0 TR",
+      "to": "https://push.example/home",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "Alex Skater scores for FLA (SH)",
+      "tag": "echl-opp-goal-echl:push:goal:2",
+      "title": "FLA scores. TR 0–1 FLA",
+      "to": "https://push.example/away",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "Alex Skater scores! (EN) Assists: Sam Winger",
+      "tag": "echl-goal-echl:push:goal:3",
+      "title": "🚨 GOAL! FLA 1–0 TR",
+      "to": "https://push.example/home",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "Alex Skater scores for FLA (EN)",
+      "tag": "echl-opp-goal-echl:push:goal:3",
+      "title": "FLA scores. TR 0–1 FLA",
+      "to": "https://push.example/away",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "Alex Skater scores their 3rd goal of the game for FLA!",
+      "tag": "echl-hattrick-1028992-6681",
+      "title": "🎩 HAT TRICK! Alex Skater",
+      "to": "https://push.example/home",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "6-on-5 — empty net opportunity for FLA!",
+      "tag": "echl-pull-echl:push:pull:1028992-18:00",
+      "title": "🥅 TR pulled their goalie!",
+      "to": "https://push.example/home",
+      "url": "/echl/shots",
+    },
+  ],
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_date=eq.2026-01-15&season_id=eq.73&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+    {
+      "referer": "https://echl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=1028992&key=2c2b89ea7345cae8&client_code=echl&lang=en&league_id=",
+    },
+  ],
+}
+`;
+
+exports[`echl > poll > prunes subscriptions whose push endpoint has expired 1`] = `
+[
+  "https://push.example/home",
+  "https://push.example/away-no-opp-goals",
+  "https://push.example/nhl",
+]
+`;
+
+exports[`echl > prediction > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > prediction > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > prediction > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "awayAbbr": "TR",
+    "awayStreak": "L1",
+    "awayTeamId": 99,
+    "awayWinPct": 0,
+    "expAway": 2.6,
+    "expHome": 3.2,
+    "gameId": 1028992,
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "h2hRecord": "2-1",
+    "homeAbbr": "FLA",
+    "homeStreak": "W1",
+    "homeTeamId": 8,
+    "homeWinPct": 100,
+    "isPlayoff": false,
+    "narrative": "Fixture ECHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "echl:prediction:1028992",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_id=eq.1028992&select=game_id,season_id,home_team_id,away_team_id",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?team_id=in.(8,99)&season_id=eq.73&season_type=eq.regular",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+    },
+    {
+      "aiPrompt": "You are EyeWall Analytics, an ECHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. Shot-attempt/possession data is not available for ECHL -- do not reference Corsi, possession, or shot-attempt share.
+
+Game: FLA (HOME) vs TR (AWAY)
+Context: Regular Season
+
+FLA stats:
+- Record: 24-12-3-1 (52 pts)
+- GF/GA per game: 3.25 / 2.63
+- PP%: 21.0% · PK%: 83.0%
+- Current streak: W1
+
+TR stats:
+- Record: 18-17-4-1 (41 pts)
+- GF/GA per game: 2.80 / 2.95
+- PP%: 17.0% · PK%: 80.0%
+- Current streak: L1
+
+Head-to-head this season: FLA 2-1
+Expected score (Pythagorean): FLA 3.2 - TR 2.6
+Model win probability: FLA 100%
+
+Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`echl > preview > Supabase unavailable 1`] = `
+{
+  "body": {
+    "headToHeadRecords": [
+      {
+        "wins": 2,
+      },
+    ],
+    "homeTeam": {
+      "info": {
+        "id": "8",
+      },
+    },
+    "visitingTeam": {
+      "info": {
+        "id": "99",
+      },
+    },
+  },
+  "status": 200,
+}
+`;
+
+exports[`echl > preview > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > preview > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "headToHeadRecords": [
+      {
+        "wins": 2,
+      },
+    ],
+    "homeTeam": {
+      "info": {
+        "id": "8",
+      },
+    },
+    "visitingTeam": {
+      "info": {
+        "id": "99",
+      },
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "echl:gcpreview:1028992",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://echl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPreview&game_id=1028992&key=2c2b89ea7345cae8&client_code=echl&lang=en&league_id=",
+    },
+  ],
+}
+`;
+
+exports[`echl > roster > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > roster > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > roster > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "birth_date": "2001-03-04",
+      "birth_place": "Toronto, ON",
+      "first_name": "Alex",
+      "height_inches": 72,
+      "jersey_number": 19,
+      "last_name": "Skater",
+      "player_id": 6681,
+      "position": "C",
+      "shoots": "L",
+      "team_id": 8,
+      "weight_lbs": 190,
+    },
+    {
+      "birth_date": "2002-06-07",
+      "birth_place": null,
+      "first_name": "Sam",
+      "height_inches": 70,
+      "jersey_number": null,
+      "last_name": "Winger",
+      "player_id": 6682,
+      "position": "LW",
+      "shoots": "R",
+      "team_id": 8,
+      "weight_lbs": 180,
+    },
+    {
+      "birth_date": "1999-11-12",
+      "birth_place": "Oslo, NO",
+      "first_name": "Gus",
+      "height_inches": 75,
+      "jersey_number": 30,
+      "last_name": "Keeper",
+      "player_id": 7001,
+      "position": "G",
+      "shoots": "L",
+      "team_id": 99,
+      "weight_lbs": 200,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "echl:roster:8",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?team_id=eq.8&select=player_id,first_name,last_name,position,jersey_number&limit=60",
+    },
+  ],
+}
+`;
+
+exports[`echl > schedule > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > schedule > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > schedule > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "away_score": 2,
+      "away_team_id": 99,
+      "game_date": "2026-01-15",
+      "game_id": 1028992,
+      "game_state": "Final",
+      "game_status_code": 4,
+      "home_score": 4,
+      "home_team_id": 8,
+      "season_id": 73,
+    },
+    {
+      "away_score": 1,
+      "away_team_id": 8,
+      "game_date": "2026-01-10",
+      "game_id": 1028991,
+      "game_state": "Final",
+      "game_status_code": 4,
+      "home_score": 3,
+      "home_team_id": 99,
+      "season_id": 73,
+    },
+    {
+      "away_score": 3,
+      "away_team_id": 99,
+      "game_date": "2026-01-05",
+      "game_id": 1028990,
+      "game_state": "Final",
+      "game_status_code": 4,
+      "home_score": 5,
+      "home_team_id": 8,
+      "season_id": 73,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "echl:schedule:8:73",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&or=(home_team_id.eq.8,away_team_id.eq.8)&order=game_date.asc&limit=150",
+    },
+  ],
+}
+`;
+
+exports[`echl > shots > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > shots > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > shots > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "event_type": "goal",
+      "game_id": 1028992,
+      "period_id": 1,
+      "shooter_id": 6681,
+      "team_id": 8,
+      "time_seconds": 300,
+      "x_norm": 80.5,
+      "y_norm": -10.2,
+    },
+    {
+      "event_type": "shot",
+      "game_id": 1028992,
+      "period_id": 2,
+      "shooter_id": 6681,
+      "team_id": 8,
+      "time_seconds": 900,
+      "x_norm": -60,
+      "y_norm": 50,
+    },
+    {
+      "event_type": "shot",
+      "game_id": 1028992,
+      "period_id": 2,
+      "shooter_id": 7001,
+      "team_id": 99,
+      "time_seconds": 1000,
+      "x_norm": 70,
+      "y_norm": 12,
+    },
+    {
+      "event_type": "blocked_shot",
+      "game_id": 1028991,
+      "period_id": 3,
+      "shooter_id": 6682,
+      "team_id": 8,
+      "time_seconds": 100,
+      "x_norm": "n/a",
+      "y_norm": 0,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "echl:shots:8:73",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_shot_events?team_id=eq.8&season_id=eq.73&order=game_id.asc",
+    },
+  ],
+}
+`;
+
+exports[`echl > standings (default season) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > standings (default season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "goals_against": 105,
+      "goals_for": 130,
+      "gp": 40,
+      "l10L": 1,
+      "l10W": 2,
+      "losses": 12,
+      "ot_losses": 3,
+      "pk_pct": 0.83,
+      "points": 52,
+      "pp_pct": 0.21,
+      "season_id": 73,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "streakCount": 1,
+      "streakType": "W",
+      "team_id": 8,
+      "wins": 24,
+    },
+    {
+      "goals_against": 118,
+      "goals_for": 112,
+      "gp": 40,
+      "l10L": 2,
+      "l10W": 1,
+      "losses": 17,
+      "ot_losses": 4,
+      "pk_pct": 0.8,
+      "points": 41,
+      "pp_pct": 0.17,
+      "season_id": 73,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "streakCount": 1,
+      "streakType": "L",
+      "team_id": 99,
+      "wins": 18,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "echl:standings:73",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?season_id=eq.73&season_type=eq.regular&order=points.desc&limit=32",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+    },
+  ],
+}
+`;
+
+exports[`echl > standings (playoff season) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > standings (playoff season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "goals_against": 105,
+      "goals_for": 130,
+      "gp": 40,
+      "l10L": 1,
+      "l10W": 2,
+      "losses": 12,
+      "ot_losses": 3,
+      "pk_pct": 0.83,
+      "points": 52,
+      "pp_pct": 0.21,
+      "season_id": 73,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "streakCount": 1,
+      "streakType": "W",
+      "team_id": 8,
+      "wins": 24,
+    },
+    {
+      "goals_against": 118,
+      "goals_for": 112,
+      "gp": 40,
+      "l10L": 2,
+      "l10W": 1,
+      "losses": 17,
+      "ot_losses": 4,
+      "pk_pct": 0.8,
+      "points": 41,
+      "pp_pct": 0.17,
+      "season_id": 73,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "streakCount": 1,
+      "streakType": "L",
+      "team_id": 99,
+      "wins": 18,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "echl:standings:76",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?season_id=eq.76&season_type=eq.playoffs&order=points.desc&limit=32",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.76&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+    },
+  ],
+}
+`;
+
+exports[`echl > standings > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > standings > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "goals_against": 105,
+      "goals_for": 130,
+      "gp": 40,
+      "l10L": 1,
+      "l10W": 2,
+      "losses": 12,
+      "ot_losses": 3,
+      "pk_pct": 0.83,
+      "points": 52,
+      "pp_pct": 0.21,
+      "season_id": 73,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "streakCount": 1,
+      "streakType": "W",
+      "team_id": 8,
+      "wins": 24,
+    },
+    {
+      "goals_against": 118,
+      "goals_for": 112,
+      "gp": 40,
+      "l10L": 2,
+      "l10W": 1,
+      "losses": 17,
+      "ot_losses": 4,
+      "pk_pct": 0.8,
+      "points": 41,
+      "pp_pct": 0.17,
+      "season_id": 73,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "streakCount": 1,
+      "streakType": "L",
+      "team_id": 99,
+      "wins": 18,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "echl:standings:73",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?season_id=eq.73&season_type=eq.regular&order=points.desc&limit=32",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+    },
+  ],
+}
+`;
+
+exports[`echl > summary > Supabase unavailable 1`] = `
+{
+  "body": {
+    "coaches": {
+      "away": null,
+      "home": {
+        "firstName": "Head",
+        "lastName": "Home",
+      },
+    },
+    "homeTeamStats": {
+      "goals": 4,
+      "powerPlayGoals": 1,
+      "shots": 34,
+    },
+    "mvps": [
+      {
+        "homeTeam": true,
+        "isGoalie": false,
+        "player": {
+          "info": {
+            "firstName": "Alex",
+            "id": 6681,
+            "jerseyNumber": "19",
+            "lastName": "Skater",
+            "playerImageURL": "https://assets.leaguestat.com/x/120x160/6681.jpg",
+            "position": "C",
+          },
+          "stats": {
+            "goals": 2,
+          },
+        },
+        "playerImage": "https://assets.leaguestat.com/x/240x240/6681.jpg",
+        "team": {
+          "abbreviation": "HOME",
+          "id": 8,
+          "name": "Home Club",
+        },
+      },
+      {
+        "homeTeam": false,
+        "isGoalie": true,
+        "player": {
+          "info": {
+            "firstName": "Gus",
+            "id": 7001,
+            "jerseyNumber": "30",
+            "lastName": "Keeper",
+            "playerImageURL": null,
+            "position": "G",
+          },
+          "stats": {
+            "saves": 30,
+          },
+        },
+        "playerImage": "https://img.example/g.jpg",
+        "team": {
+          "abbreviation": "AWY",
+          "id": 99,
+          "name": "Away Club",
+        },
+      },
+    ],
+    "officials": {
+      "linesmen": [
+        {
+          "firstName": "Line",
+          "jerseyNumber": null,
+          "lastName": "Two",
+        },
+      ],
+      "referees": [
+        {
+          "firstName": "Ref",
+          "jerseyNumber": 12,
+          "lastName": "One",
+        },
+      ],
+    },
+    "periods": [
+      {
+        "goals": [
+          {
+            "assists": [
+              {
+                "firstName": "Sam",
+                "id": 6682,
+                "lastName": "Winger",
+              },
+            ],
+            "game_goal_id": "555",
+            "properties": {
+              "isEmptyNet": "0",
+              "isGameWinningGoal": "0",
+              "isPenaltyShot": "0",
+              "isPowerPlay": "1",
+              "isShortHanded": "0",
+            },
+            "scoredBy": {
+              "firstName": "Alex",
+              "id": 6681,
+              "lastName": "Skater",
+              "playerImageURL": "https://assets.leaguestat.com/x/120x160/6681.jpg",
+            },
+            "team": {
+              "abbreviation": "HOME",
+              "id": 8,
+            },
+            "time": "5:00",
+          },
+        ],
+        "info": {
+          "id": 1,
+          "longName": "1st Period",
+          "shortName": "1st",
+        },
+        "stats": {
+          "homeGoals": 2,
+          "homeShots": 12,
+          "visitingGoals": 1,
+          "visitingShots": 9,
+        },
+      },
+      {
+        "goals": [],
+        "info": {
+          "id": 1,
+          "longName": "",
+          "shortName": "",
+        },
+        "stats": {
+          "homeGoals": 0,
+          "homeShots": 0,
+          "visitingGoals": 0,
+          "visitingShots": 0,
+        },
+      },
+    ],
+    "venue": "Fixture Arena",
+    "visitingTeamStats": {
+      "goals": 2,
+      "shots": 28,
+    },
+  },
+  "status": 200,
+}
+`;
+
+exports[`echl > summary > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > summary > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "coaches": {
+      "away": null,
+      "home": {
+        "firstName": "Head",
+        "lastName": "Home",
+      },
+    },
+    "homeTeamStats": {
+      "goals": 4,
+      "powerPlayGoals": 1,
+      "shots": 34,
+    },
+    "mvps": [
+      {
+        "homeTeam": true,
+        "isGoalie": false,
+        "player": {
+          "info": {
+            "firstName": "Alex",
+            "id": 6681,
+            "jerseyNumber": "19",
+            "lastName": "Skater",
+            "playerImageURL": "https://assets.leaguestat.com/x/120x160/6681.jpg",
+            "position": "C",
+          },
+          "stats": {
+            "goals": 2,
+          },
+        },
+        "playerImage": "https://assets.leaguestat.com/x/240x240/6681.jpg",
+        "team": {
+          "abbreviation": "HOME",
+          "id": 8,
+          "name": "Home Club",
+        },
+      },
+      {
+        "homeTeam": false,
+        "isGoalie": true,
+        "player": {
+          "info": {
+            "firstName": "Gus",
+            "id": 7001,
+            "jerseyNumber": "30",
+            "lastName": "Keeper",
+            "playerImageURL": null,
+            "position": "G",
+          },
+          "stats": {
+            "saves": 30,
+          },
+        },
+        "playerImage": "https://img.example/g.jpg",
+        "team": {
+          "abbreviation": "AWY",
+          "id": 99,
+          "name": "Away Club",
+        },
+      },
+    ],
+    "officials": {
+      "linesmen": [
+        {
+          "firstName": "Line",
+          "jerseyNumber": null,
+          "lastName": "Two",
+        },
+      ],
+      "referees": [
+        {
+          "firstName": "Ref",
+          "jerseyNumber": 12,
+          "lastName": "One",
+        },
+      ],
+    },
+    "periods": [
+      {
+        "goals": [
+          {
+            "assists": [
+              {
+                "firstName": "Sam",
+                "id": 6682,
+                "lastName": "Winger",
+              },
+            ],
+            "game_goal_id": "555",
+            "properties": {
+              "isEmptyNet": "0",
+              "isGameWinningGoal": "0",
+              "isPenaltyShot": "0",
+              "isPowerPlay": "1",
+              "isShortHanded": "0",
+            },
+            "scoredBy": {
+              "firstName": "Alex",
+              "id": 6681,
+              "lastName": "Skater",
+              "playerImageURL": "https://assets.leaguestat.com/x/120x160/6681.jpg",
+            },
+            "team": {
+              "abbreviation": "HOME",
+              "id": 8,
+            },
+            "time": "5:00",
+          },
+        ],
+        "info": {
+          "id": 1,
+          "longName": "1st Period",
+          "shortName": "1st",
+        },
+        "stats": {
+          "homeGoals": 2,
+          "homeShots": 12,
+          "visitingGoals": 1,
+          "visitingShots": 9,
+        },
+      },
+      {
+        "goals": [],
+        "info": {
+          "id": 1,
+          "longName": "",
+          "shortName": "",
+        },
+        "stats": {
+          "homeGoals": 0,
+          "homeShots": 0,
+          "visitingGoals": 0,
+          "visitingShots": 0,
+        },
+      },
+    ],
+    "venue": "Fixture Arena",
+    "visitingTeamStats": {
+      "goals": 2,
+      "shots": 28,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "echl:gamesummary:1028992",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://echl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=1028992&key=2c2b89ea7345cae8&client_code=echl&lang=en&league_id=",
+    },
+  ],
+}
+`;
+
+exports[`echl > team code map 1`] = `
+{
+  "10": "ATL",
+  "102": "SAV",
+  "106": "TAH",
+  "107": "BLM",
+  "108": "GSO",
+  "11": "IDH",
+  "113": "TRE",
+  "114": "NM",
+  "17": "REA",
+  "18": "SC",
+  "21": "TOL",
+  "25": "WHL",
+  "5": "CIN",
+  "50": "KAL",
+  "52": "GVL",
+  "60": "FW",
+  "61": "ORL",
+  "65": "IND",
+  "66": "ALN",
+  "68": "KC",
+  "70": "RC",
+  "71": "TUL",
+  "72": "WIC",
+  "74": "ADK",
+  "76": "NOR",
+  "77": "WOR",
+  "79": "JAX",
+  "8": "FLA",
+  "82": "MNE",
+  "99": "TR",
+}
+`;
+
+exports[`echl > team-season-summary > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > team-season-summary > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > team-season-summary > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "gamesPlayed": 3,
+    "pkPct": 0.83,
+    "ppPct": 0.21,
+    "season": 73,
+    "sog": {
+      "car": 2,
+      "opp": 1,
+    },
+    "teamId": 8,
+  },
+  "kvWrites": [
+    {
+      "key": "echl:team-season-summary:8:73",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&or=(home_team_id.eq.8,away_team_id.eq.8)&select=game_id",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?team_id=eq.8&season_id=eq.73&season_type=eq.regular&select=pp_pct,pk_pct",
+    },
+    {
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_shot_events?game_id=in.(1028992,1028991,1028990)&select=team_id,event_type",
+    },
+  ],
+}
+`;
+
+exports[`echl > team-seasons/compare > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > team-seasons/compare > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId and seasons (comma-separated) are required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > team-seasons/compare > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "goals_against": 105,
+      "goals_for": 130,
+      "gp": 40,
+      "losses": 12,
+      "ot_losses": 3,
+      "pk_pct": 0.83,
+      "points": 52,
+      "pp_pct": 0.21,
+      "season_id": 73,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "team_id": 8,
+      "wins": 24,
+    },
+    {
+      "goals_against": 118,
+      "goals_for": 112,
+      "gp": 40,
+      "losses": 17,
+      "ot_losses": 4,
+      "pk_pct": 0.8,
+      "points": 41,
+      "pp_pct": 0.17,
+      "season_id": 73,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "team_id": 99,
+      "wins": 18,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "echl:team-seasons:compare:8:73,76",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?team_id=eq.8&season_id=in.(73,76)&select=season_id,season_type,gp,wins,losses,ot_losses,shootout_losses,points,goals_for,goals_against,pp_pct,pk_pct",
+    },
+  ],
+}
+`;
+
+exports[`echl > team-seasons/compare-teams > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > team-seasons/compare-teams > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamIds (exactly two, comma-separated) and season are required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > team-seasons/compare-teams > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "goals_against": 105,
+      "goals_for": 130,
+      "gp": 40,
+      "losses": 12,
+      "ot_losses": 3,
+      "pk_pct": 0.83,
+      "points": 52,
+      "pp_pct": 0.21,
+      "season_id": 73,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "team_id": 8,
+      "wins": 24,
+    },
+    {
+      "goals_against": 118,
+      "goals_for": 112,
+      "gp": 40,
+      "losses": 17,
+      "ot_losses": 4,
+      "pk_pct": 0.8,
+      "points": 41,
+      "pp_pct": 0.17,
+      "season_id": 73,
+      "season_type": "regular",
+      "shootout_losses": 1,
+      "team_id": 99,
+      "wins": 18,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "echl:team-seasons:compare-teams:8,99:73",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?team_id=in.(8,99)&season_id=eq.73&select=team_id,season_id,season_type,gp,wins,losses,ot_losses,shootout_losses,points,goals_for,goals_against,pp_pct,pk_pct",
+    },
+  ],
+}
+`;
+
+exports[`echl > team-seasons/head-to-head > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > team-seasons/head-to-head > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamIds (exactly two, comma-separated) are required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`echl > team-seasons/head-to-head > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "allTimeRecord": {
+      "teamAWins": 2,
+      "teamBWins": 1,
+    },
+    "currentStreak": {
+      "count": 1,
+      "holder": "A",
+    },
+    "games": [
+      {
+        "gameDate": "2026-01-15",
+        "gameId": 1028992,
+        "homeTeam": 8,
+        "season": 73,
+        "teamAScore": 4,
+        "teamAWon": true,
+        "teamBScore": 2,
+      },
+      {
+        "gameDate": "2026-01-10",
+        "gameId": 1028991,
+        "homeTeam": 99,
+        "season": 73,
+        "teamAScore": 1,
+        "teamAWon": false,
+        "teamBScore": 3,
+      },
+      {
+        "gameDate": "2026-01-05",
+        "gameId": 1028990,
+        "homeTeam": 8,
+        "season": 73,
+        "teamAScore": 5,
+        "teamAWon": true,
+        "teamBScore": 3,
+      },
+    ],
+    "isThinSample": true,
+    "recentWindow": {
+      "size": 3,
+      "teamAWins": 2,
+      "teamBWins": 1,
+    },
+    "teamA": 8,
+    "teamB": 99,
+    "totalMeetings": 3,
+  },
+  "kvWrites": [
+    {
+      "key": "echl:team-seasons:head-to-head:8,99",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_state=eq.Final&or=(and(home_team_id.eq.8,away_team_id.eq.99),and(home_team_id.eq.99,away_team_id.eq.8))&select=game_id,season_id,game_date,home_team_id,away_team_id,home_score,away_score&order=season_id.asc,game_id.asc",
+    },
+  ],
+}
+`;
+
+exports[`echl > team-seasons/head-to-head/narrative > Supabase unavailable 1`] = `
+{
+  "body": {
+    "narrative": "Fixture ECHL narrative.",
+  },
+  "status": 200,
+}
+`;
+
+exports[`echl > team-seasons/head-to-head/narrative > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "narrative": "Fixture ECHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "echl:h2h-narrative:8,99",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "aiPrompt": "You are Sticks, EyeWall's hockey analyst. Write a punchy 2-3 sentence head-to-head summary for Home Club vs Away Club.
+
+All-time record (since 2025-26): Home Club 2-1 Away Club, across 3 meetings.
+Last 3: Home Club 2-1 Away Club.
+Current streak: Home Club has won 1 straight.
+
+IMPORTANT: Only 3 meetings exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.
+Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.",
+      "maxTokens": 100,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`echl > today > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > today > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "awayScore": 2,
+      "awayTeamCode": "TR",
+      "awayTeamId": 99,
+      "gameId": 1028992,
+      "homeScore": 4,
+      "homeTeamCode": "FLA",
+      "homeTeamId": 8,
+      "status": "final",
+    },
+    {
+      "awayScore": 1,
+      "awayTeamCode": "FLA",
+      "awayTeamId": 8,
+      "gameId": 1028991,
+      "homeScore": 3,
+      "homeTeamCode": "TR",
+      "homeTeamId": 99,
+      "status": "final",
+    },
+    {
+      "awayScore": 3,
+      "awayTeamCode": "TR",
+      "awayTeamId": 99,
+      "gameId": 1028990,
+      "homeScore": 5,
+      "homeTeamCode": "FLA",
+      "homeTeamId": 8,
+      "status": "final",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "echl:today:73",
+      "ttl": 60,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_date=eq.2026-01-15&season_id=eq.73&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&limit=10",
+    },
+  ],
+}
+`;
+
+exports[`echl > unknown route > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Not found",
+  },
+  "status": 404,
+}
+`;
+
+exports[`echl > unknown route > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "error": "Not found",
+  },
+  "kvWrites": [],
+  "status": 404,
+  "upstream": [],
+}
+`;
