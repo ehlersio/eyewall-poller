@@ -442,6 +442,20 @@ describe.each(ROUTES)('$name', (R) => {
   }
 })
 
+// The route table's "NHL API and AI unavailable" case stops /prediction/analyze
+// at "game not found" (no schedule) before it ever calls the AI -- this one
+// takes only the AI down, so the route gets that far.
+describe('AI unavailable on its own', () => {
+  it.each([
+    ['prediction/analyze (in season)', STANDINGS_NOW],
+    ['prediction/analyze (preseason fallback)', STANDINGS_LAST_SEASON],
+  ])('%s', async (_name, standings) => {
+    installUpstream({ failHosts: ['openrouter'] })
+    const { env, kvWrites } = makeRecordingEnv({ standings })
+    expect({ ...(await callRoute(env, `/prediction/analyze?gameId=${GAME_ID}&team=CAR`)), kvWrites }).toMatchSnapshot()
+  })
+})
+
 describe('background fetches', () => {
   it('GET /news with a cold cache returns [] and fetches the team\'s sources in the background', async () => {
     installUpstream()

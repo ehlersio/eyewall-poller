@@ -240,11 +240,16 @@ function eloWinProb(carRating, oppRating, isHome, neutral = false) {
 async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey, neutral = false) {
   const prior = priorSeason(tc.season);
 
-  const [teamSeasonRows, eloRatings] = await Promise.all([
-    sbRowsOrThrow(`team_seasons?team=in.(${tc.abbr},${oppAbbr})&season=eq.${prior}&game_type=eq.2` +
-      `&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,corsi_for_pct,corsi_for_pct_5v5`),
-    fetchEloRatings(tc, oppAbbr),
-  ]);
+  let teamSeasonRows, eloRatings;
+  try {
+    [teamSeasonRows, eloRatings] = await Promise.all([
+      sbRowsOrThrow(`team_seasons?team=in.(${tc.abbr},${oppAbbr})&season=eq.${prior}&game_type=eq.2` +
+        `&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,corsi_for_pct,corsi_for_pct_5v5`),
+      fetchEloRatings(tc, oppAbbr),
+    ]);
+  } catch (e) {
+    return errorJson(502, { error: e.message });
+  }
 
   const carRow = teamSeasonRows.find(r => r.team === tc.abbr);
   const oppRow = teamSeasonRows.find(r => r.team === oppAbbr);
@@ -302,9 +307,15 @@ Model win probability (Elo): ${tc.abbr} ${carWinPct}%
 
 Write the analysis now. Mention the single most decisive factor from last season and a concrete expected-score range.`;
 
-  const aiResponse = await generateText(env, {
-    messages: [{ role: 'user', content: prompt }],
-  });
+  let aiResponse;
+  try {
+    aiResponse = await generateText(env, {
+      messages: [{ role: 'user', content: prompt }],
+    });
+  } catch (e) {
+    console.error('buildPreseasonFallback AI error:', e);
+    return errorJson(502, { error: 'AI generation failed' });
+  }
   const narrative = aiResponse.response?.trim() || '';
   if (!narrative) return json({ error: 'Empty response' });
 
@@ -1751,7 +1762,12 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/nhl/today' && request.method === 'GET') {
     // 60s TTL — matches poll()'s live cadence
     return cachedJson(env, 'nhl:today', 60, async () => {
-      const scoreboard  = await nhlGet(`${NHL_BASE}/score/now`);
+      let scoreboard;
+      try {
+        scoreboard = await nhlGet(`${NHL_BASE}/score/now`);
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
       const todaysGames = scoreboard?.games || [];
       const games = todaysGames.map(g => ({
         gameId:       g.id,
@@ -3083,7 +3099,12 @@ Only reference the two teams named above and the numbers given -- no player name
     // 0.321, log loss 0.677 vs 2.561, 56.5% vs 55.5% accuracy, 3,796 real
     // games). Same fetchEloRatings()/eloWinProb() helpers buildPreseasonFallback
     // uses above -- one consistent model for both regimes now.
-    const eloRatings = await fetchEloRatings(tc, oppAbbr);
+    let eloRatings;
+    try {
+      eloRatings = await fetchEloRatings(tc, oppAbbr);
+    } catch (e) {
+      return errorJson(502, { error: e.message });
+    }
     const carWinPct = Math.round(eloWinProb(eloRatings.car, eloRatings.opp, isHome, neutral) * 100);
 
     const prompt = `You are EyeWall Analytics, a ${tc.displayName} hockey analytics assistant. Write a sharp, data-driven pre-game analysis for ${tc.displayName} fans. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener.
@@ -3115,9 +3136,15 @@ ${corsiSource === 'sog_share_proxy' ? 'Note: the Corsi figure above is a shots-o
 
 Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.`;
 
-    const aiResponse = await generateText(env, {
-      messages: [{ role: 'user', content: prompt }],
-    });
+    let aiResponse;
+    try {
+      aiResponse = await generateText(env, {
+        messages: [{ role: 'user', content: prompt }],
+      });
+    } catch (e) {
+      console.error('prediction/analyze AI error:', e);
+      return errorJson(502, { error: 'AI generation failed' });
+    }
     const narrative = aiResponse.response?.trim() || '';
     if (!narrative) return json({ error: 'Empty response' });
 
@@ -3254,16 +3281,22 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
         )
       : null;
 
-    const [aiResponse, cardResponse] = await Promise.all([
-      generateText(env, {
-        messages: [{ role: 'user', content: prompt }],
-      }),
-      cardPrompt
-        ? generateText(env, {
-            messages: [{ role: 'user', content: cardPrompt }],
-          })
-        : Promise.resolve(null),
-    ]);
+    let aiResponse, cardResponse;
+    try {
+      [aiResponse, cardResponse] = await Promise.all([
+        generateText(env, {
+          messages: [{ role: 'user', content: prompt }],
+        }),
+        cardPrompt
+          ? generateText(env, {
+              messages: [{ role: 'user', content: cardPrompt }],
+            })
+          : Promise.resolve(null),
+      ]);
+    } catch (e) {
+      console.error('[NHL] narrative AI error:', e);
+      return errorJson(502, { error: 'AI generation failed' });
+    }
 
     const narrative     = aiResponse.response?.trim() || '';
     const cardNarrative = cardResponse?.response?.trim() || null;
@@ -3650,15 +3683,21 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       return new Response(`Bad request: ${e.message}`, { status: 400 });
     }
 
-    const aiResponse = await generateText(env, {
-      messages: [
-        {
-          role: 'system',
-          content: `You are Sticks, the EyeWall Analytics draft analyst. You give sharp, specific 2-3 sentence pick analyses. Focus on value relative to rank, team fit, and player type. No filler. No "This is a great pick" openers. Be direct.`,
-        },
-        { role: 'user', content: body.prompt },
-      ],
-    });
+    let aiResponse;
+    try {
+      aiResponse = await generateText(env, {
+        messages: [
+          {
+            role: 'system',
+            content: `You are Sticks, the EyeWall Analytics draft analyst. You give sharp, specific 2-3 sentence pick analyses. Focus on value relative to rank, team fit, and player type. No filler. No "This is a great pick" openers. Be direct.`,
+          },
+          { role: 'user', content: body.prompt },
+        ],
+      });
+    } catch (e) {
+      console.error('Draft analyze AI error:', e);
+      return errorJson(502, { error: 'AI generation failed' });
+    }
 
     const analysis = aiResponse.response?.trim() || '';
     if (!analysis) return errorJson(502, { error: 'Empty AI response' });
