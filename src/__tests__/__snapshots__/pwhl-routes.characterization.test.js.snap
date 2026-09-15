@@ -679,8 +679,11 @@ exports[`league-players > HockeyTech and AI unavailable 1`] = `
 
 exports[`league-players > Supabase unavailable 1`] = `
 {
+  "body": {
+    "error": "Supabase error",
+  },
   "kvWrites": [],
-  "threw": "skaters.map is not a function",
+  "status": 502,
 }
 `;
 

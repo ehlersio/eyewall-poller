@@ -1491,11 +1491,11 @@ Only reference the two teams named above and the numbers given -- no player name
   if (url.pathname === '/pwhl/league-players') {
     const season = await seasonParam(url, env);
     return cachedJson(env, `pwhl:leagueplayers:${season}`, 3600 * 2, async () => {
-      const [skatersRes, goaliesRes] = await Promise.all([
-        fetch(`${SB_URL}/rest/v1/pwhl_player_seasons?season_id=eq.${season}&season_type=eq.regular&select=player_id,team_id,goals,assists,points,gp,shots,shot_pct,pp_goals,sh_goals,gw_goals,pim,plus_minus&order=points.desc&limit=300`, { headers: sbHeaders() }),
-        fetch(`${SB_URL}/rest/v1/pwhl_goalie_seasons?season_id=eq.${season}&season_type=eq.regular&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against&order=sv_pct.desc&limit=50`, { headers: sbHeaders() }),
+      const [skaters, goalies] = await Promise.all([
+        sbRows(`${SB_URL}/rest/v1/pwhl_player_seasons?season_id=eq.${season}&season_type=eq.regular&select=player_id,team_id,goals,assists,points,gp,shots,shot_pct,pp_goals,sh_goals,gw_goals,pim,plus_minus&order=points.desc&limit=300`),
+        sbRows(`${SB_URL}/rest/v1/pwhl_goalie_seasons?season_id=eq.${season}&season_type=eq.regular&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against&order=sv_pct.desc&limit=50`),
       ]);
-      const [skaters, goalies] = await Promise.all([skatersRes.json(), goaliesRes.json()]);
+      if (skaters instanceof Response || goalies instanceof Response) return sbError();
 
       // Fetch all player names
       const nameRows = await sbRowsOr(`${SB_URL}/rest/v1/pwhl_players?select=player_id,first_name,last_name,position,team_id&limit=500`, []);
