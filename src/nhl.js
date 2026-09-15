@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, corsHeaders, badRequest, SB_URL, SB_ANON, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth } from './shared.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { fetchTradeTree } from './trades.js';
@@ -154,12 +154,12 @@ async function scheduleWithFetch(env, abbr, season) {
 }
 
 // Server-side Supabase REST read, for the /player-analytics etc. proxy
-// routes below — same shape as supabaseClient.js's own sbFetch(), just
-// running here instead of in the browser.
-async function sbRows(path) {
-  const r = await fetch(`${SB_URL}/rest/v1/${path}`, {
-    headers: { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` },
-  });
+// routes below. Takes a table path and throws on failure (the message names
+// the status and path, and several routes pass it through in their 502) --
+// unlike shared.js's sbRows(), which takes a full URL and returns the 502
+// Response instead.
+async function sbRowsOrThrow(path) {
+  const r = await fetch(`${SB_URL}/rest/v1/${path}`, { headers: sbHeaders() });
   if (!r.ok) throw new Error(`Supabase ${r.status}: ${path}`);
   return r.json();
 }
@@ -205,7 +205,7 @@ function priorSeason(season) {
 const ELO_HOME_ADVANTAGE = 35; // FiveThirtyEight's published NHL value; matches eyewall-pipeline/elo.py exactly
 
 async function fetchEloRatings(tc, oppAbbr) {
-  const rows = await sbRows(`team_elo_ratings?team=in.(${tc.abbr},${oppAbbr})&select=team,rating`);
+  const rows = await sbRowsOrThrow(`team_elo_ratings?team=in.(${tc.abbr},${oppAbbr})&select=team,rating`);
   // 1500 (Elo's neutral starting rating) for a team with no row yet -- same
   // graceful default elo_ratings.py itself uses for a team's first-ever
   // appearance (true expansion, or the table simply hasn't been populated
@@ -241,7 +241,7 @@ async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameI
   const prior = priorSeason(tc.season);
 
   const [teamSeasonRows, eloRatings] = await Promise.all([
-    sbRows(`team_seasons?team=in.(${tc.abbr},${oppAbbr})&season=eq.${prior}&game_type=eq.2` +
+    sbRowsOrThrow(`team_seasons?team=in.(${tc.abbr},${oppAbbr})&season=eq.${prior}&game_type=eq.2` +
       `&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,corsi_for_pct,corsi_for_pct_5v5`),
     fetchEloRatings(tc, oppAbbr),
   ]);
@@ -1620,12 +1620,7 @@ export async function refreshPPUnits(env, { force = false } = {}) {
   const r = await fetch(
     `${SB_URL}/rest/v1/special_teams_units` +
     `?season=eq.${season}&select=team,unit_type,unit_number,player_ids&limit=256`,
-    {
-      headers: {
-        'apikey':        SB_ANON,
-        'Authorization': `Bearer ${SB_ANON}`,
-      },
-    }
+    { headers: sbHeaders() }
   );
   if (!r.ok) throw new Error(`Supabase ${r.status}`);
   const rows = await r.json();
@@ -1647,7 +1642,7 @@ export async function handleNHL(request, env, ctx, url) {
   // Manual news refresh (protected)
   if (url.pathname === '/news/refresh') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    if (secret !== env.POLL_SECRET) return unauthorized();
     const tc    = await getTeamConfig(request, env);
     const items = await fetchNews(env, tc.abbr);
     return json({ ok: true, count: items.length, team: tc.abbr });
@@ -1737,18 +1732,14 @@ export async function handleNHL(request, env, ctx, url) {
   // had this KV-first protection; getRoster() was the one gap.
   if (url.pathname === '/roster' && request.method === 'GET') {
     const tc = await getTeamConfig(request, env);
-    const kvKey = rosterKey(tc.abbr);
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
-
-    try {
-      const data = await nhlGet(`${NHL_BASE}/roster/${tc.abbr}/current`);
-      await kvPut(env, kvKey, data, ROSTER_TTL);
-      return json(data);
-    } catch (e) {
-      console.warn(`Roster fetch ${tc.abbr}: ${e.message}`);
-      return json({ forwards: [], defensemen: [], goalies: [] });
-    }
+    return cachedJson(env, rosterKey(tc.abbr), ROSTER_TTL, async () => {
+      try {
+        return await nhlGet(`${NHL_BASE}/roster/${tc.abbr}/current`);
+      } catch (e) {
+        console.warn(`Roster fetch ${tc.abbr}: ${e.message}`);
+        return json({ forwards: [], defensemen: [], goalies: [] }); // not cached
+      }
+    });
   }
 
   // GET /nhl/today
@@ -1758,23 +1749,21 @@ export async function handleNHL(request, env, ctx, url) {
   // step 2 above) instead of a Supabase game_log table — the NHL API
   // already returns real team abbrevs and scores, no team-code map needed.
   if (url.pathname === '/nhl/today' && request.method === 'GET') {
-    const kvKey  = 'nhl:today';
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    // 60s TTL — matches poll()'s live cadence
+    return cachedJson(env, 'nhl:today', 60, async () => {
+      const scoreboard  = await nhlGet(`${NHL_BASE}/score/now`);
+      const todaysGames = scoreboard?.games || [];
+      const games = todaysGames.map(g => ({
+        gameId:       g.id,
+        homeTeamCode: g.homeTeam?.abbrev,
+        awayTeamCode: g.awayTeam?.abbrev,
+        homeScore:    g.homeTeam?.score,
+        awayScore:    g.awayTeam?.score,
+        status:       isCompleted(g) ? 'final' : (g.gameState === 'LIVE' || g.gameState === 'CRIT') ? 'live' : 'pre',
+      }));
 
-    const scoreboard  = await nhlGet(`${NHL_BASE}/score/now`);
-    const todaysGames = scoreboard?.games || [];
-    const games = todaysGames.map(g => ({
-      gameId:       g.id,
-      homeTeamCode: g.homeTeam?.abbrev,
-      awayTeamCode: g.awayTeam?.abbrev,
-      homeScore:    g.homeTeam?.score,
-      awayScore:    g.awayTeam?.score,
-      status:       isCompleted(g) ? 'final' : (g.gameState === 'LIVE' || g.gameState === 'CRIT') ? 'live' : 'pre',
-    }));
-
-    await kvPut(env, kvKey, games, 60); // 60s TTL — matches poll()'s live cadence
-    return json(games);
+      return games;
+    });
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -1789,126 +1778,120 @@ export async function handleNHL(request, env, ctx, url) {
 
   if (url.pathname === '/player-analytics') {
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const kvKey  = `nhl:player-analytics:${season}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:player-analytics:${season}`, 3600, async () => {
+      const ANA_COLS = 'player_id,team,war,ev_off_pct,ev_def_inv,pp_xgf60,pk_xga60_inv,pp_icetime,pk_icetime,' +
+        'finishing,goals_per60,a1_per60,xgf_per60,penalties_per60,competition,teammates,game_score,' +
+        'pct_ev_off,pct_ev_def,pct_pp,pct_pk,pct_finishing,pct_goals,pct_a1,' +
+        'pct_penalties,pct_competition,pct_teammates,games_played,' +
+        'xga_per60,hdca_per60,hits,blocked_shots,takeaways,giveaways,' +
+        // Session 56 -- both null below eyewall-pipeline's moneypuck.py
+        // RESULTS_VS_PROCESS_MIN_GP (25 GP) guardrail; the frontend should
+        // treat "null" as "not enough games yet," not re-derive a GP number.
+        'on_ice_gf_pct,results_vs_process_diff,' +
+        // PLAYER_CARD_PERCENTILE_DISPLAY_BRIEF -- 11 new PR #56 league-wide
+        // percentile categories (raw box-score stats, ranked directly rather
+        // than a per-60 rate) plus conference/division-scoped variants for
+        // all 16 tile-facing categories: pp/goals/a1/penalties/finishing
+        // (already selected above, tile-mapped via STAT_PCT_MAP) plus these
+        // 11 new ones. pct_ev_off/pct_ev_def/pct_pk/pct_competition/
+        // pct_teammates are radar-only (no backing tile) -- deliberately no
+        // conf/div added for those, nothing would consume it.
+        'pct_games_played,pct_plus_minus,pct_sh_goals,pct_gw_goals,pct_shots,' +
+        'pct_toi_per_game,pct_faceoff_win_pct,pct_hits,pct_blocked_shots,' +
+        'pct_takeaways,pct_giveaways,' +
+        'pct_goals_conf,pct_goals_div,pct_a1_conf,pct_a1_div,' +
+        'pct_pp_conf,pct_pp_div,pct_penalties_conf,pct_penalties_div,' +
+        'pct_finishing_conf,pct_finishing_div,' +
+        'pct_games_played_conf,pct_games_played_div,' +
+        'pct_plus_minus_conf,pct_plus_minus_div,' +
+        'pct_sh_goals_conf,pct_sh_goals_div,' +
+        'pct_gw_goals_conf,pct_gw_goals_div,' +
+        'pct_shots_conf,pct_shots_div,' +
+        'pct_toi_per_game_conf,pct_toi_per_game_div,' +
+        'pct_faceoff_win_pct_conf,pct_faceoff_win_pct_div,' +
+        'pct_hits_conf,pct_hits_div,' +
+        'pct_blocked_shots_conf,pct_blocked_shots_div,' +
+        'pct_takeaways_conf,pct_takeaways_div,' +
+        'pct_giveaways_conf,pct_giveaways_div';
+      const DEF_COLS = 'player_id,hits,blocked_shots,takeaways,giveaways';
 
-    const ANA_COLS = 'player_id,team,war,ev_off_pct,ev_def_inv,pp_xgf60,pk_xga60_inv,pp_icetime,pk_icetime,' +
-      'finishing,goals_per60,a1_per60,xgf_per60,penalties_per60,competition,teammates,game_score,' +
-      'pct_ev_off,pct_ev_def,pct_pp,pct_pk,pct_finishing,pct_goals,pct_a1,' +
-      'pct_penalties,pct_competition,pct_teammates,games_played,' +
-      'xga_per60,hdca_per60,hits,blocked_shots,takeaways,giveaways,' +
-      // Session 56 -- both null below eyewall-pipeline's moneypuck.py
-      // RESULTS_VS_PROCESS_MIN_GP (25 GP) guardrail; the frontend should
-      // treat "null" as "not enough games yet," not re-derive a GP number.
-      'on_ice_gf_pct,results_vs_process_diff,' +
-      // PLAYER_CARD_PERCENTILE_DISPLAY_BRIEF -- 11 new PR #56 league-wide
-      // percentile categories (raw box-score stats, ranked directly rather
-      // than a per-60 rate) plus conference/division-scoped variants for
-      // all 16 tile-facing categories: pp/goals/a1/penalties/finishing
-      // (already selected above, tile-mapped via STAT_PCT_MAP) plus these
-      // 11 new ones. pct_ev_off/pct_ev_def/pct_pk/pct_competition/
-      // pct_teammates are radar-only (no backing tile) -- deliberately no
-      // conf/div added for those, nothing would consume it.
-      'pct_games_played,pct_plus_minus,pct_sh_goals,pct_gw_goals,pct_shots,' +
-      'pct_toi_per_game,pct_faceoff_win_pct,pct_hits,pct_blocked_shots,' +
-      'pct_takeaways,pct_giveaways,' +
-      'pct_goals_conf,pct_goals_div,pct_a1_conf,pct_a1_div,' +
-      'pct_pp_conf,pct_pp_div,pct_penalties_conf,pct_penalties_div,' +
-      'pct_finishing_conf,pct_finishing_div,' +
-      'pct_games_played_conf,pct_games_played_div,' +
-      'pct_plus_minus_conf,pct_plus_minus_div,' +
-      'pct_sh_goals_conf,pct_sh_goals_div,' +
-      'pct_gw_goals_conf,pct_gw_goals_div,' +
-      'pct_shots_conf,pct_shots_div,' +
-      'pct_toi_per_game_conf,pct_toi_per_game_div,' +
-      'pct_faceoff_win_pct_conf,pct_faceoff_win_pct_div,' +
-      'pct_hits_conf,pct_hits_div,' +
-      'pct_blocked_shots_conf,pct_blocked_shots_div,' +
-      'pct_takeaways_conf,pct_takeaways_div,' +
-      'pct_giveaways_conf,pct_giveaways_div';
-    const DEF_COLS = 'player_id,hits,blocked_shots,takeaways,giveaways';
-
-    async function fetchAnalytics(forSeason) {
-      const [rows, poRows] = await Promise.all([
-        sbRows(`player_seasons?season=eq.${forSeason}&game_type=eq.2&war=not.is.null&select=${ANA_COLS}&limit=2000`),
-        sbRows(`player_seasons?season=eq.${forSeason}&game_type=eq.3&select=${DEF_COLS}&limit=2000`).catch(() => []),
-      ]);
-      return { rows, poRows };
-    }
-
-    let rows, poRows;
-    try {
-      ({ rows, poRows } = await fetchAnalytics(season));
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-
-    // Whole-season-empty fallback (Session 66, same shape as
-    // /players-search-index's team lookup): the live season can be flipped
-    // ahead of any real games (schedule released before puck drop), leaving
-    // `war=not.is.null` match nothing at all for it -- not a per-player gap,
-    // the pct_* percentiles this route serves are already computed
-    // position-grouped (fwd/def pools, moneypuck.py) for whichever season's
-    // rows they came from, so falling back to a whole prior season's rows
-    // preserves that grouping automatically; no per-request regrouping
-    // needed here. Flagged via statsStale/statsSeason (mirrors teamStale/
-    // teamSeason), not silent -- the frontend should label it "as of last
-    // season," not present a rookie's now-stale sophomore-year percentiles
-    // as current. A player with no prior-season row either (true rookie)
-    // still surfaces as absent from `rows`, same explicit-nothing shape as
-    // today, not a fabricated stale entry.
-    let statsStale = false;
-    let statsSeason = null;
-    if (rows.length === 0) {
-      const priorSeason = String(Number(season) - 10001); // 20262027 -> 20252026
-      try {
-        const fallback = await fetchAnalytics(priorSeason);
-        if (fallback.rows.length > 0) {
-          rows = fallback.rows;
-          poRows = fallback.poRows;
-          statsStale = true;
-          statsSeason = priorSeason;
-        }
-      } catch {
-        // Fallback query itself failed -- degrade to the empty live-season
-        // result rather than failing the whole request over it.
+      async function fetchAnalytics(forSeason) {
+        const [rows, poRows] = await Promise.all([
+          sbRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.2&war=not.is.null&select=${ANA_COLS}&limit=2000`),
+          sbRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.3&select=${DEF_COLS}&limit=2000`).catch(() => []),
+        ]);
+        return { rows, poRows };
       }
-    }
 
-    const result = { rows, poRows, statsStale, statsSeason };
-    await kvPut(env, kvKey, result, 3600);
-    return json(result);
+      let rows, poRows;
+      try {
+        ({ rows, poRows } = await fetchAnalytics(season));
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
+
+      // Whole-season-empty fallback (Session 66, same shape as
+      // /players-search-index's team lookup): the live season can be flipped
+      // ahead of any real games (schedule released before puck drop), leaving
+      // `war=not.is.null` match nothing at all for it -- not a per-player gap,
+      // the pct_* percentiles this route serves are already computed
+      // position-grouped (fwd/def pools, moneypuck.py) for whichever season's
+      // rows they came from, so falling back to a whole prior season's rows
+      // preserves that grouping automatically; no per-request regrouping
+      // needed here. Flagged via statsStale/statsSeason (mirrors teamStale/
+      // teamSeason), not silent -- the frontend should label it "as of last
+      // season," not present a rookie's now-stale sophomore-year percentiles
+      // as current. A player with no prior-season row either (true rookie)
+      // still surfaces as absent from `rows`, same explicit-nothing shape as
+      // today, not a fabricated stale entry.
+      let statsStale = false;
+      let statsSeason = null;
+      if (rows.length === 0) {
+        const priorSeason = String(Number(season) - 10001); // 20262027 -> 20252026
+        try {
+          const fallback = await fetchAnalytics(priorSeason);
+          if (fallback.rows.length > 0) {
+            rows = fallback.rows;
+            poRows = fallback.poRows;
+            statsStale = true;
+            statsSeason = priorSeason;
+          }
+        } catch {
+          // Fallback query itself failed -- degrade to the empty live-season
+          // result rather than failing the whole request over it.
+        }
+      }
+
+      const result = { rows, poRows, statsStale, statsSeason };
+      return result;
+    });
   }
 
   if (url.pathname === '/player-shots') {
     const playerId = url.searchParams.get('playerId');
     const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     const team     = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-    if (!playerId) return new Response(JSON.stringify({ error: 'playerId required' }), { status: 400, headers: corsHeaders() });
+    if (!playerId) return badRequest('playerId required');
 
-    const kvKey  = `nhl:player-shots:${playerId}:${season}:${team}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:player-shots:${playerId}:${season}:${team}`, 3600, async () => {
+      // No car_game filter: that column only means "Carolina played in this
+      // game" (see eyewall-pipeline's shot_events.py), so filtering on it here
+      // silently restricted every non-CAR player's shots to games against
+      // Carolina. player_id + team already scope correctly on their own — a
+      // player only shoots for one team per row.
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `shot_events?player_id=eq.${playerId}&season=eq.${season}` +
+          `&team=eq.${team}` +
+          `&select=x,y,event_type,period,time_in_period,shot_type&limit=2000`
+        );
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
 
-    // No car_game filter: that column only means "Carolina played in this
-    // game" (see eyewall-pipeline's shot_events.py), so filtering on it here
-    // silently restricted every non-CAR player's shots to games against
-    // Carolina. player_id + team already scope correctly on their own — a
-    // player only shoots for one team per row.
-    let rows;
-    try {
-      rows = await sbRows(
-        `shot_events?player_id=eq.${playerId}&season=eq.${season}` +
-        `&team=eq.${team}` +
-        `&select=x,y,event_type,period,time_in_period,shot_type&limit=2000`
-      );
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   // GET /nhl/shots?team=CAR&season=20252026
@@ -1928,148 +1911,124 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/nhl/shots') {
     const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const kvKey  = `nhl:shots:${team}:${season}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:shots:${team}:${season}`, 3600, async () => {
+      let gameIds;
+      try {
+        const schedule = await nhlGet(`${NHL_BASE}/club-schedule-season/${team}/${season}`);
+        gameIds = (schedule?.games || []).filter(isCompleted).map(g => g.id);
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
+      if (!gameIds.length) return [];
 
-    let gameIds;
-    try {
-      const schedule = await nhlGet(`${NHL_BASE}/club-schedule-season/${team}/${season}`);
-      gameIds = (schedule?.games || []).filter(isCompleted).map(g => g.id);
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-    if (!gameIds.length) {
-      await kvPut(env, kvKey, [], 3600);
-      return json([]);
-    }
+      const PAGE = 1000;
+      const allRows = [];
+      let offset = 0;
+      while (true) {
+        const rows = await sbRows(
+          `${SB_URL}/rest/v1/shot_events?game_id=in.(${gameIds.join(',')})&season=eq.${season}` +
+          `&select=game_id,team,x,y,event_type,period,time_in_period,shot_type&order=game_id.asc`,
+          { 'Range': `${offset}-${offset + PAGE - 1}`, 'Range-Unit': 'items', 'Prefer': 'count=none' }
+        );
+        if (rows instanceof Response) return rows;
+        allRows.push(...rows);
+        if (rows.length < PAGE) break;
+        offset += PAGE;
+      }
 
-    const PAGE = 1000;
-    const allRows = [];
-    let offset = 0;
-    while (true) {
-      const r = await fetch(
-        `${SB_URL}/rest/v1/shot_events?game_id=in.(${gameIds.join(',')})&season=eq.${season}` +
-        `&select=game_id,team,x,y,event_type,period,time_in_period,shot_type&order=game_id.asc`,
-        {
-          headers: {
-            'apikey':        SB_ANON,
-            'Authorization': `Bearer ${SB_ANON}`,
-            'Range':         `${offset}-${offset + PAGE - 1}`,
-            'Range-Unit':    'items',
-            'Prefer':        'count=none',
-          },
-        }
-      );
-      if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
-      const rows = await r.json();
-      allRows.push(...rows);
-      if (rows.length < PAGE) break;
-      offset += PAGE;
-    }
-
-    await kvPut(env, kvKey, allRows, 3600);
-    console.log(`NHL shots: team=${team} season=${season} games=${gameIds.length} total=${allRows.length}`);
-    return json(allRows);
+      console.log(`NHL shots: team=${team} season=${season} games=${gameIds.length} total=${allRows.length}`);
+      return allRows;
+    });
   }
 
   if (url.pathname === '/goalie-shots') {
     const goalieId = url.searchParams.get('goalieId');
     const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    if (!goalieId) return new Response(JSON.stringify({ error: 'goalieId required' }), { status: 400, headers: corsHeaders() });
+    if (!goalieId) return badRequest('goalieId required');
 
-    const kvKey  = `nhl:goalie-shots:${goalieId}:${season}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:goalie-shots:${goalieId}:${season}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `shot_events?goalie_id=eq.${goalieId}&season=eq.${season}` +
+          `&select=x,y,event_type,period,time_in_period,shot_type,team&limit=2000`
+        );
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `shot_events?goalie_id=eq.${goalieId}&season=eq.${season}` +
-        `&select=x,y,event_type,period,time_in_period,shot_type,team&limit=2000`
-      );
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   if (url.pathname === '/goalie-analytics') {
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const kvKey  = `nhl:goalie-analytics:${season}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:goalie-analytics:${season}`, 3600, async () => {
+      const GOALIE_COLS = 'player_id,team,games_played,gsax,gsax_per60,qs_pct,qs,' +
+        'ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,' +
+        'pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv';
 
-    const GOALIE_COLS = 'player_id,team,games_played,gsax,gsax_per60,qs_pct,qs,' +
-      'ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,' +
-      'pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv';
-
-    async function fetchGoalieAnalytics(forSeason) {
-      return sbRows(
-        `goalie_seasons?season=eq.${forSeason}&game_type=eq.2&gsax=not.is.null&select=${GOALIE_COLS}`
-      );
-    }
-
-    let rows;
-    try {
-      rows = await fetchGoalieAnalytics(season);
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-
-    // Whole-season-empty fallback (mirrors /player-analytics's Session 66
-    // fix, ported here 2026-08 -- this route never had it, which meant
-    // EVERY goalie showed "analytics not yet available" for the entire
-    // gap between a live season flip and that season's first real games,
-    // not just goalies genuinely below the GP floor). Same reasoning: the
-    // live season can resolve ahead of any real games (schedule released
-    // before puck drop), leaving `gsax=not.is.null` match nothing for it --
-    // not a per-goalie gap, so falling back to a whole prior season's rows
-    // is correct. Flagged via statsStale/statsSeason, not silent.
-    let statsStale = false;
-    let statsSeason = null;
-    if (rows.length === 0) {
-      const priorSeason = String(Number(season) - 10001); // 20262027 -> 20252026
-      try {
-        const fallback = await fetchGoalieAnalytics(priorSeason);
-        if (fallback.length > 0) {
-          rows = fallback;
-          statsStale = true;
-          statsSeason = priorSeason;
-        }
-      } catch {
-        // Fallback query itself failed -- degrade to the empty live-season
-        // result rather than failing the whole request over it.
+      async function fetchGoalieAnalytics(forSeason) {
+        return sbRowsOrThrow(
+          `goalie_seasons?season=eq.${forSeason}&game_type=eq.2&gsax=not.is.null&select=${GOALIE_COLS}`
+        );
       }
-    }
 
-    const result = { rows, statsStale, statsSeason };
-    await kvPut(env, kvKey, result, 3600);
-    return json(result);
+      let rows;
+      try {
+        rows = await fetchGoalieAnalytics(season);
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
+
+      // Whole-season-empty fallback (mirrors /player-analytics's Session 66
+      // fix, ported here 2026-08 -- this route never had it, which meant
+      // EVERY goalie showed "analytics not yet available" for the entire
+      // gap between a live season flip and that season's first real games,
+      // not just goalies genuinely below the GP floor). Same reasoning: the
+      // live season can resolve ahead of any real games (schedule released
+      // before puck drop), leaving `gsax=not.is.null` match nothing for it --
+      // not a per-goalie gap, so falling back to a whole prior season's rows
+      // is correct. Flagged via statsStale/statsSeason, not silent.
+      let statsStale = false;
+      let statsSeason = null;
+      if (rows.length === 0) {
+        const priorSeason = String(Number(season) - 10001); // 20262027 -> 20252026
+        try {
+          const fallback = await fetchGoalieAnalytics(priorSeason);
+          if (fallback.length > 0) {
+            rows = fallback;
+            statsStale = true;
+            statsSeason = priorSeason;
+          }
+        } catch {
+          // Fallback query itself failed -- degrade to the empty live-season
+          // result rather than failing the whole request over it.
+        }
+      }
+
+      const result = { rows, statsStale, statsSeason };
+      return result;
+    });
   }
 
   if (url.pathname === '/team-lines') {
     const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const kvKey  = `nhl:team-lines:${team}:${season}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:team-lines:${team}:${season}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `line_combinations?team=eq.${team}&season=eq.${season}` +
+          `&order=unit_type.asc,rank.asc` +
+          `&select=unit_type,rank,name_a,name_b,name_c,pos_a,pos_b,pos_c,toi_secs,xgf_pct`
+        );
+      } catch {
+        rows = []; // matches supabaseClient.js's own .catch(() => []) — frontend falls back to static lines
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `line_combinations?team=eq.${team}&season=eq.${season}` +
-        `&order=unit_type.asc,rank.asc` +
-        `&select=unit_type,rank,name_a,name_b,name_c,pos_a,pos_b,pos_c,toi_secs,xgf_pct`
-      );
-    } catch {
-      rows = []; // matches supabaseClient.js's own .catch(() => []) — frontend falls back to static lines
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   // GET /injuries?team=CAR
@@ -2088,23 +2047,20 @@ export async function handleNHL(request, env, ctx, url) {
   // docs/session_injury_details_history.sql) -- any of the four can be null.
   if (url.pathname === '/injuries') {
     const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-    const kvKey  = `nhl:injuries:${team}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:injuries:${team}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `player_injuries?team=eq.${team}` +
+          `&select=player_id,player_name,status,comment,espn_updated_at,` +
+          `injury_type,injury_side,injury_detail,return_date`
+        );
+      } catch {
+        rows = []; // same "degrade to empty, don't 502" posture as /team-lines
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `player_injuries?team=eq.${team}` +
-        `&select=player_id,player_name,status,comment,espn_updated_at,` +
-        `injury_type,injury_side,injury_detail,return_date`
-      );
-    } catch {
-      rows = []; // same "degrade to empty, don't 502" posture as /team-lines
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   // GET /transactions?team=CAR      -- that team's moves: its own entries, plus
@@ -2122,27 +2078,25 @@ export async function handleNHL(request, env, ctx, url) {
     const scope = url.searchParams.get('scope') === 'league' ? 'league' : 'team';
     const team  = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     if (scope === 'team' && !/^[A-Z]{2,3}$/.test(team)) {
-      return new Response(JSON.stringify({ error: 'invalid team' }), { status: 400, headers: corsHeaders() });
+      return badRequest('invalid team');
     }
     const focusTeam = scope === 'team' ? team : null;
     const kvKey  = scope === 'league' ? 'nhl:transactions:league' : `nhl:transactions:team:${team}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, kvKey, 3600, async () => {
+      const select = 'id,tx_date,team,description,categories,primary_category,counterparties';
+      const filter = scope === 'team' ? `&or=(team.eq.${team},counterparties.cs.%7B${team}%7D)` : '';
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `nhl_transactions?select=${select}${filter}&order=tx_date.desc,id.desc&limit=${TRANSACTIONS_LIMIT}`
+        );
+      } catch {
+        return json({ scope, team: focusTeam, items: [] });
+      }
 
-    const select = 'id,tx_date,team,description,categories,primary_category,counterparties';
-    const filter = scope === 'team' ? `&or=(team.eq.${team},counterparties.cs.%7B${team}%7D)` : '';
-    let rows;
-    try {
-      rows = await sbRows(
-        `nhl_transactions?select=${select}${filter}&order=tx_date.desc,id.desc&limit=${TRANSACTIONS_LIMIT}`
-      );
-    } catch {
-      return json({ scope, team: focusTeam, items: [] });
-    }
-
-    const data = { scope, team: focusTeam, items: pairTransactions(rows, { focusTeam }) };
-    await kvPut(env, kvKey, data, 3600);
-    return json(data);
+      const data = { scope, team: focusTeam, items: pairTransactions(rows, { focusTeam }) };
+      return data;
+    });
   }
 
   // GET /trades/tree?tx=<nhl_transactions id>
@@ -2159,20 +2113,17 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/trades/tree') {
     const tx = url.searchParams.get('tx') || '';
     if (!/^\d{1,12}$/.test(tx)) {
-      return new Response(JSON.stringify({ error: 'invalid tx' }), { status: 400, headers: corsHeaders() });
+      return badRequest('invalid tx');
     }
-    const kvKey  = `nhl:trades:tree:${tx}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
-
-    let data;
-    try {
-      data = await fetchTradeTree(tx, sbRows);
-    } catch {
-      return json({ found: false, root: null, trades: {}, origins: [], truncated: false, unavailable: true });
-    }
-    if (data.found) await kvPut(env, kvKey, data, 3600);
-    return json(data);
+    return cachedJson(env, `nhl:trades:tree:${tx}`, 3600, async () => {
+      let data;
+      try {
+        data = await fetchTradeTree(tx, sbRowsOrThrow);
+      } catch {
+        return json({ found: false, root: null, trades: {}, origins: [], truncated: false, unavailable: true });
+      }
+      return data.found ? data : json(data); // only a found tree is cached
+    });
   }
 
   // GET /scratches?team=CAR[&season=20262027][&gameType=2]
@@ -2193,57 +2144,51 @@ export async function handleNHL(request, env, ctx, url) {
     const seasonParam = url.searchParams.get('season');
     const gameType    = url.searchParams.get('gameType') || '2';
     if (!/^[A-Z]{2,3}$/.test(team) || (seasonParam && !/^\d{8}$/.test(seasonParam)) || !['2', '3'].includes(gameType)) {
-      return new Response(JSON.stringify({ error: 'invalid team, season, or gameType' }), { status: 400, headers: corsHeaders() });
+      return badRequest('invalid team, season, or gameType');
     }
     const season = seasonParam || String(await resolveNHLSeason(env));
-    const kvKey  = `nhl:scratches:${team}:${seasonParam || 'auto'}:${gameType}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
-
-    const fetchSeason = (s) => sbRows(
-      `game_scratches?team=eq.${team}&season=eq.${s}&game_type=eq.${gameType}` +
-      `&select=game_id,game_date,player_id,player_name,scratch_type&order=game_date.asc,id.asc&limit=1000`
-    );
-    let rows;
-    let usedSeason = season;
-    let stale = false;
-    try {
-      rows = await fetchSeason(season);
-      if (rows.length === 0 && !seasonParam) {
-        const prior = String(Number(season) - 10001); // 20262027 -> 20252026
-        const fallback = await fetchSeason(prior);
-        if (fallback.length > 0) {
-          rows = fallback;
-          usedSeason = prior;
-          stale = true;
+    return cachedJson(env, `nhl:scratches:${team}:${seasonParam || 'auto'}:${gameType}`, 3600, async () => {
+      const fetchSeason = (s) => sbRowsOrThrow(
+        `game_scratches?team=eq.${team}&season=eq.${s}&game_type=eq.${gameType}` +
+        `&select=game_id,game_date,player_id,player_name,scratch_type&order=game_date.asc,id.asc&limit=1000`
+      );
+      let rows;
+      let usedSeason = season;
+      let stale = false;
+      try {
+        rows = await fetchSeason(season);
+        if (rows.length === 0 && !seasonParam) {
+          const prior = String(Number(season) - 10001); // 20262027 -> 20252026
+          const fallback = await fetchSeason(prior);
+          if (fallback.length > 0) {
+            rows = fallback;
+            usedSeason = prior;
+            stale = true;
+          }
         }
+      } catch {
+        return json({ team, season: Number(season), gameType: Number(gameType), stale: false, ...summarizeScratches([]) });
       }
-    } catch {
-      return json({ team, season: Number(season), gameType: Number(gameType), stale: false, ...summarizeScratches([]) });
-    }
 
-    const data = { team, season: Number(usedSeason), gameType: Number(gameType), stale, ...summarizeScratches(rows) };
-    await kvPut(env, kvKey, data, 3600);
-    return json(data);
+      const data = { team, season: Number(usedSeason), gameType: Number(gameType), stale, ...summarizeScratches(rows) };
+      return data;
+    });
   }
 
   if (url.pathname === '/game-xg') {
     const gameId = url.searchParams.get('gameId');
-    if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+    if (!gameId) return badRequest('gameId required');
 
-    const kvKey  = `nhl:game-xg:${gameId}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:game-xg:${gameId}`, 1800, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(`game_xg?game_id=eq.${gameId}&situation=eq.5on5&select=team,xgf,xga,xgf_pct`);
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(`game_xg?game_id=eq.${gameId}&situation=eq.5on5&select=team,xgf,xga,xgf_pct`);
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-
-    await kvPut(env, kvKey, rows, 1800);
-    return json(rows);
+      return rows;
+    });
   }
 
   // Serves both getGameLogInsights and getTeamGameLog on the frontend —
@@ -2252,85 +2197,76 @@ export async function handleNHL(request, env, ctx, url) {
     const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     const limit  = url.searchParams.get('limit'); // optional passthrough — omitted means unlimited
-    const kvKey  = `nhl:game-log:${team}:${season}:${limit || 'all'}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:game-log:${team}:${season}:${limit || 'all'}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `game_log?season=eq.${season}&team=eq.${team}&order=game_id.asc` +
+          `&select=game_id,game_date,opponent,team_score,opp_score,home_team,` +
+          `team_scored_first,pp_goals,pp_opps,pk_goals_against,pk_opps,game_type` +
+          (limit ? `&limit=${limit}` : '')
+        );
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `game_log?season=eq.${season}&team=eq.${team}&order=game_id.asc` +
-        `&select=game_id,game_date,opponent,team_score,opp_score,home_team,` +
-        `team_scored_first,pp_goals,pp_opps,pk_goals_against,pk_opps,game_type` +
-        (limit ? `&limit=${limit}` : '')
-      );
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   if (url.pathname === '/xg-trend') {
     const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const kvKey  = `nhl:xg-trend:${team}:${season}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:xg-trend:${team}:${season}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `game_xg?team=eq.${team}&season=eq.${season}&situation=eq.5on5` +
+          `&select=game_id,xgf_pct&limit=999`
+        );
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `game_xg?team=eq.${team}&season=eq.${season}&situation=eq.5on5` +
-        `&select=game_id,xgf_pct&limit=999`
-      );
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   if (url.pathname === '/team-seasons') {
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const kvKey  = `nhl:team-seasons:${season}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:team-seasons:${season}`, 3600, async () => {
+      // magic_number/tragic_number/clinched/eliminated are playoff_race.py's
+      // nightly forecast (Session 57). Deliberately not selecting
+      // team_seasons.clinch_indicator here — the frontend already gets the
+      // live, real-time clinchIndicator per team from /cache/standings (see
+      // getStandings() in nhlApi.js), which is the NHL's own ground truth and
+      // updates far more often than this nightly-batched table. Mixing a
+      // second, staler clinch_indicator into this route's response would just
+      // invite the two to disagree. Per playoff_race.py's docstring, once the
+      // live indicator is populated for a team it wins outright; these
+      // computed numbers are a pre-clinch/pre-elimination estimate only, and
+      // that precedence is a frontend-merge concern, not this route's.
+      // hits/penalties (Session 82) -- season totals from nhl_stats.py's
+      // game_log rollup (PR #56), for the Shot Map "All N" cards. Selected
+      // team's own season total only, no opponent aggregate -- matches how
+      // ShotMapView.jsx's FO%/PP%/PK% cards already drop the opponent
+      // comparison in All-N mode (see that PR/eyewallanalytics#64). An
+      // opponent-side total would need a game_id join against every team this
+      // one played, same as /pwhl/team-season-summary does -- deliberately
+      // out of scope here.
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `team_seasons?season=eq.${season}&game_type=eq.2` +
+          `&select=team,xgf_pct,roster_war_score,games_played,` +
+          `magic_number,tragic_number,clinched,eliminated,hits,penalties&limit=32`
+        );
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
 
-    // magic_number/tragic_number/clinched/eliminated are playoff_race.py's
-    // nightly forecast (Session 57). Deliberately not selecting
-    // team_seasons.clinch_indicator here — the frontend already gets the
-    // live, real-time clinchIndicator per team from /cache/standings (see
-    // getStandings() in nhlApi.js), which is the NHL's own ground truth and
-    // updates far more often than this nightly-batched table. Mixing a
-    // second, staler clinch_indicator into this route's response would just
-    // invite the two to disagree. Per playoff_race.py's docstring, once the
-    // live indicator is populated for a team it wins outright; these
-    // computed numbers are a pre-clinch/pre-elimination estimate only, and
-    // that precedence is a frontend-merge concern, not this route's.
-    // hits/penalties (Session 82) -- season totals from nhl_stats.py's
-    // game_log rollup (PR #56), for the Shot Map "All N" cards. Selected
-    // team's own season total only, no opponent aggregate -- matches how
-    // ShotMapView.jsx's FO%/PP%/PK% cards already drop the opponent
-    // comparison in All-N mode (see that PR/eyewallanalytics#64). An
-    // opponent-side total would need a game_id join against every team this
-    // one played, same as /pwhl/team-season-summary does -- deliberately
-    // out of scope here.
-    let rows;
-    try {
-      rows = await sbRows(
-        `team_seasons?season=eq.${season}&game_type=eq.2` +
-        `&select=team,xgf_pct,roster_war_score,games_played,` +
-        `magic_number,tragic_number,clinched,eliminated,hits,penalties&limit=32`
-      );
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   // Season-over-season team comparison (Session 64) -- box-score fields
@@ -2355,22 +2291,19 @@ export async function handleNHL(request, env, ctx, url) {
       return badRequest('team and seasons (comma-separated) are required');
     }
 
-    const kvKey  = `nhl:team-seasons:compare:${team}:${seasons.slice().sort().join(',')}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:team-seasons:compare:${team}:${seasons.slice().sort().join(',')}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `team_seasons?team=eq.${team}&season=in.(${seasons.join(',')})&game_type=eq.2` +
+          `&select=season,games_played,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct`
+        );
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `team_seasons?team=eq.${team}&season=in.(${seasons.join(',')})&game_type=eq.2` +
-        `&select=season,games_played,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct`
-      );
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   // Two-team, same-season comparison (Session 86, Team vs Team Mode 1) --
@@ -2387,22 +2320,19 @@ export async function handleNHL(request, env, ctx, url) {
       return badRequest('teams (exactly two, comma-separated) and season are required');
     }
 
-    const kvKey  = `nhl:team-seasons:compare-teams:${teams.slice().sort().join(',')}:${season}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:team-seasons:compare-teams:${teams.slice().sort().join(',')}:${season}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `team_seasons?team=in.(${teams.join(',')})&season=eq.${season}&game_type=eq.2` +
+          `&select=team,season,games_played,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct`
+        );
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `team_seasons?team=in.(${teams.join(',')})&season=eq.${season}&game_type=eq.2` +
-        `&select=team,season,games_played,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct`
-      );
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   // All-time head-to-head between two teams, across every season on record
@@ -2430,29 +2360,26 @@ export async function handleNHL(request, env, ctx, url) {
     }
     const [teamA, teamB] = teams;
 
-    const kvKey  = `nhl:team-seasons:head-to-head:${teams.slice().sort().join(',')}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:team-seasons:head-to-head:${teams.slice().sort().join(',')}`, 3600, async () => {
+      let games;
+      try {
+        games = await sbRowsOrThrow(
+          `game_log?team=eq.${teamA}&opponent=eq.${teamB}` +
+          `&select=game_id,season,game_date,team_score,opp_score,home_team` +
+          `&order=season.asc,game_id.asc`
+        );
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
 
-    let games;
-    try {
-      games = await sbRows(
-        `game_log?team=eq.${teamA}&opponent=eq.${teamB}` +
-        `&select=game_id,season,game_date,team_score,opp_score,home_team` +
-        `&order=season.asc,game_id.asc`
-      );
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
+      const payload = buildHeadToHeadPayload(teamA, teamB, games.map(g => ({
+        gameId: g.game_id, season: g.season, gameDate: g.game_date,
+        teamAWon: g.team_score > g.opp_score,
+        teamAScore: g.team_score, teamBScore: g.opp_score, homeTeam: g.home_team ? teamA : teamB,
+      })));
 
-    const payload = buildHeadToHeadPayload(teamA, teamB, games.map(g => ({
-      gameId: g.game_id, season: g.season, gameDate: g.game_date,
-      teamAWon: g.team_score > g.opp_score,
-      teamAScore: g.team_score, teamBScore: g.opp_score, homeTeam: g.home_team ? teamA : teamB,
-    })));
-
-    await kvPut(env, kvKey, payload, 3600);
-    return json(payload);
+      return payload;
+    });
   }
 
   // AI narrative layer on top of the head-to-head stats above (Session 90
@@ -2472,7 +2399,7 @@ export async function handleNHL(request, env, ctx, url) {
 
     let body;
     try { body = await request.json(); } catch {
-      return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: corsHeaders() });
+      return badRequest('Invalid JSON');
     }
     const {
       teamA, teamB, teamADisplay, teamBDisplay,
@@ -2482,24 +2409,21 @@ export async function handleNHL(request, env, ctx, url) {
       return json({ narrative: null });
     }
 
-    const kvKey  = `nhl:h2h-narrative:${[teamA, teamB].slice().sort().join(',')}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:h2h-narrative:${[teamA, teamB].slice().sort().join(',')}`, 24 * 3600, async () => {
+      const aDisplay = teamADisplay || teamA;
+      const bDisplay = teamBDisplay || teamB;
+      const streakLine = currentStreak
+        ? `Current streak: ${currentStreak.holder === 'A' ? aDisplay : bDisplay} has won ${currentStreak.count} straight.`
+        : 'No active streak.';
+      // Thin-sample guardrail: buildHeadToHeadPayload already flags <=4
+      // meetings as isThinSample -- the templated UI qualifies its language
+      // for this case (see TeamComparisonPopup.jsx), so the AI narrative
+      // needs the same discipline or it undoes that work with confident prose.
+      const thinSampleNote = isThinSample
+        ? `\nIMPORTANT: Only ${totalMeetings} meeting${totalMeetings === 1 ? '' : 's'} exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.`
+        : '';
 
-    const aDisplay = teamADisplay || teamA;
-    const bDisplay = teamBDisplay || teamB;
-    const streakLine = currentStreak
-      ? `Current streak: ${currentStreak.holder === 'A' ? aDisplay : bDisplay} has won ${currentStreak.count} straight.`
-      : 'No active streak.';
-    // Thin-sample guardrail: buildHeadToHeadPayload already flags <=4
-    // meetings as isThinSample -- the templated UI qualifies its language
-    // for this case (see TeamComparisonPopup.jsx), so the AI narrative
-    // needs the same discipline or it undoes that work with confident prose.
-    const thinSampleNote = isThinSample
-      ? `\nIMPORTANT: Only ${totalMeetings} meeting${totalMeetings === 1 ? '' : 's'} exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.`
-      : '';
-
-    const prompt = `You are EyeWall, a neutral hockey analytics assistant. Write a punchy 2-3 sentence head-to-head summary for ${aDisplay} vs ${bDisplay}.
+      const prompt = `You are EyeWall, a neutral hockey analytics assistant. Write a punchy 2-3 sentence head-to-head summary for ${aDisplay} vs ${bDisplay}.
 
 All-time record (since 2023-24): ${aDisplay} ${allTimeRecord.teamAWins}-${allTimeRecord.teamBWins} ${bDisplay}, across ${totalMeetings} meeting${totalMeetings === 1 ? '' : 's'}.
 Last ${recentWindow.size}: ${aDisplay} ${recentWindow.teamAWins}-${recentWindow.teamBWins} ${bDisplay}.
@@ -2507,21 +2431,20 @@ ${streakLine}
 ${thinSampleNote}
 Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.`;
 
-    try {
-      const aiResponse = await generateText(env, {
-        messages:   [{ role: 'user', content: prompt }],
-        max_tokens: 100,
-      });
-      const narrative = (aiResponse.response || '').trim();
-      if (!narrative) return json({ narrative: null });
+      try {
+        const aiResponse = await generateText(env, {
+          messages:   [{ role: 'user', content: prompt }],
+          max_tokens: 100,
+        });
+        const narrative = (aiResponse.response || '').trim();
+        if (!narrative) return json({ narrative: null });
 
-      const result = { narrative };
-      await kvPut(env, kvKey, result, 24 * 3600);
-      return json(result);
-    } catch (e) {
-      console.error('[NHL] head-to-head narrative AI error:', e);
-      return new Response(JSON.stringify({ error: 'AI generation failed' }), { status: 502, headers: corsHeaders() });
-    }
+        return { narrative };
+      } catch (e) {
+        console.error('[NHL] head-to-head narrative AI error:', e);
+        return errorJson(502, { error: 'AI generation failed' });
+      }
+    });
   }
 
   // Serves both getPowerRankingsNarrative (limit=1) and getPowerRankingsHistory
@@ -2530,53 +2453,47 @@ Only reference the two teams named above and the numbers given -- no player name
     const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     const limit  = Math.min(parseInt(url.searchParams.get('limit') || '28', 10) || 28, 100);
-    const kvKey  = `nhl:power-rankings:${team}:${season}:${limit}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:power-rankings:${team}:${season}:${limit}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `power_rankings_narratives?team=eq.${team}&season=eq.${season}` +
+          `&order=generated_date.desc&limit=${limit}` +
+          `&select=narrative,rank,prior_rank,generated_date`
+        );
+      } catch {
+        rows = [];
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `power_rankings_narratives?team=eq.${team}&season=eq.${season}` +
-        `&order=generated_date.desc&limit=${limit}` +
-        `&select=narrative,rank,prior_rank,generated_date`
-      );
-    } catch {
-      rows = [];
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   // Serves both getGameMatchup and getGamePrediction on the frontend —
   // same table/filter/row, different text field.
   if (url.pathname === '/game-predictions') {
     const gameId = url.searchParams.get('gameId');
-    if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+    if (!gameId) return badRequest('gameId required');
 
-    const kvKey  = `nhl:game-predictions:${gameId}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:game-predictions:${gameId}`, 1800, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `game_predictions?game_id=eq.${gameId}` +
+          `&select=matchup_text,prediction_text,generated_at&limit=1`
+        );
+      } catch {
+        rows = [];
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `game_predictions?game_id=eq.${gameId}` +
-        `&select=matchup_text,prediction_text,generated_at&limit=1`
-      );
-    } catch {
-      rows = [];
-    }
-
-    await kvPut(env, kvKey, rows, 1800);
-    return json(rows);
+      return rows;
+    });
   }
 
   if (url.pathname === '/game-summary') {
     const gameId = url.searchParams.get('gameId');
     const team   = url.searchParams.get('team')?.toUpperCase();
-    if (!gameId || !team) return new Response(JSON.stringify({ error: 'gameId and team required' }), { status: 400, headers: corsHeaders() });
+    if (!gameId || !team) return badRequest('gameId and team required');
     // French/English localization, Track B Phase B2 -- defaults to 'en' for
     // any missing/unrecognized value rather than erroring, same posture as
     // this file's existing team/season param handling below. game_summaries
@@ -2585,46 +2502,40 @@ Only reference the two teams named above and the numbers given -- no player name
     // both locales exist for the same game/team.
     const locale = url.searchParams.get('locale') === 'fr' ? 'fr' : 'en';
 
-    const kvKey  = `nhl:game-summary:${gameId}:${team}:${locale}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:game-summary:${gameId}:${team}:${locale}`, 1800, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `game_summaries?game_id=eq.${gameId}&team=eq.${team}&locale=eq.${locale}` +
+          `&select=summary_text,card_text,generated_at&limit=1`
+        );
+      } catch {
+        rows = [];
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `game_summaries?game_id=eq.${gameId}&team=eq.${team}&locale=eq.${locale}` +
-        `&select=summary_text,card_text,generated_at&limit=1`
-      );
-    } catch {
-      rows = [];
-    }
-
-    await kvPut(env, kvKey, rows, 1800);
-    return json(rows);
+      return rows;
+    });
   }
 
   if (url.pathname === '/player-scouting') {
     const playerId = url.searchParams.get('playerId');
     const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    if (!playerId) return new Response(JSON.stringify({ error: 'playerId required' }), { status: 400, headers: corsHeaders() });
+    if (!playerId) return badRequest('playerId required');
     const locale = url.searchParams.get('locale') === 'fr' ? 'fr' : 'en'; // Track B Phase B2
 
-    const kvKey  = `nhl:player-scouting:${playerId}:${season}:${locale}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:player-scouting:${playerId}:${season}:${locale}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `player_scouting?player_id=eq.${playerId}&season=eq.${season}&locale=eq.${locale}` +
+          `&select=scouting_text,generated_at&limit=1`
+        );
+      } catch {
+        rows = [];
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `player_scouting?player_id=eq.${playerId}&season=eq.${season}&locale=eq.${locale}` +
-        `&select=scouting_text,generated_at&limit=1`
-      );
-    } catch {
-      rows = [];
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   if (url.pathname === '/player-results-vs-process') {
@@ -2635,50 +2546,44 @@ Only reference the two teams named above and the numbers given -- no player name
     // less disruption than a bulk join nobody would otherwise use.
     const playerId = url.searchParams.get('playerId');
     const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    if (!playerId) return new Response(JSON.stringify({ error: 'playerId required' }), { status: 400, headers: corsHeaders() });
+    if (!playerId) return badRequest('playerId required');
     const locale = url.searchParams.get('locale') === 'fr' ? 'fr' : 'en'; // Track B Phase B2
 
-    const kvKey  = `nhl:player-results-vs-process:${playerId}:${season}:${locale}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:player-results-vs-process:${playerId}:${season}:${locale}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `player_narratives?player_id=eq.${playerId}&season=eq.${season}` +
+          `&narrative_type=eq.results_vs_process&locale=eq.${locale}` +
+          `&select=narrative_text,generated_at&limit=1`
+        );
+      } catch {
+        rows = [];
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `player_narratives?player_id=eq.${playerId}&season=eq.${season}` +
-        `&narrative_type=eq.results_vs_process&locale=eq.${locale}` +
-        `&select=narrative_text,generated_at&limit=1`
-      );
-    } catch {
-      rows = [];
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   if (url.pathname === '/team-skaters') {
     const team     = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     const gameType = url.searchParams.get('gameType') || '2';
-    const kvKey    = `nhl:team-skaters:${team}:${season}:${gameType}`;
-    const cached   = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:team-skaters:${team}:${season}:${gameType}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `player_seasons?team=eq.${team}&season=eq.${season}&game_type=eq.${gameType}` +
+          `&select=player_id,games_played,goals,assists,primary_assists,secondary_assists,` +
+          `points,plus_minus,pim,pp_goals,sh_goals,gw_goals,shots,shooting_pct,` +
+          `toi_per_game&order=points.desc.nullslast`
+        );
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `player_seasons?team=eq.${team}&season=eq.${season}&game_type=eq.${gameType}` +
-        `&select=player_id,games_played,goals,assists,primary_assists,secondary_assists,` +
-        `points,plus_minus,pim,pp_goals,sh_goals,gw_goals,shots,shooting_pct,` +
-        `toi_per_game&order=points.desc.nullslast`
-      );
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
+      return rows;
+    });
   }
 
   // Full players id/name/position list — paginated server-side the same
@@ -2686,30 +2591,24 @@ Only reference the two teams named above and the numbers given -- no player name
   // (Supabase caps responses at 1000 rows; the table has 1346+).
   // Long TTL: names/positions rarely change mid-season.
   if (url.pathname === '/players-list') {
-    const kvKey  = 'nhl:players-list';
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
-
-    const pageSize = 1000;
-    const all = [];
-    let offset = 0;
-    while (true) {
-      const r = await fetch(`${SB_URL}/rest/v1/players?select=id,name,position`, {
-        headers: {
-          'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}`,
+    // 6hr
+    return cachedJson(env, 'nhl:players-list', 21600, async () => {
+      const pageSize = 1000;
+      const all = [];
+      let offset = 0;
+      while (true) {
+        const rows = await sbRows(`${SB_URL}/rest/v1/players?select=id,name,position`, {
           'Range-Unit': 'items', 'Range': `${offset}-${offset + pageSize - 1}`,
-        },
-      });
-      if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
-      const rows = await r.json();
-      if (!Array.isArray(rows) || rows.length === 0) break;
-      all.push(...rows);
-      if (rows.length < pageSize) break;
-      offset += pageSize;
-    }
+        });
+        if (rows instanceof Response) return rows;
+        if (!Array.isArray(rows) || rows.length === 0) break;
+        all.push(...rows);
+        if (rows.length < pageSize) break;
+        offset += pageSize;
+      }
 
-    await kvPut(env, kvKey, all, 21600); // 6hr
-    return json(all);
+      return all;
+    });
   }
 
   // PP/PK unit compositions — pp_units:all is already kept warm by
@@ -2722,7 +2621,7 @@ Only reference the two teams named above and the numbers given -- no player name
       try {
         map = await refreshPPUnits(env);
       } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
+        return errorJson(502, { error: e.message });
       }
     }
     return json(map);
@@ -2820,7 +2719,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Manual poll
   if (url.pathname === '/poll') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    if (secret !== env.POLL_SECRET) return unauthorized();
     await poll(env, ctx);
     return json({ ok: true, polled: new Date().toISOString() });
   }
@@ -2828,7 +2727,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Manual social post test (protected)
   if (url.pathname === '/social/test') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    if (secret !== env.POLL_SECRET) return unauthorized();
     const testSummary = {
       won: true, carScore: 4, oppScore: 2, oppAbbr: 'BOS',
       isHome: true, cfPct: 58, narrative: 'The Canes controlled this one from the drop of the puck.',
@@ -2849,7 +2748,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Fires waitUntil for each team so they all compute in parallel without blocking.
   if (url.pathname === '/moneypuck/refresh/all') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    if (secret !== env.POLL_SECRET) return unauthorized();
     const teams = Object.keys(TEAM_CONFIGS);
     await env.CACHE.delete('moneypuck:raw'); // clear shared raw cache once
     for (const abbr of teams) {
@@ -2877,7 +2776,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // called parseAtom() on all of them.
   if (url.pathname === '/atom/ingest' && request.method === 'POST') {
     const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    if (secret !== env.POLL_SECRET) return unauthorized();
     let bundle;
     try {
       bundle = await request.json();
@@ -2928,7 +2827,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // GitHub Actions fetches the CSV and POSTs it here once daily.
   if (url.pathname === '/moneypuck/ingest' && request.method === 'POST') {
     const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    if (secret !== env.POLL_SECRET) return unauthorized();
     let csvText;
     try {
       csvText = await request.text();
@@ -2962,7 +2861,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // MoneyPuck analytics endpoint
   if (url.pathname === '/moneypuck/refresh') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    if (secret !== env.POLL_SECRET) return unauthorized();
     const tc = await getTeamConfig(request, env);
     await env.CACHE.delete(`moneypuck:skaters:${tc.abbr}`);
     await env.CACHE.delete('moneypuck:raw');
@@ -2977,7 +2876,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Refresh PP/PK unit compositions from Supabase → KV
   if (url.pathname === '/pp-units/refresh') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    if (secret !== env.POLL_SECRET) return unauthorized();
     ctx.waitUntil(
       refreshPPUnits(env, { force: true })
         .then(map => console.log(`PP units done: ${Object.keys(map).length} teams`))
@@ -2988,7 +2887,7 @@ Only reference the two teams named above and the numbers given -- no player name
 
   if (url.pathname === '/summary/generate') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    if (secret !== env.POLL_SECRET) return unauthorized();
     const tc       = await getTeamConfig(request, env);
     const schedule = await kvGet(env, scheduleKey(tc.abbr, tc.season));
     const recent   = (schedule || [])
@@ -3107,7 +3006,7 @@ Only reference the two teams named above and the numbers given -- no player name
     let carCF = null, oppCF = null, corsiSource = 'sog_share_proxy';
     try {
       const season = await resolveNHLSeason(env);
-      const teamRows = await sbRows(
+      const teamRows = await sbRowsOrThrow(
         `team_seasons?team=in.(${tc.abbr},${oppAbbr})&season=eq.${season}&game_type=eq.2` +
         `&select=team,corsi_for_pct,corsi_for_pct_5v5`
       );
@@ -3251,7 +3150,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   // Send a test notification (protected)
   if (url.pathname === '/push/test') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    if (secret !== env.POLL_SECRET) return unauthorized();
     await broadcast(env, {
       title: '🚨 Test Notification',
       body:  'EyeWall Analytics push notifications are working!',
@@ -3383,32 +3282,26 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   if (url.pathname === '/draft/rankings') {
     const category = url.searchParams.get('category');
     const kvKey    = category ? `draft:rankings:2026:${category}` : 'draft:rankings:2026:all';
-
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
-
-    const filter = category
-      ? `?category_id=eq.${category}&order=final_rank.asc&limit=300`
-      : `?order=category_id.asc,final_rank.asc&limit=600`;
-
-    const r = await fetch(`${SB_URL}/rest/v1/draft_rankings_2026${filter}`, {
-      headers: { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` },
-    });
-    if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
-    const rows = await r.json();
-
-    // If fetching all, group by category_id for convenient frontend consumption
-    let result;
-    if (!category) {
-      result = { 1: [], 2: [], 3: [], 4: [] };
-      for (const row of rows) result[row.category_id].push(row);
-    } else {
-      result = rows;
-    }
-
     // Rankings are stable — cache 24hr
-    await kvPut(env, kvKey, result, 24 * 3600);
-    return json(result);
+    return cachedJson(env, kvKey, 24 * 3600, async () => {
+      const filter = category
+        ? `?category_id=eq.${category}&order=final_rank.asc&limit=300`
+        : `?order=category_id.asc,final_rank.asc&limit=600`;
+
+      const rows = await sbRows(`${SB_URL}/rest/v1/draft_rankings_2026${filter}`);
+      if (rows instanceof Response) return rows;
+
+      // If fetching all, group by category_id for convenient frontend consumption
+      let result;
+      if (!category) {
+        result = { 1: [], 2: [], 3: [], 4: [] };
+        for (const row of rows) result[row.category_id].push(row);
+      } else {
+        result = rows;
+      }
+
+      return result;
+    });
   }
 
   // ── Draft picks — live during draft, stored forever in Supabase ───────────────
@@ -3419,28 +3312,22 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     const team  = url.searchParams.get('team')?.toUpperCase();
     const round = url.searchParams.get('round');
 
-    const kvKey  = `draft:picks:2026:${team || 'all'}:${round || 'all'}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
-
-    let filter = '?order=pick_overall.asc&limit=300';
-    if (team)  filter += `&team_abbrev=eq.${team}`;
-    if (round) filter += `&round=eq.${round}`;
-
-    const r = await fetch(`${SB_URL}/rest/v1/draft_picks_2026${filter}`, {
-      headers: { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` },
-    });
-    if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
-    const rows = await r.json();
-
     // Short TTL while draft is in progress or unresolved (including zero
     // results, e.g. a round that hasn't happened yet — this must NOT get
     // the 24hr branch or a snapshot taken before picks exist gets pinned
     // in KV for a full day). Long TTL only once we've actually seen all
     // 224 picks.
-    const ttl = rows.length >= 224 ? 24 * 3600 : 60;
-    await kvPut(env, kvKey, rows, ttl);
-    return json(rows);
+    const ttl = (rows) => (rows.length >= 224 ? 24 * 3600 : 60);
+    return cachedJson(env, `draft:picks:2026:${team || 'all'}:${round || 'all'}`, ttl, async () => {
+      let filter = '?order=pick_overall.asc&limit=300';
+      if (team)  filter += `&team_abbrev=eq.${team}`;
+      if (round) filter += `&round=eq.${round}`;
+
+      const rows = await sbRows(`${SB_URL}/rest/v1/draft_picks_2026${filter}`);
+      if (rows instanceof Response) return rows;
+
+      return rows;
+    });
   }
 
   // ── Draft pick order — projected slots pre-draft ──────────────────────────────
@@ -3448,21 +3335,15 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   // GET /draft/order?team=CAR     — just this team's known slots
   if (url.pathname === '/draft/order') {
     const team   = url.searchParams.get('team')?.toUpperCase();
-    const kvKey  = `draft:order:2026:${team || 'all'}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `draft:order:2026:${team || 'all'}`, 24 * 3600, async () => {
+      let filter = '?order=pick_overall.asc&limit=32';
+      if (team) filter += `&team_abbrev=eq.${team}`;
 
-    let filter = '?order=pick_overall.asc&limit=32';
-    if (team) filter += `&team_abbrev=eq.${team}`;
+      const rows = await sbRows(`${SB_URL}/rest/v1/draft_pick_order_2026${filter}`);
+      if (rows instanceof Response) return rows;
 
-    const r = await fetch(`${SB_URL}/rest/v1/draft_pick_order_2026${filter}`, {
-      headers: { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` },
+      return rows;
     });
-    if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
-    const rows = await r.json();
-
-    await kvPut(env, kvKey, rows, 24 * 3600);
-    return json(rows);
   }
 
   // ── Draft pick history — where a team's recent picks came from / went ────────
@@ -3480,29 +3361,26 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     const PICK_HISTORY_DRAFTS = 5;
     const team = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
     if (!/^[A-Z]{2,3}$/.test(team)) {
-      return new Response(JSON.stringify({ error: 'invalid team' }), { status: 400, headers: corsHeaders() });
+      return badRequest('invalid team');
     }
     const sinceYear = new Date().getUTCFullYear() - (PICK_HISTORY_DRAFTS - 1);
-    const kvKey  = `draft:pick-history:${team}:${sinceYear}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `draft:pick-history:${team}:${sinceYear}`, 6 * 3600, async () => {
+      const select = 'draft_year,round,pick_in_round,overall_pick,team,original_team,pick_chain,times_traded,player_id,player_name,position';
+      const base   = `draft_pick_history?select=${select}&draft_year=gte.${sinceYear}&order=draft_year.desc,overall_pick.asc`;
+      let made;
+      let tradedAway;
+      try {
+        [made, tradedAway] = await Promise.all([
+          sbRowsOrThrow(`${base}&team=eq.${team}`),
+          sbRowsOrThrow(`${base}&original_team=eq.${team}&team=neq.${team}`),
+        ]);
+      } catch {
+        return json({ team, sinceYear, made: [], tradedAway: [] });
+      }
 
-    const select = 'draft_year,round,pick_in_round,overall_pick,team,original_team,pick_chain,times_traded,player_id,player_name,position';
-    const base   = `draft_pick_history?select=${select}&draft_year=gte.${sinceYear}&order=draft_year.desc,overall_pick.asc`;
-    let made;
-    let tradedAway;
-    try {
-      [made, tradedAway] = await Promise.all([
-        sbRows(`${base}&team=eq.${team}`),
-        sbRows(`${base}&original_team=eq.${team}&team=neq.${team}`),
-      ]);
-    } catch {
-      return json({ team, sinceYear, made: [], tradedAway: [] });
-    }
-
-    const data = { team, sinceYear, made, tradedAway };
-    await kvPut(env, kvKey, data, 6 * 3600);
-    return json(data);
+      const data = { team, sinceYear, made, tradedAway };
+      return data;
+    });
   }
 
   // ── Playoff odds — simulated playoff chances, and why they moved ──────────────
@@ -3526,44 +3404,41 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     const team   = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
     const season = url.searchParams.get('season');
     if (!/^[A-Z]{2,3}$/.test(team) || (season && !/^\d{8}$/.test(season))) {
-      return new Response(JSON.stringify({ error: 'invalid team or season' }), { status: 400, headers: corsHeaders() });
+      return badRequest('invalid team or season');
     }
-    const kvKey  = `nhl:playoff-odds:${team}:${season || 'latest'}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:playoff-odds:${team}:${season || 'latest'}`, 3600, async () => {
+      const empty = { team, season: season ? Number(season) : null, runDate: null, stale: false, latest: null, history: [], nextGames: [] };
+      const bySeason = season ? `&season=eq.${season}` : '';
+      const cols = 'season,run_date,playoff_pct,division_pct,proj_points,points_p10,points_p90,current_points,games_played,games_remaining,elo_rating,sims,change';
+      let latest;
+      let history;
+      let nextGames;
+      try {
+        const [latestRows, historyRows] = await Promise.all([
+          sbRowsOrThrow(`playoff_odds?select=${cols}&team=eq.${team}${bySeason}&order=run_date.desc&limit=1`),
+          sbRowsOrThrow(`playoff_odds?select=season,run_date,playoff_pct&team=eq.${team}${bySeason}&order=run_date.desc&limit=${HISTORY_MAX}`),
+        ]);
+        latest = latestRows[0] || null;
+        if (!latest) return json(empty);
+        history = historyRows
+          .filter(r => r.season === latest.season)
+          .reverse()
+          .map(({ run_date, playoff_pct }) => ({ run_date, playoff_pct }));
+        const impacts = await sbRowsOrThrow(
+          `playoff_odds_game_impacts?select=game_id,game_date,home_team,away_team,outcome,playoff_pct` +
+          `&season=eq.${latest.season}&run_date=eq.${latest.run_date}&team=eq.${team}`
+        );
+        nextGames = summarizeNextGames(impacts, team);
+      } catch {
+        return json({ ...empty, unavailable: true });
+      }
 
-    const empty = { team, season: season ? Number(season) : null, runDate: null, stale: false, latest: null, history: [], nextGames: [] };
-    const bySeason = season ? `&season=eq.${season}` : '';
-    const cols = 'season,run_date,playoff_pct,division_pct,proj_points,points_p10,points_p90,current_points,games_played,games_remaining,elo_rating,sims,change';
-    let latest;
-    let history;
-    let nextGames;
-    try {
-      const [latestRows, historyRows] = await Promise.all([
-        sbRows(`playoff_odds?select=${cols}&team=eq.${team}${bySeason}&order=run_date.desc&limit=1`),
-        sbRows(`playoff_odds?select=season,run_date,playoff_pct&team=eq.${team}${bySeason}&order=run_date.desc&limit=${HISTORY_MAX}`),
-      ]);
-      latest = latestRows[0] || null;
-      if (!latest) return json(empty);
-      history = historyRows
-        .filter(r => r.season === latest.season)
-        .reverse()
-        .map(({ run_date, playoff_pct }) => ({ run_date, playoff_pct }));
-      const impacts = await sbRows(
-        `playoff_odds_game_impacts?select=game_id,game_date,home_team,away_team,outcome,playoff_pct` +
-        `&season=eq.${latest.season}&run_date=eq.${latest.run_date}&team=eq.${team}`
-      );
-      nextGames = summarizeNextGames(impacts, team);
-    } catch {
-      return json({ ...empty, unavailable: true });
-    }
-
-    const data = {
-      team, season: latest.season, runDate: latest.run_date,
-      stale: isPlayoffOddsStale(latest.run_date), latest, history, nextGames,
-    };
-    await kvPut(env, kvKey, data, 3600);
-    return json(data);
+      const data = {
+        team, season: latest.season, runDate: latest.run_date,
+        stale: isPlayoffOddsStale(latest.run_date), latest, history, nextGames,
+      };
+      return data;
+    });
   }
 
   // ── Injury impact — man-games and WAR lost to injury this season ──────────────
@@ -3584,29 +3459,26 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     const team   = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
     const season = url.searchParams.get('season');
     if (!/^[A-Z]{2,3}$/.test(team) || (season && !/^\d{8}$/.test(season))) {
-      return new Response(JSON.stringify({ error: 'invalid team or season' }), { status: 400, headers: corsHeaders() });
+      return badRequest('invalid team or season');
     }
-    const kvKey  = `nhl:injury-impact:${team}:${season || 'latest'}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:injury-impact:${team}:${season || 'latest'}`, 3600, async () => {
+      const empty = { team, season: season ? Number(season) : null, impact: null, league: null };
+      const bySeason = season ? `&season=eq.${season}` : '';
+      const cols = 'season,team,games_played,man_games_lost,war_lost,players_injured,rank_man_games,rank_war_lost,players,updated_at';
+      let impact;
+      let leagueRows;
+      try {
+        const rows = await sbRowsOrThrow(`team_injury_impact?select=${cols}&team=eq.${team}${bySeason}&order=season.desc&limit=1`);
+        impact = rows[0] || null;
+        if (!impact) return json(empty);
+        leagueRows = await sbRowsOrThrow(`team_injury_impact?select=team,games_played,man_games_lost,war_lost&season=eq.${impact.season}`);
+      } catch {
+        return json({ ...empty, unavailable: true });
+      }
 
-    const empty = { team, season: season ? Number(season) : null, impact: null, league: null };
-    const bySeason = season ? `&season=eq.${season}` : '';
-    const cols = 'season,team,games_played,man_games_lost,war_lost,players_injured,rank_man_games,rank_war_lost,players,updated_at';
-    let impact;
-    let leagueRows;
-    try {
-      const rows = await sbRows(`team_injury_impact?select=${cols}&team=eq.${team}${bySeason}&order=season.desc&limit=1`);
-      impact = rows[0] || null;
-      if (!impact) return json(empty);
-      leagueRows = await sbRows(`team_injury_impact?select=team,games_played,man_games_lost,war_lost&season=eq.${impact.season}`);
-    } catch {
-      return json({ ...empty, unavailable: true });
-    }
-
-    const data = { team, season: impact.season, impact, league: summarizeInjuryLeague(leagueRows) };
-    await kvPut(env, kvKey, data, 3600);
-    return json(data);
+      const data = { team, season: impact.season, impact, league: summarizeInjuryLeague(leagueRows) };
+      return data;
+    });
   }
 
   // ── Probable starters — who's likely to start in goal for a game ──────────────
@@ -3624,24 +3496,21 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   if (url.pathname === '/probable-starters') {
     const gameId = url.searchParams.get('game') || '';
     if (!/^\d{10}$/.test(gameId)) {
-      return new Response(JSON.stringify({ error: 'invalid game' }), { status: 400, headers: corsHeaders() });
+      return badRequest('invalid game');
     }
-    const kvKey  = `nhl:probable-starters:${gameId}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `nhl:probable-starters:${gameId}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `goalie_start_probs?select=team,goalie_id,goalie_name,start_prob,factors,game_date,run_date&game_id=eq.${gameId}`
+        );
+      } catch {
+        return json({ gameId: Number(gameId), gameDate: null, runDate: null, teams: {}, unavailable: true });
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        `goalie_start_probs?select=team,goalie_id,goalie_name,start_prob,factors,game_date,run_date&game_id=eq.${gameId}`
-      );
-    } catch {
-      return json({ gameId: Number(gameId), gameDate: null, runDate: null, teams: {}, unavailable: true });
-    }
-
-    const data = { gameId: Number(gameId), ...summarizeStarters(rows) };
-    if (Object.keys(data.teams).length) await kvPut(env, kvKey, data, 3600);
-    return json(data);
+      const data = { gameId: Number(gameId), ...summarizeStarters(rows) };
+      return Object.keys(data.teams).length ? data : json(data); // an empty result isn't cached
+    });
   }
 
   // ── Prediction scorecard — how the published predictions have done ────────────
@@ -3656,23 +3525,20 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   // probabilities, no betting framing. 1hr KV; neither a failed read
   // (`unavailable: true`) nor an empty table is cached.
   if (url.pathname === '/scorecard') {
-    const kvKey  = 'nhl:scorecard';
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, 'nhl:scorecard', 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          'prediction_scorecard?select=model,kind,period,status,n,accuracy,brier,log_loss,' +
+          'baseline,calibration,recent,note,updated_at'
+        );
+      } catch {
+        return json({ models: {}, updatedAt: null, unavailable: true });
+      }
 
-    let rows;
-    try {
-      rows = await sbRows(
-        'prediction_scorecard?select=model,kind,period,status,n,accuracy,brier,log_loss,' +
-        'baseline,calibration,recent,note,updated_at'
-      );
-    } catch {
-      return json({ models: {}, updatedAt: null, unavailable: true });
-    }
-
-    const data = summarizeScorecard(rows);
-    if (Object.keys(data.models).length) await kvPut(env, kvKey, data, 3600);
-    return json(data);
+      const data = summarizeScorecard(rows);
+      return Object.keys(data.models).length ? data : json(data); // an empty table isn't cached
+    });
   }
 
   // ── Elo ratings — every team's rating, for game win probabilities ─────────────
@@ -3687,22 +3553,19 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   // homeAdvantage }. 1hr KV (ratings change once a night); a failed read
   // returns `unavailable: true`, and neither it nor an empty table is cached.
   if (url.pathname === '/elo/ratings') {
-    const kvKey  = 'nhl:elo-ratings';
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
-
-    let rows;
-    try {
-      rows = await sbRows('team_elo_ratings?select=team,rating');
-    } catch {
-      return json({ ratings: {}, homeAdvantage: ELO_HOME_ADVANTAGE, unavailable: true });
-    }
-    const data = {
-      ratings: Object.fromEntries(rows.map(row => [row.team, Number(row.rating)])),
-      homeAdvantage: ELO_HOME_ADVANTAGE,
-    };
-    if (rows.length) await kvPut(env, kvKey, data, 3600);
-    return json(data);
+    return cachedJson(env, 'nhl:elo-ratings', 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow('team_elo_ratings?select=team,rating');
+      } catch {
+        return json({ ratings: {}, homeAdvantage: ELO_HOME_ADVANTAGE, unavailable: true });
+      }
+      const data = {
+        ratings: Object.fromEntries(rows.map(row => [row.team, Number(row.rating)])),
+        homeAdvantage: ELO_HOME_ADVANTAGE,
+      };
+      return rows.length ? data : json(data); // an empty table isn't cached
+    });
   }
 
   // ── Milestones — hat tricks, shutouts, SH goals, season/career thresholds ─────
@@ -3732,21 +3595,15 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10) || 50, 100);
     const season = isPwhl ? (await resolvePWHLSeason(env)).seasonId : await resolveNHLSeason(env);
 
-    const kvKey  = `milestones:${sport || 'nhl'}:${team || 'all'}:${limit}:${season}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `milestones:${sport || 'nhl'}:${team || 'all'}:${limit}:${season}`, 3600, async () => {
+      let filter = `?order=game_date.desc,id.desc&limit=${limit}&is_pwhl=eq.${isPwhl}&season=eq.${season}`;
+      if (team) filter += `&team=eq.${team}`;
 
-    let filter = `?order=game_date.desc,id.desc&limit=${limit}&is_pwhl=eq.${isPwhl}&season=eq.${season}`;
-    if (team) filter += `&team=eq.${team}`;
+      const rows = await sbRows(`${SB_URL}/rest/v1/milestones${filter}`);
+      if (rows instanceof Response) return rows;
 
-    const r = await fetch(`${SB_URL}/rest/v1/milestones${filter}`, {
-      headers: { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` },
+      return rows;
     });
-    if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
-    const rows = await r.json();
-
-    await kvPut(env, kvKey, rows, 3600);
-    return json(rows);
   }
 
   // NOTE: /pwhl/player/landing lives in pwhl.js, not here — worker.js
@@ -3763,21 +3620,18 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   // call in this app.
   if (url.pathname === '/player/landing') {
     const playerId = url.searchParams.get('id');
-    if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+    if (!playerId) return badRequest('id required');
 
-    const kvKey  = `player:landing:${playerId}`;
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    return cachedJson(env, `player:landing:${playerId}`, 3600, async () => {
+      let data;
+      try {
+        data = await nhlGet(`${NHL_BASE}/player/${playerId}/landing`);
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
 
-    let data;
-    try {
-      data = await nhlGet(`${NHL_BASE}/player/${playerId}/landing`);
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-    }
-
-    await kvPut(env, kvKey, data, 3600);
-    return json(data);
+      return data;
+    });
   }
 
   // ── Draft pick AI analysis ────────────────────────────────────────────────────
@@ -3786,7 +3640,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   // Returns: { analysis: string }
   if (url.pathname === '/draft/analyze' && request.method === 'POST') {
     const secret = request.headers.get('X-Poll-Secret');
-    if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+    if (secret !== env.POLL_SECRET) return unauthorized();
 
     let body;
     try {
@@ -3807,7 +3661,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     });
 
     const analysis = aiResponse.response?.trim() || '';
-    if (!analysis) return new Response(JSON.stringify({ error: 'Empty AI response' }), { status: 502, headers: corsHeaders() });
+    if (!analysis) return errorJson(502, { error: 'Empty AI response' });
 
     console.log(`Draft analyze: ${analysis.slice(0, 80)}...`);
     return json({ analysis });
