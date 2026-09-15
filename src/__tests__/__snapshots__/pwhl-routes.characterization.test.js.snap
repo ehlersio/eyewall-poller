@@ -1,0 +1,6184 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`POST /pwhl/cache/bust > requires the secret and a teamId, then deletes the team and league keys 1`] = `
+{
+  "busted": {
+    "body": {
+      "busted": [
+        "pwhl:shots:1:8",
+        "pwhl:players:1:8",
+        "pwhl:schedule:1:8",
+        "pwhl:lastgame:1:8",
+        "pwhl:roster:1",
+        "pwhl:standings:8",
+        "pwhl:leagueplayers:8",
+        "pwhl:today:8",
+      ],
+      "ok": true,
+    },
+    "status": 200,
+  },
+  "denied": {
+    "body": "Unauthorized",
+    "status": 401,
+  },
+  "kvWrites": [
+    {
+      "deleted": true,
+      "key": "pwhl:shots:1:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:players:1:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:schedule:1:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:lastgame:1:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:roster:1",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:standings:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:leagueplayers:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:today:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:shots:1:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:players:1:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:schedule:1:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:lastgame:1:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:roster:1",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:standings:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:leagueplayers:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:today:8",
+    },
+    {
+      "deleted": true,
+      "key": "pwhl:live:210",
+    },
+  ],
+  "noTeam": {
+    "body": {
+      "error": "teamId required",
+    },
+    "status": 400,
+  },
+  "withGame": {
+    "body": {
+      "busted": [
+        "pwhl:shots:1:8",
+        "pwhl:players:1:8",
+        "pwhl:schedule:1:8",
+        "pwhl:lastgame:1:8",
+        "pwhl:roster:1",
+        "pwhl:standings:8",
+        "pwhl:leagueplayers:8",
+        "pwhl:today:8",
+        "pwhl:live:210",
+      ],
+      "ok": true,
+    },
+    "status": 200,
+  },
+}
+`;
+
+exports[`game-box > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "game_id": 210,
+        "goals_against": 3,
+        "player_id": 6,
+        "saves": 25,
+        "season_id": 8,
+        "shots_against": 28,
+        "team_id": 2,
+        "toi_seconds": 3700,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 1,
+        "game_id": 210,
+        "goals": 1,
+        "player_id": 36,
+        "points": 2,
+        "season_id": 8,
+        "shots": 4,
+        "team_id": 1,
+        "toi_seconds": 1100,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:game-box:210",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`game-box > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`game-box > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`game-box > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "game_id": 210,
+        "goals_against": 3,
+        "player_id": 6,
+        "saves": 25,
+        "season_id": 8,
+        "shots_against": 28,
+        "team_id": 2,
+        "toi_seconds": 3700,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 1,
+        "game_id": 210,
+        "goals": 1,
+        "player_id": 36,
+        "points": 2,
+        "season_id": 8,
+        "shots": 4,
+        "team_id": 1,
+        "toi_seconds": 1100,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:game-box:210",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_skater_game_box?game_id=eq.210&order=team_id.asc",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_goalie_game_box?game_id=eq.210&order=team_id.asc",
+    },
+  ],
+}
+`;
+
+exports[`goalie/percentiles > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "evSvPct": 92.3,
+    "gsax": 4.2,
+    "gsax60": 0.17,
+    "hdSvPct": 85.1,
+    "mdSvPct": null,
+    "percentiles": {
+      "evSv": {
+        "label": "5-on-5 SV%",
+        "note": "Percentile rank vs PWHL goalies, even-strength save percentage",
+        "pct": 81,
+      },
+      "gsax": {
+        "label": "GSAX",
+        "note": "Percentile rank vs PWHL goalies, goals saved above expected (danger-zone xG proxy)",
+        "pct": 77,
+      },
+      "gsax60": {
+        "label": "GSAX/60",
+        "note": "Percentile rank vs PWHL goalies, GSAX per 60 minutes",
+        "pct": 70,
+      },
+      "hdSv": {
+        "label": "High Danger SV%",
+        "note": "Percentile rank vs PWHL goalies, high-danger save percentage",
+        "pct": 65,
+      },
+      "mdSv": {
+        "label": "Med Danger SV%",
+        "note": "Percentile rank vs PWHL goalies, medium-danger save percentage",
+        "pct": null,
+      },
+      "pkSv": {
+        "label": "PK SV%",
+        "note": "Percentile rank vs PWHL goalies, penalty-kill save percentage",
+        "pct": 59,
+      },
+    },
+    "pkSvPct": 88,
+    "player_id": 6,
+    "season_id": 8,
+    "season_type": "regular",
+    "team_id": 2,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:goalie:percentiles:6:8:regular",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`goalie/percentiles > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`goalie/percentiles > missing required param 1`] = `
+{
+  "body": {
+    "error": "id required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`goalie/percentiles > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "evSvPct": 92.3,
+    "gsax": 4.2,
+    "gsax60": 0.17,
+    "hdSvPct": 85.1,
+    "mdSvPct": null,
+    "percentiles": {
+      "evSv": {
+        "label": "5-on-5 SV%",
+        "note": "Percentile rank vs PWHL goalies, even-strength save percentage",
+        "pct": 81,
+      },
+      "gsax": {
+        "label": "GSAX",
+        "note": "Percentile rank vs PWHL goalies, goals saved above expected (danger-zone xG proxy)",
+        "pct": 77,
+      },
+      "gsax60": {
+        "label": "GSAX/60",
+        "note": "Percentile rank vs PWHL goalies, GSAX per 60 minutes",
+        "pct": 70,
+      },
+      "hdSv": {
+        "label": "High Danger SV%",
+        "note": "Percentile rank vs PWHL goalies, high-danger save percentage",
+        "pct": 65,
+      },
+      "mdSv": {
+        "label": "Med Danger SV%",
+        "note": "Percentile rank vs PWHL goalies, medium-danger save percentage",
+        "pct": null,
+      },
+      "pkSv": {
+        "label": "PK SV%",
+        "note": "Percentile rank vs PWHL goalies, penalty-kill save percentage",
+        "pct": 59,
+      },
+    },
+    "pkSvPct": 88,
+    "player_id": 6,
+    "season_id": 8,
+    "season_type": "regular",
+    "team_id": 2,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:goalie:percentiles:6:8:regular",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_goalie_seasons?player_id=eq.6&season_id=eq.8&season_type=eq.regular&limit=1&select=player_id,team_id,season_id,season_type,gsax,gsax_per60,ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv",
+    },
+  ],
+}
+`;
+
+exports[`goalie-shots > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "shots": [
+      {
+        "p": 1,
+        "t": "g",
+        "x": 80.5,
+        "y": -10.2,
+      },
+      {
+        "p": 2,
+        "t": "s",
+        "x": 60,
+        "y": -42,
+      },
+      {
+        "p": 2,
+        "t": "s",
+        "x": 40,
+        "y": 5,
+      },
+      {
+        "p": 1,
+        "t": "s",
+        "x": 70,
+        "y": 12,
+      },
+    ],
+    "total": 4,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:gshots:6:8",
+      "ttl": 21600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`goalie-shots > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`goalie-shots > missing required param 1`] = `
+{
+  "body": {
+    "error": "goalieId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`goalie-shots > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "shots": [
+      {
+        "p": 1,
+        "t": "g",
+        "x": 80.5,
+        "y": -10.2,
+      },
+      {
+        "p": 2,
+        "t": "s",
+        "x": 60,
+        "y": -42,
+      },
+      {
+        "p": 2,
+        "t": "s",
+        "x": 40,
+        "y": 5,
+      },
+      {
+        "p": 1,
+        "t": "s",
+        "x": 70,
+        "y": 12,
+      },
+    ],
+    "total": 4,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:gshots:6:8",
+      "ttl": 21600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_shot_events?goalie_id=eq.6&season_id=eq.8&event_type=in.(goal,shot)&select=event_type,period_id,time_seconds,x_norm,y_norm&limit=1500",
+    },
+  ],
+}
+`;
+
+exports[`lastgame (no completed game) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": null,
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`lastgame (no completed game) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`lastgame (no completed game) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": null,
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?season_id=eq.8&game_state=eq.Final&or=(home_team_id.eq.1,away_team_id.eq.1)&order=game_id.desc&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`lastgame > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "gameId": 210,
+    "gameState": "Final",
+    "isHome": true,
+    "oppAbbr": "MIN",
+    "oppId": 2,
+    "oppScore": 2,
+    "ot": true,
+    "shootout": false,
+    "teamScore": 3,
+    "won": true,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:lastgame:1:8",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`lastgame > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`lastgame > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`lastgame > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "gameId": 210,
+    "gameState": "Final",
+    "isHome": true,
+    "oppAbbr": "MIN",
+    "oppId": 2,
+    "oppScore": 2,
+    "ot": true,
+    "shootout": false,
+    "teamScore": 3,
+    "won": true,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:lastgame:1:8",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?season_id=eq.8&game_state=eq.Final&or=(home_team_id.eq.1,away_team_id.eq.1)&order=game_id.desc&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`league-players > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "ev_sv_pct": 0.9234,
+        "first_name": "Gus",
+        "gaa": 2.41,
+        "goals_against": 62,
+        "gp": 25,
+        "gsax": 4.2,
+        "gsax_per60": 0.17,
+        "hd_sv_pct": 0.851,
+        "last_name": "Keeper",
+        "losses": 9,
+        "md_sv_pct": null,
+        "ot_losses": 4,
+        "pct_ev_sv": 81,
+        "pct_gsax": 77,
+        "pct_gsax60": 70,
+        "pct_hd_sv": 65,
+        "pct_md_sv": null,
+        "pct_pk_sv": 59,
+        "pk_sv_pct": 0.88,
+        "player_id": 6,
+        "player_name": "Gus Keeper",
+        "position": "G",
+        "saves": 700,
+        "season_id": 8,
+        "season_type": "regular",
+        "shutouts": 3,
+        "sv_pct": 0.918,
+        "team_id": 2,
+        "wins": 12,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 15,
+        "finishing": 2.9,
+        "first_name": "Alex",
+        "goals": 12,
+        "gp": 30,
+        "gw_goals": 2,
+        "last_name": "Skater",
+        "pct_a1": 80,
+        "pct_finishing": 88,
+        "pct_goals": 91,
+        "pct_penalties": 40,
+        "pim": 10,
+        "player_id": 36,
+        "player_name": "Alex Skater",
+        "plus_minus": 7,
+        "points": 27,
+        "position": "F",
+        "pp_goals": 4,
+        "season_id": 8,
+        "season_type": "regular",
+        "sh_goals": 1,
+        "shot_pct": 13.3,
+        "shots": 90,
+        "team_id": 1,
+        "toi_per_game": 18.5,
+        "xg_for": 9.1,
+      },
+      {
+        "assists": 9,
+        "finishing": null,
+        "first_name": "Sam",
+        "goals": 3,
+        "gp": 28,
+        "gw_goals": 0,
+        "last_name": "Winger",
+        "pct_a1": null,
+        "pct_finishing": null,
+        "pct_goals": null,
+        "pct_penalties": null,
+        "pim": 18,
+        "player_id": 37,
+        "player_name": "Sam Winger",
+        "plus_minus": -2,
+        "points": 12,
+        "position": "D",
+        "pp_goals": 0,
+        "season_id": 8,
+        "season_type": "regular",
+        "sh_goals": 0,
+        "shot_pct": 7.5,
+        "shots": 40,
+        "team_id": 1,
+        "toi_per_game": null,
+        "xg_for": null,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:leagueplayers:8",
+      "ttl": 7200,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`league-players > Supabase unavailable 1`] = `
+{
+  "kvWrites": [],
+  "threw": "skaters.map is not a function",
+}
+`;
+
+exports[`league-players > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "ev_sv_pct": 0.9234,
+        "first_name": "Gus",
+        "gaa": 2.41,
+        "goals_against": 62,
+        "gp": 25,
+        "gsax": 4.2,
+        "gsax_per60": 0.17,
+        "hd_sv_pct": 0.851,
+        "last_name": "Keeper",
+        "losses": 9,
+        "md_sv_pct": null,
+        "ot_losses": 4,
+        "pct_ev_sv": 81,
+        "pct_gsax": 77,
+        "pct_gsax60": 70,
+        "pct_hd_sv": 65,
+        "pct_md_sv": null,
+        "pct_pk_sv": 59,
+        "pk_sv_pct": 0.88,
+        "player_id": 6,
+        "player_name": "Gus Keeper",
+        "position": "G",
+        "saves": 700,
+        "season_id": 8,
+        "season_type": "regular",
+        "shutouts": 3,
+        "sv_pct": 0.918,
+        "team_id": 2,
+        "wins": 12,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 15,
+        "finishing": 2.9,
+        "first_name": "Alex",
+        "goals": 12,
+        "gp": 30,
+        "gw_goals": 2,
+        "last_name": "Skater",
+        "pct_a1": 80,
+        "pct_finishing": 88,
+        "pct_goals": 91,
+        "pct_penalties": 40,
+        "pim": 10,
+        "player_id": 36,
+        "player_name": "Alex Skater",
+        "plus_minus": 7,
+        "points": 27,
+        "position": "F",
+        "pp_goals": 4,
+        "season_id": 8,
+        "season_type": "regular",
+        "sh_goals": 1,
+        "shot_pct": 13.3,
+        "shots": 90,
+        "team_id": 1,
+        "toi_per_game": 18.5,
+        "xg_for": 9.1,
+      },
+      {
+        "assists": 9,
+        "finishing": null,
+        "first_name": "Sam",
+        "goals": 3,
+        "gp": 28,
+        "gw_goals": 0,
+        "last_name": "Winger",
+        "pct_a1": null,
+        "pct_finishing": null,
+        "pct_goals": null,
+        "pct_penalties": null,
+        "pim": 18,
+        "player_id": 37,
+        "player_name": "Sam Winger",
+        "plus_minus": -2,
+        "points": 12,
+        "position": "D",
+        "pp_goals": 0,
+        "season_id": 8,
+        "season_type": "regular",
+        "sh_goals": 0,
+        "shot_pct": 7.5,
+        "shots": 40,
+        "team_id": 1,
+        "toi_per_game": null,
+        "xg_for": null,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:leagueplayers:8",
+      "ttl": 7200,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_player_seasons?season_id=eq.8&season_type=eq.regular&select=player_id,team_id,goals,assists,points,gp,shots,shot_pct,pp_goals,sh_goals,gw_goals,pim,plus_minus&order=points.desc&limit=300",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_goalie_seasons?season_id=eq.8&season_type=eq.regular&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against&order=sv_pct.desc&limit=50",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?select=player_id,first_name,last_name,position,team_id&limit=500",
+    },
+  ],
+}
+`;
+
+exports[`live/:gameId > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "HockeyTech PBP 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`live/:gameId > Supabase unavailable 1`] = `
+{
+  "body": {
+    "awayScore": 0,
+    "awayTeamId": null,
+    "events": [
+      {
+        "eventType": "faceoff",
+        "homePlayer": {
+          "firstName": "Alex",
+          "id": 36,
+          "jerseyNumber": null,
+          "lastName": "Skater",
+        },
+        "homeWin": true,
+        "period": 1,
+        "time": "0:00",
+        "timeSeconds": 0,
+        "visitingPlayer": {
+          "firstName": "Opp",
+          "id": 7010,
+          "jerseyNumber": null,
+          "lastName": "Center",
+        },
+        "x": 0,
+        "y": 0,
+      },
+      {
+        "blocker": null,
+        "eventType": "shot",
+        "goalie": {
+          "firstName": "Home",
+          "id": 7003,
+          "jerseyNumber": null,
+          "lastName": "Goalie",
+        },
+        "isGoal": false,
+        "period": 1,
+        "shooter": {
+          "firstName": "Opp",
+          "id": 7010,
+          "jerseyNumber": null,
+          "lastName": "Center",
+        },
+        "shotQuality": "Quality",
+        "shotType": "Wrist",
+        "teamId": 2,
+        "time": "1:10",
+        "timeSeconds": 70,
+        "x": 100,
+        "y": 50,
+      },
+      {
+        "blocker": {
+          "firstName": "Opp",
+          "id": 7012,
+          "jerseyNumber": null,
+          "lastName": "Blocker",
+        },
+        "eventType": "blocked_shot",
+        "goalie": null,
+        "isGoal": false,
+        "period": 1,
+        "shooter": {
+          "firstName": "Sam",
+          "id": 37,
+          "jerseyNumber": null,
+          "lastName": "Winger",
+        },
+        "shotQuality": null,
+        "shotType": null,
+        "teamId": 1,
+        "time": "2:30",
+        "timeSeconds": 150,
+        "x": null,
+        "y": null,
+      },
+      {
+        "eventType": "hit",
+        "onPlayer": {
+          "firstName": "Alex",
+          "id": 36,
+          "jerseyNumber": null,
+          "lastName": "Skater",
+        },
+        "period": 1,
+        "player": {
+          "firstName": "Opp",
+          "id": 7012,
+          "jerseyNumber": null,
+          "lastName": "Blocker",
+        },
+        "teamId": 2,
+        "time": "3:00",
+        "timeSeconds": 180,
+        "x": 20,
+        "y": -30,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 37,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": false,
+        "isGameWinner": false,
+        "isPenaltyShot": false,
+        "isPowerPlay": true,
+        "isShortHanded": false,
+        "minusPlayers": [],
+        "period": 1,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 37,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 36,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "BOS",
+        "teamId": 1,
+        "time": "4:00",
+        "timeSeconds": 240,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "description": "Min-Hooking",
+        "eventType": "penalty",
+        "isBench": false,
+        "isPowerPlay": true,
+        "minutes": 2,
+        "period": 1,
+        "servedBy": null,
+        "takenBy": {
+          "firstName": "Opp",
+          "id": 7010,
+          "jerseyNumber": null,
+          "lastName": "Center",
+        },
+        "teamAbbrev": "MIN",
+        "teamId": 2,
+        "time": "8:00",
+        "timeSeconds": 480,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 37,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": false,
+        "isGameWinner": false,
+        "isPenaltyShot": false,
+        "isPowerPlay": false,
+        "isShortHanded": true,
+        "minusPlayers": [],
+        "period": 2,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 37,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 36,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "BOS",
+        "teamId": 1,
+        "time": "2:00",
+        "timeSeconds": 120,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 37,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": true,
+        "isGameWinner": true,
+        "isPenaltyShot": false,
+        "isPowerPlay": false,
+        "isShortHanded": false,
+        "minusPlayers": [],
+        "period": 3,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 37,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 36,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "BOS",
+        "teamId": 1,
+        "time": "15:00",
+        "timeSeconds": 900,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "eventType": "goalie_change",
+        "goalieIn": null,
+        "goalieOut": {
+          "firstName": "Gus",
+          "id": 6,
+          "jerseyNumber": null,
+          "lastName": "Keeper",
+        },
+        "period": 3,
+        "teamId": 2,
+        "time": "18:00",
+        "timeSeconds": 1080,
+      },
+    ],
+    "faceoffStats": {
+      "36": {
+        "attempts": 10,
+        "losses": 4,
+        "wins": 6,
+      },
+      "7010": {
+        "attempts": 10,
+        "losses": 6,
+        "wins": 4,
+      },
+    },
+    "gameId": 210,
+    "gameStatus": "pre",
+    "goalieStats": [
+      {
+        "goalsAgainst": 2,
+        "name": "Home Goalie",
+        "playerId": 7003,
+        "saves": 26,
+        "shotsAgainst": 28,
+        "toi": "60:00",
+      },
+      {
+        "goalsAgainst": 3,
+        "name": "Gus Keeper",
+        "playerId": 6,
+        "saves": 25,
+        "shotsAgainst": 28,
+        "toi": "59:10",
+      },
+    ],
+    "homeScore": 0,
+    "homeTeamId": null,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:live:210",
+      "ttl": 60,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`live/:gameId > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`live/:gameId > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "awayScore": 0,
+    "awayTeamId": 2,
+    "events": [
+      {
+        "eventType": "faceoff",
+        "homePlayer": {
+          "firstName": "Alex",
+          "id": 36,
+          "jerseyNumber": null,
+          "lastName": "Skater",
+        },
+        "homeWin": true,
+        "period": 1,
+        "time": "0:00",
+        "timeSeconds": 0,
+        "visitingPlayer": {
+          "firstName": "Opp",
+          "id": 7010,
+          "jerseyNumber": null,
+          "lastName": "Center",
+        },
+        "x": 0,
+        "y": 0,
+      },
+      {
+        "blocker": null,
+        "eventType": "shot",
+        "goalie": {
+          "firstName": "Home",
+          "id": 7003,
+          "jerseyNumber": null,
+          "lastName": "Goalie",
+        },
+        "isGoal": false,
+        "period": 1,
+        "shooter": {
+          "firstName": "Opp",
+          "id": 7010,
+          "jerseyNumber": null,
+          "lastName": "Center",
+        },
+        "shotQuality": "Quality",
+        "shotType": "Wrist",
+        "teamId": 2,
+        "time": "1:10",
+        "timeSeconds": 70,
+        "x": 100,
+        "y": 50,
+      },
+      {
+        "blocker": {
+          "firstName": "Opp",
+          "id": 7012,
+          "jerseyNumber": null,
+          "lastName": "Blocker",
+        },
+        "eventType": "blocked_shot",
+        "goalie": null,
+        "isGoal": false,
+        "period": 1,
+        "shooter": {
+          "firstName": "Sam",
+          "id": 37,
+          "jerseyNumber": null,
+          "lastName": "Winger",
+        },
+        "shotQuality": null,
+        "shotType": null,
+        "teamId": 1,
+        "time": "2:30",
+        "timeSeconds": 150,
+        "x": null,
+        "y": null,
+      },
+      {
+        "eventType": "hit",
+        "onPlayer": {
+          "firstName": "Alex",
+          "id": 36,
+          "jerseyNumber": null,
+          "lastName": "Skater",
+        },
+        "period": 1,
+        "player": {
+          "firstName": "Opp",
+          "id": 7012,
+          "jerseyNumber": null,
+          "lastName": "Blocker",
+        },
+        "teamId": 2,
+        "time": "3:00",
+        "timeSeconds": 180,
+        "x": 20,
+        "y": -30,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 37,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": false,
+        "isGameWinner": false,
+        "isPenaltyShot": false,
+        "isPowerPlay": true,
+        "isShortHanded": false,
+        "minusPlayers": [],
+        "period": 1,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 37,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 36,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "BOS",
+        "teamId": 1,
+        "time": "4:00",
+        "timeSeconds": 240,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "description": "Min-Hooking",
+        "eventType": "penalty",
+        "isBench": false,
+        "isPowerPlay": true,
+        "minutes": 2,
+        "period": 1,
+        "servedBy": null,
+        "takenBy": {
+          "firstName": "Opp",
+          "id": 7010,
+          "jerseyNumber": null,
+          "lastName": "Center",
+        },
+        "teamAbbrev": "MIN",
+        "teamId": 2,
+        "time": "8:00",
+        "timeSeconds": 480,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 37,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": false,
+        "isGameWinner": false,
+        "isPenaltyShot": false,
+        "isPowerPlay": false,
+        "isShortHanded": true,
+        "minusPlayers": [],
+        "period": 2,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 37,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 36,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "BOS",
+        "teamId": 1,
+        "time": "2:00",
+        "timeSeconds": 120,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "assists": [
+          {
+            "firstName": "Sam",
+            "id": 37,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "eventType": "goal",
+        "isEmptyNet": true,
+        "isGameWinner": true,
+        "isPenaltyShot": false,
+        "isPowerPlay": false,
+        "isShortHanded": false,
+        "minusPlayers": [],
+        "period": 3,
+        "plusPlayers": [
+          {
+            "firstName": "Sam",
+            "id": 37,
+            "jerseyNumber": null,
+            "lastName": "Winger",
+          },
+        ],
+        "scoredBy": {
+          "firstName": "Alex",
+          "id": 36,
+          "jerseyNumber": "19",
+          "lastName": "Skater",
+        },
+        "teamAbbrev": "BOS",
+        "teamId": 1,
+        "time": "15:00",
+        "timeSeconds": 900,
+        "x": 150,
+        "y": 80,
+      },
+      {
+        "eventType": "goalie_change",
+        "goalieIn": null,
+        "goalieOut": {
+          "firstName": "Gus",
+          "id": 6,
+          "jerseyNumber": null,
+          "lastName": "Keeper",
+        },
+        "period": 3,
+        "teamId": 2,
+        "time": "18:00",
+        "timeSeconds": 1080,
+      },
+    ],
+    "faceoffStats": {
+      "36": {
+        "attempts": 10,
+        "losses": 4,
+        "wins": 6,
+      },
+      "7010": {
+        "attempts": 10,
+        "losses": 6,
+        "wins": 4,
+      },
+    },
+    "gameId": 210,
+    "gameStatus": "final",
+    "goalieStats": [
+      {
+        "goalsAgainst": 2,
+        "name": "Home Goalie",
+        "playerId": 7003,
+        "saves": 26,
+        "shotsAgainst": 28,
+        "teamId": 1,
+        "toi": "60:00",
+      },
+      {
+        "goalsAgainst": 3,
+        "name": "Gus Keeper",
+        "playerId": 6,
+        "saves": 25,
+        "shotsAgainst": 28,
+        "teamId": 2,
+        "toi": "59:10",
+      },
+    ],
+    "homeScore": 3,
+    "homeTeamId": 1,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:live:210",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
+    },
+    {
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.210&select=home_team_id,away_team_id,game_state,game_status_code&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`news > GET /pwhl/news with a cold cache returns [] and fetches every source in the background 1`] = `
+{
+  "health": {
+    "health:pwhl:athletic-pwhl": {
+      "consecutiveFailures": 0,
+      "itemCount": 0,
+      "key": "pwhl:athletic-pwhl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+    "health:pwhl:hockeynews-pwhl": {
+      "consecutiveFailures": 0,
+      "itemCount": 0,
+      "key": "pwhl:hockeynews-pwhl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+    "health:pwhl:sportsnet-pwhl": {
+      "consecutiveFailures": 0,
+      "itemCount": 0,
+      "key": "pwhl:sportsnet-pwhl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+    "health:pwhl:thescore-pwhl": {
+      "consecutiveFailures": 0,
+      "itemCount": 0,
+      "key": "pwhl:thescore-pwhl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "health:pwhl:hockeynews-pwhl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:pwhl:thescore-pwhl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:pwhl:athletic-pwhl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:pwhl:sportsnet-pwhl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "pwhl:news",
+      "ttl": 300,
+    },
+  ],
+  "res": {
+    "body": [],
+    "status": 200,
+  },
+  "stored": [],
+  "upstream": [
+    {
+      "url": "https://thehockeynews.com/feed",
+    },
+    {
+      "url": "https://origin-feeds.thescore.com/hockey.rss",
+    },
+    {
+      "url": "https://www.nytimes.com/athletic/rss/womens-hockey/",
+    },
+    {
+      "url": "https://www.sportsnet.ca/feed/",
+    },
+  ],
+}
+`;
+
+exports[`news > POST /pwhl/news/bust requires the secret, then clears the cache 1`] = `
+{
+  "busted": {
+    "body": {
+      "busted": [
+        "pwhl:news",
+      ],
+      "ok": true,
+    },
+    "status": 200,
+  },
+  "denied": {
+    "body": "Unauthorized",
+    "status": 401,
+  },
+  "kvWrites": [
+    {
+      "deleted": true,
+      "key": "pwhl:news",
+    },
+  ],
+  "remaining": null,
+}
+`;
+
+exports[`news > POST /pwhl/news/ingest requires the secret, rejects non-arrays, and merges with the cached list 1`] = `
+{
+  "bad": {
+    "body": "Bad request: Expected array",
+    "status": 400,
+  },
+  "denied": {
+    "body": "Unauthorized",
+    "status": 401,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:news",
+      "ttl": 90000,
+    },
+    {
+      "key": "health:pwhl:pipeline-ingest",
+      "ttl": 2592000,
+    },
+  ],
+  "ok": {
+    "body": {
+      "ok": true,
+      "received": 2,
+      "total": 3,
+    },
+    "status": 200,
+  },
+  "stored": [
+    {
+      "id": "new-1",
+      "publishedAt": "2026-01-14T00:00:00.000Z",
+      "title": "New A (same link)",
+      "url": "https://news.example/a",
+    },
+    {
+      "id": "new-2",
+      "publishedAt": "2026-01-12T00:00:00.000Z",
+      "title": "New C",
+      "url": "https://news.example/c",
+    },
+    {
+      "id": "old-2",
+      "publishedAt": "2026-01-01T00:00:00.000Z",
+      "title": "Old B",
+      "url": "https://news.example/b",
+    },
+  ],
+}
+`;
+
+exports[`news > fetchPWHLNews: a failing source is recorded in health and skipped; cached articles are merged in 1`] = `
+{
+  "health": {
+    "health:pwhl:athletic-pwhl": {
+      "consecutiveFailures": 0,
+      "itemCount": 0,
+      "key": "pwhl:athletic-pwhl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+    "health:pwhl:hockeynews-pwhl": {
+      "consecutiveFailures": 0,
+      "itemCount": 0,
+      "key": "pwhl:hockeynews-pwhl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+    "health:pwhl:sportsnet-pwhl": {
+      "consecutiveFailures": 0,
+      "itemCount": 0,
+      "key": "pwhl:sportsnet-pwhl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSuccessAt": "2026-01-15T23:30:00.000Z",
+    },
+    "health:pwhl:thescore-pwhl": {
+      "consecutiveFailures": 1,
+      "error": "HTTP 503",
+      "key": "pwhl:thescore-pwhl",
+      "lastAttemptAt": "2026-01-15T23:30:00.000Z",
+      "lastError": "HTTP 503",
+      "lastErrorAt": "2026-01-15T23:30:00.000Z",
+      "lastSuccessAt": null,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "health:pwhl:hockeynews-pwhl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:pwhl:thescore-pwhl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:pwhl:athletic-pwhl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:pwhl:sportsnet-pwhl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "pwhl:news",
+      "ttl": 90000,
+    },
+  ],
+  "merged": [
+    {
+      "id": "kept-1",
+      "publishedAt": "2026-01-01T00:00:00.000Z",
+      "title": "Kept",
+      "url": "https://news.example/kept",
+    },
+  ],
+  "upstream": [
+    {
+      "url": "https://thehockeynews.com/feed",
+    },
+    {
+      "url": "https://origin-feeds.thescore.com/hockey.rss",
+    },
+    {
+      "url": "https://www.nytimes.com/athletic/rss/womens-hockey/",
+    },
+    {
+      "url": "https://www.sportsnet.ca/feed/",
+    },
+  ],
+}
+`;
+
+exports[`news > fetchPWHLNews: every source down caches an empty list briefly 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "health:pwhl:hockeynews-pwhl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:pwhl:thescore-pwhl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:pwhl:athletic-pwhl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "health:pwhl:sportsnet-pwhl",
+      "ttl": 2592000,
+    },
+    {
+      "key": "pwhl:news",
+      "ttl": 300,
+    },
+  ],
+  "merged": [],
+}
+`;
+
+exports[`pbp (game not in the log) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "event_type": "hit",
+      "game_id": 210,
+      "period_id": 1,
+      "player_id": 36,
+      "secondary_player_id": 7010,
+      "team_id": 1,
+      "time_seconds": 120,
+    },
+    {
+      "event_type": "penalty",
+      "game_id": 210,
+      "period_id": 1,
+      "player_id": 37,
+      "secondary_player_id": null,
+      "team_id": null,
+      "time_seconds": 400,
+    },
+    {
+      "event_type": "faceoff",
+      "game_id": 210,
+      "period_id": 2,
+      "player_id": 7010,
+      "secondary_player_id": 36,
+      "team_id": 2,
+      "time_seconds": 0,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:pbp:210",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`pbp (game not in the log) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase error",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`pbp (game not in the log) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "event_type": "hit",
+      "game_id": 210,
+      "period_id": 1,
+      "player_id": 36,
+      "secondary_player_id": 7010,
+      "team_id": 1,
+      "time_seconds": 120,
+    },
+    {
+      "event_type": "penalty",
+      "game_id": 210,
+      "period_id": 1,
+      "player_id": 37,
+      "secondary_player_id": null,
+      "team_id": null,
+      "time_seconds": 400,
+    },
+    {
+      "event_type": "faceoff",
+      "game_id": 210,
+      "period_id": 2,
+      "player_id": 7010,
+      "secondary_player_id": 36,
+      "team_id": 2,
+      "time_seconds": 0,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:pbp:210",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_pbp_events?game_id=eq.210&order=period_id.asc,time_seconds.asc&limit=500",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.210&select=home_team_id,away_team_id&limit=1",
+    },
+  ],
+}
+`;
+
+exports[`pbp > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "away_team_id": 2,
+    "events": [
+      {
+        "_away_team_id": 2,
+        "_home_team_id": 1,
+        "event_type": "hit",
+        "game_id": 210,
+        "period_id": 1,
+        "player_id": 36,
+        "player_name": "Alex Skater",
+        "secondary_player_id": 7010,
+        "team_id": 1,
+        "time_seconds": 120,
+      },
+      {
+        "_away_team_id": 2,
+        "_home_team_id": 1,
+        "event_type": "penalty",
+        "game_id": 210,
+        "period_id": 1,
+        "player_id": 37,
+        "player_name": "Sam Winger",
+        "secondary_player_id": null,
+        "team_id": 1,
+        "time_seconds": 400,
+      },
+      {
+        "_away_team_id": 2,
+        "_home_team_id": 1,
+        "event_type": "faceoff",
+        "game_id": 210,
+        "period_id": 2,
+        "player_id": 7010,
+        "secondary_player_id": 36,
+        "secondary_player_name": "Alex Skater",
+        "team_id": 2,
+        "time_seconds": 0,
+      },
+    ],
+    "faceoff_stats": {},
+    "goalie_stats": [],
+    "home_team_id": 1,
+    "opp_shots": [
+      {
+        "event_type": "goal",
+        "game_id": 210,
+        "goalie_id": 6,
+        "is_home": true,
+        "period_id": 1,
+        "shooter_id": 36,
+        "shooter_name": "Alex Skater",
+        "team_id": 1,
+        "time_seconds": 300,
+        "x_norm": 80.5,
+        "y_norm": -10.2,
+      },
+      {
+        "event_type": "shot",
+        "game_id": 210,
+        "goalie_id": 6,
+        "is_home": true,
+        "period_id": 2,
+        "shooter_id": 36,
+        "shooter_name": "Alex Skater",
+        "team_id": 1,
+        "time_seconds": 900,
+        "x_norm": -60,
+        "y_norm": 50,
+      },
+      {
+        "event_type": "blocked_shot",
+        "game_id": 210,
+        "goalie_id": null,
+        "is_home": true,
+        "period_id": 2,
+        "shooter_id": 37,
+        "shooter_name": "Sam Winger",
+        "team_id": 1,
+        "time_seconds": 950,
+        "x_norm": 40,
+        "y_norm": 5,
+      },
+      {
+        "event_type": "missed_shot",
+        "game_id": 210,
+        "goalie_id": null,
+        "is_home": true,
+        "period_id": 3,
+        "shooter_id": 36,
+        "shooter_name": "Alex Skater",
+        "team_id": 1,
+        "time_seconds": 100,
+        "x_norm": "n/a",
+        "y_norm": 0,
+      },
+      {
+        "event_type": "shot",
+        "game_id": 210,
+        "goalie_id": 7003,
+        "is_home": false,
+        "period_id": 1,
+        "shooter_id": 7010,
+        "shooter_name": null,
+        "team_id": 2,
+        "time_seconds": 500,
+        "x_norm": 70,
+        "y_norm": 12,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:pbp:210",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`pbp > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase error",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`pbp > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`pbp > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "away_team_id": 2,
+    "events": [
+      {
+        "_away_team_id": 2,
+        "_home_team_id": 1,
+        "event_type": "hit",
+        "game_id": 210,
+        "period_id": 1,
+        "player_id": 36,
+        "player_name": "Alex Skater",
+        "secondary_player_id": 7010,
+        "team_id": 1,
+        "time_seconds": 120,
+      },
+      {
+        "_away_team_id": 2,
+        "_home_team_id": 1,
+        "event_type": "penalty",
+        "game_id": 210,
+        "period_id": 1,
+        "player_id": 37,
+        "player_name": "Sam Winger",
+        "secondary_player_id": null,
+        "team_id": 1,
+        "time_seconds": 400,
+      },
+      {
+        "_away_team_id": 2,
+        "_home_team_id": 1,
+        "event_type": "faceoff",
+        "game_id": 210,
+        "period_id": 2,
+        "player_id": 7010,
+        "secondary_player_id": 36,
+        "secondary_player_name": "Alex Skater",
+        "team_id": 2,
+        "time_seconds": 0,
+      },
+    ],
+    "faceoff_stats": {
+      "36": {
+        "attempts": 10,
+        "losses": 4,
+        "name": "Alex Skater",
+        "wins": 6,
+      },
+      "7010": {
+        "attempts": 10,
+        "losses": 6,
+        "name": "Opp Center",
+        "wins": 4,
+      },
+    },
+    "goalie_stats": [
+      {
+        "goals_against": 2,
+        "name": "Home Goalie",
+        "player_id": "7003",
+        "saves": 26,
+        "shots_against": 28,
+        "team_id": 1,
+        "toi": "60:00",
+      },
+      {
+        "goals_against": 3,
+        "name": "Gus Keeper",
+        "player_id": "6",
+        "saves": 25,
+        "shots_against": 28,
+        "team_id": 2,
+        "toi": "59:10",
+      },
+    ],
+    "home_team_id": 1,
+    "opp_shots": [
+      {
+        "event_type": "goal",
+        "game_id": 210,
+        "goalie_id": 6,
+        "is_home": true,
+        "period_id": 1,
+        "shooter_id": 36,
+        "shooter_name": "Alex Skater",
+        "team_id": 1,
+        "time_seconds": 300,
+        "x_norm": 80.5,
+        "y_norm": -10.2,
+      },
+      {
+        "event_type": "shot",
+        "game_id": 210,
+        "goalie_id": 6,
+        "is_home": true,
+        "period_id": 2,
+        "shooter_id": 36,
+        "shooter_name": "Alex Skater",
+        "team_id": 1,
+        "time_seconds": 900,
+        "x_norm": -60,
+        "y_norm": 50,
+      },
+      {
+        "event_type": "blocked_shot",
+        "game_id": 210,
+        "goalie_id": null,
+        "is_home": true,
+        "period_id": 2,
+        "shooter_id": 37,
+        "shooter_name": "Sam Winger",
+        "team_id": 1,
+        "time_seconds": 950,
+        "x_norm": 40,
+        "y_norm": 5,
+      },
+      {
+        "event_type": "missed_shot",
+        "game_id": 210,
+        "goalie_id": null,
+        "is_home": true,
+        "period_id": 3,
+        "shooter_id": 36,
+        "shooter_name": "Alex Skater",
+        "team_id": 1,
+        "time_seconds": 100,
+        "x_norm": "n/a",
+        "y_norm": 0,
+      },
+      {
+        "event_type": "shot",
+        "game_id": 210,
+        "goalie_id": 7003,
+        "is_home": false,
+        "period_id": 1,
+        "shooter_id": 7010,
+        "shooter_name": null,
+        "team_id": 2,
+        "time_seconds": 500,
+        "x_norm": 70,
+        "y_norm": 12,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:pbp:210",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_pbp_events?game_id=eq.210&order=period_id.asc,time_seconds.asc&limit=500",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.210&select=home_team_id,away_team_id&limit=1",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?team_id=in.(1,2)&select=player_id,first_name,last_name,team_id&limit=120",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_shot_events?game_id=eq.210&select=shooter_id,team_id,event_type,period_id,time_seconds,x_norm,y_norm,is_home&limit=400",
+    },
+    {
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
+    },
+  ],
+}
+`;
+
+exports[`player/career > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "HockeyTech 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player/career > Supabase unavailable 1`] = `
+{
+  "body": {
+    "bioPoints": [
+      "Captain & leader",
+      "All-Star in 2025",
+    ],
+    "draft": {
+      "draft_round": 3,
+      "draft_team": "Boston",
+      "draft_year": 2023,
+    },
+    "photo": {
+      "height": 240,
+      "url": "https://img.example/b.jpg",
+      "width": 240,
+    },
+    "player_id": 36,
+    "playoffs": {
+      "games_played": 8,
+      "goals": 3,
+    },
+    "recentGames": [
+      {
+        "assists": 1,
+        "game": "Jan 7",
+        "goals": 0,
+        "points": 1,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 6",
+        "goals": 1,
+        "points": 2,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 5",
+        "goals": 0,
+        "points": 1,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 4",
+        "goals": 1,
+        "points": 2,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 3",
+        "goals": 0,
+        "points": 1,
+      },
+    ],
+    "regularSeason": {
+      "games_played": 90,
+      "goals": 31,
+      "points": 70,
+      "shooting_percentage": 12.5,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:player:career:36",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player/career > missing required param 1`] = `
+{
+  "body": {
+    "error": "id required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`player/career > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "bioPoints": [
+      "Captain & leader",
+      "All-Star in 2025",
+    ],
+    "draft": {
+      "draft_round": 3,
+      "draft_team": "Boston",
+      "draft_year": 2023,
+    },
+    "photo": {
+      "height": 240,
+      "url": "https://img.example/b.jpg",
+      "width": 240,
+    },
+    "player_id": 36,
+    "playoffs": {
+      "games_played": 8,
+      "goals": 3,
+    },
+    "recentGames": [
+      {
+        "assists": 1,
+        "game": "Jan 7",
+        "goals": 0,
+        "points": 1,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 6",
+        "goals": 1,
+        "points": 2,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 5",
+        "goals": 0,
+        "points": 1,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 4",
+        "goals": 1,
+        "points": 2,
+      },
+      {
+        "assists": 1,
+        "game": "Jan 3",
+        "goals": 0,
+        "points": 1,
+      },
+    ],
+    "regularSeason": {
+      "games_played": 90,
+      "goals": 31,
+      "points": 70,
+      "shooting_percentage": 12.5,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:player:career:36",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=player&player_id=36&site_id=0&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=&statsType=standard",
+    },
+  ],
+}
+`;
+
+exports[`player/landing (goalie, latest season) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "birth_city": "Oslo",
+    "birth_date": "1999-11-12",
+    "ev_sv_pct": 0.9234,
+    "first_name": "Gus",
+    "gaa": 2.41,
+    "goals_against": 62,
+    "gp": 25,
+    "gsax": 4.2,
+    "gsax_per60": 0.17,
+    "hd_sv_pct": 0.851,
+    "jersey_number": 30,
+    "last_name": "Keeper",
+    "losses": 9,
+    "md_sv_pct": null,
+    "ot_losses": 4,
+    "pct_ev_sv": 81,
+    "pct_gsax": 77,
+    "pct_gsax60": 70,
+    "pct_hd_sv": 65,
+    "pct_md_sv": null,
+    "pct_pk_sv": 59,
+    "pk_sv_pct": 0.88,
+    "player_id": 6,
+    "position": "G",
+    "saves": 700,
+    "season_id": 8,
+    "season_type": "regular",
+    "shoots": "L",
+    "shutouts": 3,
+    "sv_pct": 0.918,
+    "team_id": 2,
+    "wins": 12,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:player:landing:6:latest",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player/landing (goalie, latest season) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player/landing (goalie, latest season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "birth_city": "Oslo",
+    "birth_date": "1999-11-12",
+    "ev_sv_pct": 0.9234,
+    "first_name": "Gus",
+    "gaa": 2.41,
+    "goals_against": 62,
+    "gp": 25,
+    "gsax": 4.2,
+    "gsax_per60": 0.17,
+    "hd_sv_pct": 0.851,
+    "jersey_number": 30,
+    "last_name": "Keeper",
+    "losses": 9,
+    "md_sv_pct": null,
+    "ot_losses": 4,
+    "pct_ev_sv": 81,
+    "pct_gsax": 77,
+    "pct_gsax60": 70,
+    "pct_hd_sv": 65,
+    "pct_md_sv": null,
+    "pct_pk_sv": 59,
+    "pk_sv_pct": 0.88,
+    "player_id": 6,
+    "position": "G",
+    "saves": 700,
+    "season_id": 8,
+    "season_type": "regular",
+    "shoots": "L",
+    "shutouts": 3,
+    "sv_pct": 0.918,
+    "team_id": 2,
+    "wins": 12,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:player:landing:6:latest",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?player_id=eq.6&select=*",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_goalie_seasons?player_id=eq.6&season_type=eq.regular&order=season_id.desc&limit=1&select=*",
+    },
+  ],
+}
+`;
+
+exports[`player/landing (skater) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "assists": 15,
+    "birth_city": "Boston",
+    "birth_date": "2001-03-04",
+    "finishing": 2.9,
+    "first_name": "Alex",
+    "goals": 12,
+    "gp": 30,
+    "gw_goals": 2,
+    "jersey_number": 19,
+    "last_name": "Skater",
+    "pct_a1": 80,
+    "pct_finishing": 88,
+    "pct_goals": 91,
+    "pct_penalties": 40,
+    "pim": 10,
+    "player_id": 36,
+    "plus_minus": 7,
+    "points": 27,
+    "position": "F",
+    "pp_goals": 4,
+    "season_id": 8,
+    "season_type": "regular",
+    "sh_goals": 1,
+    "shoots": "L",
+    "shot_pct": 13.3,
+    "shots": 90,
+    "team_id": 1,
+    "toi_per_game": 18.5,
+    "xg_for": 9.1,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:player:landing:36:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player/landing (skater) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player/landing (skater) > missing required param 1`] = `
+{
+  "body": {
+    "error": "id required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`player/landing (skater) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "assists": 15,
+    "birth_city": "Boston",
+    "birth_date": "2001-03-04",
+    "finishing": 2.9,
+    "first_name": "Alex",
+    "goals": 12,
+    "gp": 30,
+    "gw_goals": 2,
+    "jersey_number": 19,
+    "last_name": "Skater",
+    "pct_a1": 80,
+    "pct_finishing": 88,
+    "pct_goals": 91,
+    "pct_penalties": 40,
+    "pim": 10,
+    "player_id": 36,
+    "plus_minus": 7,
+    "points": 27,
+    "position": "F",
+    "pp_goals": 4,
+    "season_id": 8,
+    "season_type": "regular",
+    "sh_goals": 1,
+    "shoots": "L",
+    "shot_pct": 13.3,
+    "shots": 90,
+    "team_id": 1,
+    "toi_per_game": 18.5,
+    "xg_for": 9.1,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:player:landing:36:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?player_id=eq.36&select=*",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_player_seasons?player_id=eq.36&season_id=eq.8&limit=1&select=*",
+    },
+  ],
+}
+`;
+
+exports[`player/landing (unknown player) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "Player not found",
+  },
+  "kvWrites": [],
+  "status": 404,
+}
+`;
+
+exports[`player/landing (unknown player) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player/landing (unknown player) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "error": "Player not found",
+  },
+  "kvWrites": [],
+  "status": 404,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?player_id=eq.1&select=*",
+    },
+  ],
+}
+`;
+
+exports[`player/percentiles (no row, playoffs) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "finishing": null,
+    "percentiles": {
+      "a1": {
+        "label": "1st Assists",
+        "note": "Percentile rank vs league, primary assists",
+        "pct": null,
+      },
+      "finishing": {
+        "label": "Finishing",
+        "note": "Percentile rank vs league, goals above xGoals",
+        "pct": null,
+      },
+      "goals": {
+        "label": "Goals",
+        "note": "Percentile rank vs league, goals",
+        "pct": null,
+      },
+      "penalties": {
+        "label": "Penalties",
+        "note": "Percentile rank vs league, penalty discipline",
+        "pct": null,
+      },
+    },
+    "player_id": 999,
+    "season_id": null,
+    "season_type": "playoffs",
+    "team_id": null,
+    "toi_per_game": null,
+    "xg_for": null,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:player:percentiles:999:latest:playoffs",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player/percentiles (no row, playoffs) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player/percentiles (no row, playoffs) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "finishing": null,
+    "percentiles": {
+      "a1": {
+        "label": "1st Assists",
+        "note": "Percentile rank vs league, primary assists",
+        "pct": null,
+      },
+      "finishing": {
+        "label": "Finishing",
+        "note": "Percentile rank vs league, goals above xGoals",
+        "pct": null,
+      },
+      "goals": {
+        "label": "Goals",
+        "note": "Percentile rank vs league, goals",
+        "pct": null,
+      },
+      "penalties": {
+        "label": "Penalties",
+        "note": "Percentile rank vs league, penalty discipline",
+        "pct": null,
+      },
+    },
+    "player_id": 999,
+    "season_id": null,
+    "season_type": "playoffs",
+    "team_id": null,
+    "toi_per_game": null,
+    "xg_for": null,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:player:percentiles:999:latest:playoffs",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_player_seasons?player_id=eq.999&season_type=eq.playoffs&order=season_id.desc&limit=1&select=player_id,team_id,season_id,season_type,toi_per_game,xg_for,finishing,pct_goals,pct_a1,pct_penalties,pct_finishing",
+    },
+  ],
+}
+`;
+
+exports[`player/percentiles > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "finishing": 2.9,
+    "percentiles": {
+      "a1": {
+        "label": "1st Assists",
+        "note": "Percentile rank vs league, primary assists",
+        "pct": 80,
+      },
+      "finishing": {
+        "label": "Finishing",
+        "note": "Percentile rank vs league, goals above xGoals",
+        "pct": 88,
+      },
+      "goals": {
+        "label": "Goals",
+        "note": "Percentile rank vs league, goals",
+        "pct": 91,
+      },
+      "penalties": {
+        "label": "Penalties",
+        "note": "Percentile rank vs league, penalty discipline",
+        "pct": 40,
+      },
+    },
+    "player_id": 36,
+    "season_id": 8,
+    "season_type": "regular",
+    "team_id": 1,
+    "toi_per_game": 18.5,
+    "xg_for": 9.1,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:player:percentiles:36:8:regular",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player/percentiles > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player/percentiles > missing required param 1`] = `
+{
+  "body": {
+    "error": "id required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`player/percentiles > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "finishing": 2.9,
+    "percentiles": {
+      "a1": {
+        "label": "1st Assists",
+        "note": "Percentile rank vs league, primary assists",
+        "pct": 80,
+      },
+      "finishing": {
+        "label": "Finishing",
+        "note": "Percentile rank vs league, goals above xGoals",
+        "pct": 88,
+      },
+      "goals": {
+        "label": "Goals",
+        "note": "Percentile rank vs league, goals",
+        "pct": 91,
+      },
+      "penalties": {
+        "label": "Penalties",
+        "note": "Percentile rank vs league, penalty discipline",
+        "pct": 40,
+      },
+    },
+    "player_id": 36,
+    "season_id": 8,
+    "season_type": "regular",
+    "team_id": 1,
+    "toi_per_game": 18.5,
+    "xg_for": 9.1,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:player:percentiles:36:8:regular",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_player_seasons?player_id=eq.36&season_id=eq.8&season_type=eq.regular&limit=1&select=player_id,team_id,season_id,season_type,toi_per_game,xg_for,finishing,pct_goals,pct_a1,pct_penalties,pct_finishing",
+    },
+  ],
+}
+`;
+
+exports[`player-game-log > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "game_id": 210,
+        "goals_against": 3,
+        "player_id": 6,
+        "saves": 25,
+        "season_id": 8,
+        "shots_against": 28,
+        "team_id": 2,
+        "toi_seconds": 3700,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 1,
+        "game_id": 210,
+        "goals": 1,
+        "player_id": 36,
+        "points": 2,
+        "season_id": 8,
+        "shots": 4,
+        "team_id": 1,
+        "toi_seconds": 1100,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:player-game-log:36:8",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player-game-log > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player-game-log > missing required param 1`] = `
+{
+  "body": {
+    "error": "playerId and seasonId params required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`player-game-log > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "game_id": 210,
+        "goals_against": 3,
+        "player_id": 6,
+        "saves": 25,
+        "season_id": 8,
+        "shots_against": 28,
+        "team_id": 2,
+        "toi_seconds": 3700,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 1,
+        "game_id": 210,
+        "goals": 1,
+        "player_id": 36,
+        "points": 2,
+        "season_id": 8,
+        "shots": 4,
+        "team_id": 1,
+        "toi_seconds": 1100,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:player-game-log:36:8",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_skater_game_box?player_id=eq.36&season_id=eq.8&order=game_id.asc",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_goalie_game_box?player_id=eq.36&season_id=eq.8&order=game_id.asc",
+    },
+  ],
+}
+`;
+
+exports[`player-shots > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "shots": [
+      {
+        "p": 1,
+        "t": "g",
+        "x": 80.5,
+        "y": -10.2,
+      },
+      {
+        "p": 2,
+        "t": "s",
+        "x": 60,
+        "y": -42,
+      },
+      {
+        "p": 2,
+        "t": "b",
+        "x": 40,
+        "y": 5,
+      },
+      {
+        "p": 1,
+        "t": "s",
+        "x": 70,
+        "y": 12,
+      },
+    ],
+    "total": 4,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:pshots:36:8",
+      "ttl": 21600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`player-shots > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`player-shots > missing required param 1`] = `
+{
+  "body": {
+    "error": "playerId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`player-shots > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "shots": [
+      {
+        "p": 1,
+        "t": "g",
+        "x": 80.5,
+        "y": -10.2,
+      },
+      {
+        "p": 2,
+        "t": "s",
+        "x": 60,
+        "y": -42,
+      },
+      {
+        "p": 2,
+        "t": "b",
+        "x": 40,
+        "y": 5,
+      },
+      {
+        "p": 1,
+        "t": "s",
+        "x": 70,
+        "y": 12,
+      },
+    ],
+    "total": 4,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:pshots:36:8",
+      "ttl": 21600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_shot_events?shooter_id=eq.36&season_id=eq.8&select=event_type,period_id,time_seconds,x_norm,y_norm&limit=500",
+    },
+  ],
+}
+`;
+
+exports[`players > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "birth_city": "Oslo",
+        "birth_date": "1999-11-12",
+        "ev_sv_pct": 0.9234,
+        "first_name": "Gus",
+        "gaa": 2.41,
+        "goals_against": 62,
+        "gp": 25,
+        "gsax": 4.2,
+        "gsax_per60": 0.17,
+        "hd_sv_pct": 0.851,
+        "headshot": "https://assets.leaguestat.com/pwhl/240x240/6.jpg",
+        "jersey_number": 30,
+        "last_name": "Keeper",
+        "losses": 9,
+        "md_sv_pct": null,
+        "ot_losses": 4,
+        "pct_ev_sv": 81,
+        "pct_gsax": 77,
+        "pct_gsax60": 70,
+        "pct_hd_sv": 65,
+        "pct_md_sv": null,
+        "pct_pk_sv": 59,
+        "pk_sv_pct": 0.88,
+        "player_id": 6,
+        "player_name": "Gus Keeper",
+        "position": "G",
+        "saves": 700,
+        "season_id": 8,
+        "season_type": "regular",
+        "shoots": "L",
+        "shutouts": 3,
+        "sv_pct": 0.918,
+        "team_id": 2,
+        "wins": 12,
+      },
+    ],
+    "roster": [
+      {
+        "birth_city": "Boston",
+        "birth_date": "2001-03-04",
+        "first_name": "Alex",
+        "headshot": "https://assets.leaguestat.com/pwhl/240x240/36.jpg",
+        "jersey_number": 19,
+        "last_name": "Skater",
+        "player_id": 36,
+        "position": "F",
+        "shoots": "L",
+        "team_id": 1,
+      },
+      {
+        "birth_city": "Oslo",
+        "birth_date": "1999-11-12",
+        "first_name": "Gus",
+        "headshot": "https://assets.leaguestat.com/pwhl/240x240/6.jpg",
+        "jersey_number": 30,
+        "last_name": "Keeper",
+        "player_id": 6,
+        "position": "G",
+        "shoots": "L",
+        "team_id": 2,
+      },
+      {
+        "birth_city": null,
+        "birth_date": "2002-06-07",
+        "first_name": "Sam",
+        "headshot": "https://assets.leaguestat.com/pwhl/240x240/37.jpg",
+        "jersey_number": null,
+        "last_name": "Winger",
+        "player_id": 37,
+        "position": "D",
+        "shoots": "R",
+        "team_id": 1,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 15,
+        "birth_city": "Boston",
+        "birth_date": "2001-03-04",
+        "finishing": 2.9,
+        "first_name": "Alex",
+        "goals": 12,
+        "gp": 30,
+        "gw_goals": 2,
+        "headshot": "https://assets.leaguestat.com/pwhl/240x240/36.jpg",
+        "jersey_number": 19,
+        "last_name": "Skater",
+        "pct_a1": 80,
+        "pct_finishing": 88,
+        "pct_goals": 91,
+        "pct_penalties": 40,
+        "pim": 10,
+        "player_id": 36,
+        "player_name": "Alex Skater",
+        "plus_minus": 7,
+        "points": 27,
+        "position": "F",
+        "pp_goals": 4,
+        "season_id": 8,
+        "season_type": "regular",
+        "sh_goals": 1,
+        "shoots": "L",
+        "shot_pct": 13.3,
+        "shots": 90,
+        "team_id": 1,
+        "toi_per_game": 18.5,
+        "xg_for": 9.1,
+      },
+      {
+        "assists": 9,
+        "birth_city": null,
+        "birth_date": "2002-06-07",
+        "finishing": null,
+        "first_name": "Sam",
+        "goals": 3,
+        "gp": 28,
+        "gw_goals": 0,
+        "headshot": "https://assets.leaguestat.com/pwhl/240x240/37.jpg",
+        "jersey_number": null,
+        "last_name": "Winger",
+        "pct_a1": null,
+        "pct_finishing": null,
+        "pct_goals": null,
+        "pct_penalties": null,
+        "pim": 18,
+        "player_id": 37,
+        "player_name": "Sam Winger",
+        "plus_minus": -2,
+        "points": 12,
+        "position": "D",
+        "pp_goals": 0,
+        "season_id": 8,
+        "season_type": "regular",
+        "sh_goals": 0,
+        "shoots": "R",
+        "shot_pct": 7.5,
+        "shots": 40,
+        "team_id": 1,
+        "toi_per_game": null,
+        "xg_for": null,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:players:1:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`players > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase error",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`players > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`players > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "goalies": [
+      {
+        "birth_city": "Oslo",
+        "birth_date": "1999-11-12",
+        "ev_sv_pct": 0.9234,
+        "first_name": "Gus",
+        "gaa": 2.41,
+        "goals_against": 62,
+        "gp": 25,
+        "gsax": 4.2,
+        "gsax_per60": 0.17,
+        "hd_sv_pct": 0.851,
+        "headshot": "https://assets.leaguestat.com/pwhl/240x240/6.jpg",
+        "jersey_number": 30,
+        "last_name": "Keeper",
+        "losses": 9,
+        "md_sv_pct": null,
+        "ot_losses": 4,
+        "pct_ev_sv": 81,
+        "pct_gsax": 77,
+        "pct_gsax60": 70,
+        "pct_hd_sv": 65,
+        "pct_md_sv": null,
+        "pct_pk_sv": 59,
+        "pk_sv_pct": 0.88,
+        "player_id": 6,
+        "player_name": "Gus Keeper",
+        "position": "G",
+        "saves": 700,
+        "season_id": 8,
+        "season_type": "regular",
+        "shoots": "L",
+        "shutouts": 3,
+        "sv_pct": 0.918,
+        "team_id": 2,
+        "wins": 12,
+      },
+    ],
+    "roster": [
+      {
+        "birth_city": "Boston",
+        "birth_date": "2001-03-04",
+        "first_name": "Alex",
+        "headshot": "https://assets.leaguestat.com/pwhl/240x240/36.jpg",
+        "jersey_number": 19,
+        "last_name": "Skater",
+        "player_id": 36,
+        "position": "F",
+        "shoots": "L",
+        "team_id": 1,
+      },
+      {
+        "birth_city": "Oslo",
+        "birth_date": "1999-11-12",
+        "first_name": "Gus",
+        "headshot": "https://assets.leaguestat.com/pwhl/240x240/6.jpg",
+        "jersey_number": 30,
+        "last_name": "Keeper",
+        "player_id": 6,
+        "position": "G",
+        "shoots": "L",
+        "team_id": 2,
+      },
+      {
+        "birth_city": null,
+        "birth_date": "2002-06-07",
+        "first_name": "Sam",
+        "headshot": "https://assets.leaguestat.com/pwhl/240x240/37.jpg",
+        "jersey_number": null,
+        "last_name": "Winger",
+        "player_id": 37,
+        "position": "D",
+        "shoots": "R",
+        "team_id": 1,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 15,
+        "birth_city": "Boston",
+        "birth_date": "2001-03-04",
+        "finishing": 2.9,
+        "first_name": "Alex",
+        "goals": 12,
+        "gp": 30,
+        "gw_goals": 2,
+        "headshot": "https://assets.leaguestat.com/pwhl/240x240/36.jpg",
+        "jersey_number": 19,
+        "last_name": "Skater",
+        "pct_a1": 80,
+        "pct_finishing": 88,
+        "pct_goals": 91,
+        "pct_penalties": 40,
+        "pim": 10,
+        "player_id": 36,
+        "player_name": "Alex Skater",
+        "plus_minus": 7,
+        "points": 27,
+        "position": "F",
+        "pp_goals": 4,
+        "season_id": 8,
+        "season_type": "regular",
+        "sh_goals": 1,
+        "shoots": "L",
+        "shot_pct": 13.3,
+        "shots": 90,
+        "team_id": 1,
+        "toi_per_game": 18.5,
+        "xg_for": 9.1,
+      },
+      {
+        "assists": 9,
+        "birth_city": null,
+        "birth_date": "2002-06-07",
+        "finishing": null,
+        "first_name": "Sam",
+        "goals": 3,
+        "gp": 28,
+        "gw_goals": 0,
+        "headshot": "https://assets.leaguestat.com/pwhl/240x240/37.jpg",
+        "jersey_number": null,
+        "last_name": "Winger",
+        "pct_a1": null,
+        "pct_finishing": null,
+        "pct_goals": null,
+        "pct_penalties": null,
+        "pim": 18,
+        "player_id": 37,
+        "player_name": "Sam Winger",
+        "plus_minus": -2,
+        "points": 12,
+        "position": "D",
+        "pp_goals": 0,
+        "season_id": 8,
+        "season_type": "regular",
+        "sh_goals": 0,
+        "shoots": "R",
+        "shot_pct": 7.5,
+        "shots": 40,
+        "team_id": 1,
+        "toi_per_game": null,
+        "xg_for": null,
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:players:1:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_player_seasons?team_id=eq.1&season_id=eq.8&season_type=eq.regular&order=points.desc&limit=40",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_goalie_seasons?team_id=eq.1&season_id=eq.8&season_type=eq.regular&order=gp.desc&limit=5",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?team_id=eq.1&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_city,shoots&limit=80",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_city,shoots&limit=500",
+    },
+  ],
+}
+`;
+
+exports[`poll > a game already final the first time it is polled gets no game-over push 1`] = `
+{
+  "kvWrites": [],
+  "pushes": [],
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=eq.8&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+  ],
+}
+`;
+
+exports[`poll > a game followed live gets exactly one game-over push when it goes final 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "pwhl:push:final:210",
+      "ttl": 172800,
+    },
+    {
+      "key": "pwhl:push:state:210",
+      "ttl": 86400,
+    },
+  ],
+  "pushes": [
+    {
+      "body": "Final score — great win!",
+      "tag": "pwhl-win-210-home",
+      "title": "🏆 BOS Win! BOS 4–2 MIN",
+      "to": "https://push.example/home",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "Final score.",
+      "tag": "pwhl-final-210-away",
+      "title": "Final: MIN 2–4 BOS",
+      "to": "https://push.example/away",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "Final score.",
+      "tag": "pwhl-final-210-away",
+      "title": "Final: MIN 2–4 BOS",
+      "to": "https://push.example/away-no-opp-goals",
+      "url": "/pwhl/shots",
+    },
+  ],
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=eq.8&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+    {
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
+    },
+  ],
+}
+`;
+
+exports[`poll > does nothing when today's schedule read fails 1`] = `
+{
+  "kvWrites": [],
+  "pushes": [],
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=eq.8&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+  ],
+}
+`;
+
+exports[`poll > live game: start, period, goal, hat-trick, power-play and pulled-goalie pushes; a second poll sends nothing new 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "pwhl:push:start:210",
+      "ttl": 86400,
+    },
+    {
+      "key": "pwhl:push:period:210:3",
+      "ttl": 86400,
+    },
+    {
+      "key": "pwhl:push:goal:1",
+      "ttl": 86400,
+    },
+    {
+      "key": "pwhl:push:pen:901",
+      "ttl": 86400,
+    },
+    {
+      "key": "pwhl:push:goal:2",
+      "ttl": 86400,
+    },
+    {
+      "key": "pwhl:push:goal:3",
+      "ttl": 86400,
+    },
+    {
+      "key": "pwhl:push:pull:210-18:00",
+      "ttl": 86400,
+    },
+    {
+      "key": "pwhl:push:state:210",
+      "ttl": 86400,
+    },
+  ],
+  "pushes": [
+    {
+      "body": "BOS vs MIN — puck drop!",
+      "tag": "pwhl-start-210",
+      "title": "🏒 PWHL Game Starting!",
+      "to": "https://push.example/home",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "BOS vs MIN — puck drop!",
+      "tag": "pwhl-start-210",
+      "title": "🏒 PWHL Game Starting!",
+      "to": "https://push.example/away",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "BOS vs MIN — puck drop!",
+      "tag": "pwhl-start-210",
+      "title": "🏒 PWHL Game Starting!",
+      "to": "https://push.example/away-no-opp-goals",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "BOS 3–0 MIN",
+      "tag": "pwhl-period-210-3-BOS",
+      "title": "🔔 P3 Starting",
+      "to": "https://push.example/home",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "MIN 0–3 BOS",
+      "tag": "pwhl-period-210-3-MIN",
+      "title": "🔔 P3 Starting",
+      "to": "https://push.example/away",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "MIN 0–3 BOS",
+      "tag": "pwhl-period-210-3-MIN",
+      "title": "🔔 P3 Starting",
+      "to": "https://push.example/away-no-opp-goals",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "Alex Skater scores! (PP) Assists: Sam Winger",
+      "tag": "pwhl-goal-pwhl:push:goal:1",
+      "title": "🚨 GOAL! BOS 1–0 MIN",
+      "to": "https://push.example/home",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "Alex Skater scores for BOS (PP)",
+      "tag": "pwhl-opp-goal-pwhl:push:goal:1",
+      "title": "BOS scores. MIN 0–1 BOS",
+      "to": "https://push.example/away",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "MIN — 2 min Hooking",
+      "tag": "pwhl-pp-pwhl:push:pen:901",
+      "title": "⚡ BOS Power Play!",
+      "to": "https://push.example/home",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "Alex Skater scores! (SH) Assists: Sam Winger",
+      "tag": "pwhl-goal-pwhl:push:goal:2",
+      "title": "🚨 GOAL! BOS 1–0 MIN",
+      "to": "https://push.example/home",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "Alex Skater scores for BOS (SH)",
+      "tag": "pwhl-opp-goal-pwhl:push:goal:2",
+      "title": "BOS scores. MIN 0–1 BOS",
+      "to": "https://push.example/away",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "Alex Skater scores! (EN) Assists: Sam Winger",
+      "tag": "pwhl-goal-pwhl:push:goal:3",
+      "title": "🚨 GOAL! BOS 1–0 MIN",
+      "to": "https://push.example/home",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "Alex Skater scores for BOS (EN)",
+      "tag": "pwhl-opp-goal-pwhl:push:goal:3",
+      "title": "BOS scores. MIN 0–1 BOS",
+      "to": "https://push.example/away",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "Alex Skater scores her 3rd goal of the game for BOS!",
+      "tag": "pwhl-hattrick-210-36",
+      "title": "🎩 HAT TRICK! Alex Skater",
+      "to": "https://push.example/home",
+      "url": "/pwhl/shots",
+    },
+    {
+      "body": "6-on-5 — empty net opportunity for BOS!",
+      "tag": "pwhl-pull-pwhl:push:pull:210-18:00",
+      "title": "🥅 MIN pulled their goalie!",
+      "to": "https://push.example/home",
+      "url": "/pwhl/shots",
+    },
+  ],
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=eq.8&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+    {
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
+    },
+  ],
+}
+`;
+
+exports[`poll > prunes subscriptions whose push endpoint has expired 1`] = `
+[
+  "https://push.example/home",
+  "https://push.example/away-no-opp-goals",
+  "https://push.example/nhl",
+]
+`;
+
+exports[`prediction (force regenerate) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "Empty AI response",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`prediction (force regenerate) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`prediction (force regenerate) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "awayAbbr": "MIN",
+    "awayStreak": "L1",
+    "awayTeamId": 2,
+    "awayWinPct": 0,
+    "corsiCaveat": "All-situations shot-attempt share (goals+shots+blocked), not 5-on-5 filtered.",
+    "corsiForPct": {
+      "away": 47.1,
+      "home": 53.2,
+    },
+    "expAway": 2.2,
+    "expHome": 3,
+    "gameId": 210,
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "h2hRecord": "1-2",
+    "homeAbbr": "BOS",
+    "homeStreak": "W1",
+    "homeTeamId": 1,
+    "homeWinPct": 100,
+    "isPlayoff": false,
+    "narrative": "Fixture PWHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:prediction:210",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.210&select=game_id,season_id,home_team_id,away_team_id",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_team_seasons?team_id=in.(1,2)&season_id=eq.8&season_type=eq.regular",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?season_id=eq.8&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ot,shootout",
+    },
+    {
+      "aiPrompt": "You are EyeWall Analytics, a PWHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. The shot-attempt numbers below are ALL-SITUATIONS (not 5-on-5 only) — describe it as "shot-attempt share," not as a 5v5/possession-only stat.
+
+Game: BOS (HOME) vs MIN (AWAY)
+Context: Regular Season
+
+BOS stats:
+- Record: 18-8-4 (58 pts)
+- GF/GA per game: 3.00 / 2.33
+- PP%: 22.0% · PK%: 84.0%
+- Shot-attempt share (Corsi For%, all situations): 53.2%
+- Current streak: W1
+
+MIN stats:
+- Record: 12-14-4 (42 pts)
+- GF/GA per game: 2.40 / 2.83
+- PP%: 17.0% · PK%: 79.0%
+- Shot-attempt share (Corsi For%, all situations): 47.1%
+- Current streak: L1
+
+Head-to-head this season: BOS 1-2
+Expected score (Pythagorean): BOS 3.0 - MIN 2.2
+Model win probability: BOS 100%
+
+Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`prediction > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "Empty AI response",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`prediction > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`prediction > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`prediction > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "awayAbbr": "MIN",
+    "awayStreak": "L1",
+    "awayTeamId": 2,
+    "awayWinPct": 0,
+    "corsiCaveat": "All-situations shot-attempt share (goals+shots+blocked), not 5-on-5 filtered.",
+    "corsiForPct": {
+      "away": 47.1,
+      "home": 53.2,
+    },
+    "expAway": 2.2,
+    "expHome": 3,
+    "gameId": 210,
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "h2hRecord": "1-2",
+    "homeAbbr": "BOS",
+    "homeStreak": "W1",
+    "homeTeamId": 1,
+    "homeWinPct": 100,
+    "isPlayoff": false,
+    "narrative": "Fixture PWHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:prediction:210",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.210&select=game_id,season_id,home_team_id,away_team_id",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_team_seasons?team_id=in.(1,2)&season_id=eq.8&season_type=eq.regular",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?season_id=eq.8&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ot,shootout",
+    },
+    {
+      "aiPrompt": "You are EyeWall Analytics, a PWHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. The shot-attempt numbers below are ALL-SITUATIONS (not 5-on-5 only) — describe it as "shot-attempt share," not as a 5v5/possession-only stat.
+
+Game: BOS (HOME) vs MIN (AWAY)
+Context: Regular Season
+
+BOS stats:
+- Record: 18-8-4 (58 pts)
+- GF/GA per game: 3.00 / 2.33
+- PP%: 22.0% · PK%: 84.0%
+- Shot-attempt share (Corsi For%, all situations): 53.2%
+- Current streak: W1
+
+MIN stats:
+- Record: 12-14-4 (42 pts)
+- GF/GA per game: 2.40 / 2.83
+- PP%: 17.0% · PK%: 79.0%
+- Shot-attempt share (Corsi For%, all situations): 47.1%
+- Current streak: L1
+
+Head-to-head this season: BOS 1-2
+Expected score (Pythagorean): BOS 3.0 - MIN 2.2
+Model win probability: BOS 100%
+
+Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`preview > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "detail": "HockeyTech 503",
+    "error": "gameCenterPreview fetch failed",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`preview > Supabase unavailable 1`] = `
+{
+  "body": {
+    "gameId": 210,
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "headToHeadRecords": {
+      "currentYear": {
+        "wins": 2,
+      },
+    },
+    "homeTeam": {
+      "abbreviation": "BOS",
+      "goalsAgainst": 70,
+      "goalsFor": 90,
+      "id": 1,
+      "last10Record": "7-2-1",
+      "leadingPIM": null,
+      "leadingRookie": {
+        "name": "Sam Winger",
+        "stats": {
+          "points": 12,
+        },
+      },
+      "leadingScorers": [
+        {
+          "name": "Alex Skater",
+          "stats": {
+            "points": 27,
+          },
+        },
+      ],
+      "name": "Boston Fleet",
+      "overallRecord": "18-8-4",
+      "penaltyKill": {
+        "pct": 84,
+      },
+      "powerPlay": {
+        "pct": 22,
+      },
+      "streak": "2-0-0-0",
+    },
+    "longestStreaks": {
+      "home": {
+        "wins": 5,
+      },
+      "visiting": null,
+    },
+    "seasonSeries": [
+      {
+        "datePlayed": "2026-01-10",
+        "gameId": 209,
+        "homeCity": "Minnesota",
+        "homeScore": 4,
+        "homeTeamId": 2,
+        "visitingCity": "Boston",
+        "visitingScore": 1,
+        "visitingTeamId": 1,
+      },
+    ],
+    "visitingTeam": {
+      "abbreviation": "MIN",
+      "goalsAgainst": null,
+      "goalsFor": null,
+      "id": 2,
+      "last10Record": null,
+      "leadingPIM": null,
+      "leadingRookie": null,
+      "leadingScorers": [],
+      "name": "Minnesota Frost",
+      "overallRecord": null,
+      "penaltyKill": null,
+      "powerPlay": null,
+      "streak": null,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:gcpreview:210",
+      "ttl": 1800,
+    },
+    {
+      "key": "pwhl:preview:210",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`preview > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`preview > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "gameId": 210,
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "headToHeadRecords": {
+      "currentYear": {
+        "wins": 2,
+      },
+    },
+    "homeTeam": {
+      "abbreviation": "BOS",
+      "goalsAgainst": 70,
+      "goalsFor": 90,
+      "id": 1,
+      "last10Record": "7-2-1",
+      "leadingPIM": null,
+      "leadingRookie": {
+        "name": "Sam Winger",
+        "stats": {
+          "points": 12,
+        },
+      },
+      "leadingScorers": [
+        {
+          "name": "Alex Skater",
+          "stats": {
+            "points": 27,
+          },
+        },
+      ],
+      "name": "Boston Fleet",
+      "overallRecord": "18-8-4",
+      "penaltyKill": {
+        "pct": 84,
+      },
+      "powerPlay": {
+        "pct": 22,
+      },
+      "streak": "2-0-0-0",
+    },
+    "longestStreaks": {
+      "home": {
+        "wins": 5,
+      },
+      "visiting": null,
+    },
+    "seasonSeries": [
+      {
+        "datePlayed": "2026-01-10",
+        "gameId": 209,
+        "homeCity": "Minnesota",
+        "homeScore": 4,
+        "homeTeamId": 2,
+        "visitingCity": "Boston",
+        "visitingScore": 1,
+        "visitingTeamId": 1,
+      },
+    ],
+    "visitingTeam": {
+      "abbreviation": "MIN",
+      "goalsAgainst": null,
+      "goalsFor": null,
+      "id": 2,
+      "last10Record": null,
+      "leadingPIM": null,
+      "leadingRookie": null,
+      "leadingScorers": [],
+      "name": "Minnesota Frost",
+      "overallRecord": null,
+      "penaltyKill": null,
+      "powerPlay": null,
+      "streak": null,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:gcpreview:210",
+      "ttl": 1800,
+    },
+    {
+      "key": "pwhl:preview:210",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPreview&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
+    },
+  ],
+}
+`;
+
+exports[`roster > HockeyTech and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "birth_city": "Boston",
+      "birth_date": "2001-03-04",
+      "first_name": "Alex",
+      "jersey_number": 19,
+      "last_name": "Skater",
+      "player_id": 36,
+      "position": "F",
+      "shoots": "L",
+      "team_id": 1,
+    },
+    {
+      "birth_city": null,
+      "birth_date": "2002-06-07",
+      "first_name": "Sam",
+      "jersey_number": null,
+      "last_name": "Winger",
+      "player_id": 37,
+      "position": "D",
+      "shoots": "R",
+      "team_id": 1,
+    },
+    {
+      "birth_city": "Oslo",
+      "birth_date": "1999-11-12",
+      "first_name": "Gus",
+      "jersey_number": 30,
+      "last_name": "Keeper",
+      "player_id": 6,
+      "position": "G",
+      "shoots": "L",
+      "team_id": 2,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:roster:1",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`roster > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`roster > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`roster > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "birth_city": "Boston",
+      "birth_date": "2001-03-04",
+      "first_name": "Alex",
+      "jersey_number": 19,
+      "last_name": "Skater",
+      "player_id": 36,
+      "position": "F",
+      "shoots": "L",
+      "team_id": 1,
+    },
+    {
+      "birth_city": null,
+      "birth_date": "2002-06-07",
+      "first_name": "Sam",
+      "jersey_number": null,
+      "last_name": "Winger",
+      "player_id": 37,
+      "position": "D",
+      "shoots": "R",
+      "team_id": 1,
+    },
+    {
+      "birth_city": "Oslo",
+      "birth_date": "1999-11-12",
+      "first_name": "Gus",
+      "jersey_number": 30,
+      "last_name": "Keeper",
+      "player_id": 6,
+      "position": "G",
+      "shoots": "L",
+      "team_id": 2,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:roster:1",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?team_id=eq.1&select=player_id,first_name,last_name,position,jersey_number&limit=60",
+    },
+  ],
+}
+`;
+
+exports[`salaries > HockeyTech and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "player_name": "Alex Skater",
+      "salary": 55000,
+      "season": "2025-26",
+      "team_id": 1,
+    },
+    {
+      "player_name": "Sam Winger",
+      "salary": 35000,
+      "season": "2025-26",
+      "team_id": 1,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:salaries:1:2025-26",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`salaries > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`salaries > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`salaries > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "player_name": "Alex Skater",
+      "salary": 55000,
+      "season": "2025-26",
+      "team_id": 1,
+    },
+    {
+      "player_name": "Sam Winger",
+      "salary": 35000,
+      "season": "2025-26",
+      "team_id": 1,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:salaries:1:2025-26",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_salaries?team_id=eq.1&season=eq.2025-26&order=salary.desc&limit=60",
+    },
+  ],
+}
+`;
+
+exports[`schedule > HockeyTech and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "away_score": 2,
+      "away_team_id": 2,
+      "game_date": "2026-01-15",
+      "game_id": 210,
+      "game_state": "Final",
+      "game_status_code": 4,
+      "home_score": 3,
+      "home_team_id": 1,
+      "ot": true,
+      "season_id": 8,
+      "shootout": false,
+    },
+    {
+      "away_score": 1,
+      "away_team_id": 1,
+      "game_date": "2026-01-10",
+      "game_id": 209,
+      "game_state": "Final",
+      "game_status_code": 4,
+      "home_score": 4,
+      "home_team_id": 2,
+      "ot": false,
+      "season_id": 8,
+      "shootout": false,
+    },
+    {
+      "away_score": 3,
+      "away_team_id": 2,
+      "game_date": "2026-01-05",
+      "game_id": 208,
+      "game_state": "Final",
+      "game_status_code": 4,
+      "home_score": 2,
+      "home_team_id": 1,
+      "ot": false,
+      "season_id": 8,
+      "shootout": true,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:schedule:1:8",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`schedule > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`schedule > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`schedule > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "away_score": 2,
+      "away_team_id": 2,
+      "game_date": "2026-01-15",
+      "game_id": 210,
+      "game_state": "Final",
+      "game_status_code": 4,
+      "home_score": 3,
+      "home_team_id": 1,
+      "ot": true,
+      "season_id": 8,
+      "shootout": false,
+    },
+    {
+      "away_score": 1,
+      "away_team_id": 1,
+      "game_date": "2026-01-10",
+      "game_id": 209,
+      "game_state": "Final",
+      "game_status_code": 4,
+      "home_score": 4,
+      "home_team_id": 2,
+      "ot": false,
+      "season_id": 8,
+      "shootout": false,
+    },
+    {
+      "away_score": 3,
+      "away_team_id": 2,
+      "game_date": "2026-01-05",
+      "game_id": 208,
+      "game_state": "Final",
+      "game_status_code": 4,
+      "home_score": 2,
+      "home_team_id": 1,
+      "ot": false,
+      "season_id": 8,
+      "shootout": true,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:schedule:1:8",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?season_id=eq.8&or=(home_team_id.eq.1,away_team_id.eq.1)&order=game_date.asc&limit=150",
+    },
+  ],
+}
+`;
+
+exports[`scout (goalie) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "AI generation failed",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`scout (goalie) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "blurb": "Fixture PWHL narrative.",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`scout (goalie) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "blurb": "Fixture PWHL narrative.",
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [
+    {
+      "aiPrompt": "You are a hockey analyst writing a concise scouting report for a PWHL player.
+Player: Gus Keeper (G)
+Season: 2025-26 PWHL Regular Season
+Stats: GP: 25, W: 12, L: —, OTL: —, SV%: 0.918, GAA: 2.41, SO: —
+
+Write a 2-3 sentence scouting report highlighting their strengths, style of play, and impact this season. Be specific and use the stats given above — do not invent awards, games, injuries, teammates, or any other detail not in this data. If a stat is missing ('—'), skip it or say it isn't available rather than guessing a number. Do not use generic filler phrases. Write in plain text, no markdown.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`scout (no name) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "name required",
+  },
+  "kvWrites": [],
+  "status": 400,
+}
+`;
+
+exports[`scout (no name) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "name required",
+  },
+  "kvWrites": [],
+  "status": 400,
+}
+`;
+
+exports[`scout (no name) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "error": "name required",
+  },
+  "kvWrites": [],
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`scout (skater) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "AI generation failed",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`scout (skater) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "blurb": "Fixture PWHL narrative.",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`scout (skater) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "blurb": "Fixture PWHL narrative.",
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [
+    {
+      "aiPrompt": "You are a hockey analyst writing a concise scouting report for a PWHL player.
+Player: Alex Skater (F)
+Season: 2025-26 PWHL Regular Season
+Stats: GP: 30, G: 12, A: 15, PTS: 27, +/-: 7, PPG: —, SHG: —, SOG: —, S%: 13.3%, PIM: —
+
+Write a 2-3 sentence scouting report highlighting their strengths, style of play, and impact this season. Be specific and use the stats given above — do not invent awards, games, injuries, teammates, or any other detail not in this data. If a stat is missing ('—'), skip it or say it isn't available rather than guessing a number. Do not use generic filler phrases. Write in plain text, no markdown.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`shots > HockeyTech and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "event_type": "goal",
+      "game_id": 210,
+      "goalie_id": 6,
+      "is_home": true,
+      "period_id": 1,
+      "shooter_id": 36,
+      "team_id": 1,
+      "time_seconds": 300,
+      "x_norm": 80.5,
+      "y_norm": -10.2,
+    },
+    {
+      "event_type": "shot",
+      "game_id": 210,
+      "goalie_id": 6,
+      "is_home": true,
+      "period_id": 2,
+      "shooter_id": 36,
+      "team_id": 1,
+      "time_seconds": 900,
+      "x_norm": -60,
+      "y_norm": 50,
+    },
+    {
+      "event_type": "blocked_shot",
+      "game_id": 210,
+      "goalie_id": null,
+      "is_home": true,
+      "period_id": 2,
+      "shooter_id": 37,
+      "team_id": 1,
+      "time_seconds": 950,
+      "x_norm": 40,
+      "y_norm": 5,
+    },
+    {
+      "event_type": "missed_shot",
+      "game_id": 210,
+      "goalie_id": null,
+      "is_home": true,
+      "period_id": 3,
+      "shooter_id": 36,
+      "team_id": 1,
+      "time_seconds": 100,
+      "x_norm": "n/a",
+      "y_norm": 0,
+    },
+    {
+      "event_type": "shot",
+      "game_id": 210,
+      "goalie_id": 7003,
+      "is_home": false,
+      "period_id": 1,
+      "shooter_id": 7010,
+      "team_id": 2,
+      "time_seconds": 500,
+      "x_norm": 70,
+      "y_norm": 12,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:shots:1:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`shots > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`shots > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`shots > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "event_type": "goal",
+      "game_id": 210,
+      "goalie_id": 6,
+      "is_home": true,
+      "period_id": 1,
+      "shooter_id": 36,
+      "team_id": 1,
+      "time_seconds": 300,
+      "x_norm": 80.5,
+      "y_norm": -10.2,
+    },
+    {
+      "event_type": "shot",
+      "game_id": 210,
+      "goalie_id": 6,
+      "is_home": true,
+      "period_id": 2,
+      "shooter_id": 36,
+      "team_id": 1,
+      "time_seconds": 900,
+      "x_norm": -60,
+      "y_norm": 50,
+    },
+    {
+      "event_type": "blocked_shot",
+      "game_id": 210,
+      "goalie_id": null,
+      "is_home": true,
+      "period_id": 2,
+      "shooter_id": 37,
+      "team_id": 1,
+      "time_seconds": 950,
+      "x_norm": 40,
+      "y_norm": 5,
+    },
+    {
+      "event_type": "missed_shot",
+      "game_id": 210,
+      "goalie_id": null,
+      "is_home": true,
+      "period_id": 3,
+      "shooter_id": 36,
+      "team_id": 1,
+      "time_seconds": 100,
+      "x_norm": "n/a",
+      "y_norm": 0,
+    },
+    {
+      "event_type": "shot",
+      "game_id": 210,
+      "goalie_id": 7003,
+      "is_home": false,
+      "period_id": 1,
+      "shooter_id": 7010,
+      "team_id": 2,
+      "time_seconds": 500,
+      "x_norm": 70,
+      "y_norm": 12,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:shots:1:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_shot_events?team_id=eq.1&season_id=eq.8&order=game_id.asc",
+    },
+  ],
+}
+`;
+
+exports[`standings (default season) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "corsi_for_pct": 53.2,
+      "corsi_for_pct_5v5": 52.4,
+      "goals_against": 70,
+      "goals_for": 90,
+      "gp": 30,
+      "l10L": 1,
+      "l10OTL": 1,
+      "l10W": 1,
+      "losses": 8,
+      "ot_losses": 4,
+      "pk_pct": 0.84,
+      "points": 58,
+      "pp_pct": 0.22,
+      "season_id": 8,
+      "season_type": "regular",
+      "streakCount": 1,
+      "streakType": "W",
+      "team_id": 1,
+      "wins": 18,
+    },
+    {
+      "corsi_for_pct": 47.1,
+      "corsi_for_pct_5v5": null,
+      "goals_against": 85,
+      "goals_for": 72,
+      "gp": 30,
+      "l10L": 0,
+      "l10OTL": 1,
+      "l10W": 2,
+      "losses": 14,
+      "ot_losses": 4,
+      "pk_pct": 0.79,
+      "points": 42,
+      "pp_pct": 0.17,
+      "season_id": 8,
+      "season_type": "regular",
+      "streakCount": 1,
+      "streakType": "L",
+      "team_id": 2,
+      "wins": 12,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:standings:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`standings (default season) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`standings (default season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "corsi_for_pct": 53.2,
+      "corsi_for_pct_5v5": 52.4,
+      "goals_against": 70,
+      "goals_for": 90,
+      "gp": 30,
+      "l10L": 1,
+      "l10OTL": 1,
+      "l10W": 1,
+      "losses": 8,
+      "ot_losses": 4,
+      "pk_pct": 0.84,
+      "points": 58,
+      "pp_pct": 0.22,
+      "season_id": 8,
+      "season_type": "regular",
+      "streakCount": 1,
+      "streakType": "W",
+      "team_id": 1,
+      "wins": 18,
+    },
+    {
+      "corsi_for_pct": 47.1,
+      "corsi_for_pct_5v5": null,
+      "goals_against": 85,
+      "goals_for": 72,
+      "gp": 30,
+      "l10L": 0,
+      "l10OTL": 1,
+      "l10W": 2,
+      "losses": 14,
+      "ot_losses": 4,
+      "pk_pct": 0.79,
+      "points": 42,
+      "pp_pct": 0.17,
+      "season_id": 8,
+      "season_type": "regular",
+      "streakCount": 1,
+      "streakType": "L",
+      "team_id": 2,
+      "wins": 12,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:standings:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_team_seasons?season_id=eq.8&season_type=eq.regular&order=points.desc&limit=12",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?season_id=eq.8&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ot,shootout",
+    },
+  ],
+}
+`;
+
+exports[`standings > HockeyTech and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "corsi_for_pct": 53.2,
+      "corsi_for_pct_5v5": 52.4,
+      "goals_against": 70,
+      "goals_for": 90,
+      "gp": 30,
+      "l10L": 1,
+      "l10OTL": 1,
+      "l10W": 1,
+      "losses": 8,
+      "ot_losses": 4,
+      "pk_pct": 0.84,
+      "points": 58,
+      "pp_pct": 0.22,
+      "season_id": 8,
+      "season_type": "regular",
+      "streakCount": 1,
+      "streakType": "W",
+      "team_id": 1,
+      "wins": 18,
+    },
+    {
+      "corsi_for_pct": 47.1,
+      "corsi_for_pct_5v5": null,
+      "goals_against": 85,
+      "goals_for": 72,
+      "gp": 30,
+      "l10L": 0,
+      "l10OTL": 1,
+      "l10W": 2,
+      "losses": 14,
+      "ot_losses": 4,
+      "pk_pct": 0.79,
+      "points": 42,
+      "pp_pct": 0.17,
+      "season_id": 8,
+      "season_type": "regular",
+      "streakCount": 1,
+      "streakType": "L",
+      "team_id": 2,
+      "wins": 12,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:standings:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`standings > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`standings > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "corsi_for_pct": 53.2,
+      "corsi_for_pct_5v5": 52.4,
+      "goals_against": 70,
+      "goals_for": 90,
+      "gp": 30,
+      "l10L": 1,
+      "l10OTL": 1,
+      "l10W": 1,
+      "losses": 8,
+      "ot_losses": 4,
+      "pk_pct": 0.84,
+      "points": 58,
+      "pp_pct": 0.22,
+      "season_id": 8,
+      "season_type": "regular",
+      "streakCount": 1,
+      "streakType": "W",
+      "team_id": 1,
+      "wins": 18,
+    },
+    {
+      "corsi_for_pct": 47.1,
+      "corsi_for_pct_5v5": null,
+      "goals_against": 85,
+      "goals_for": 72,
+      "gp": 30,
+      "l10L": 0,
+      "l10OTL": 1,
+      "l10W": 2,
+      "losses": 14,
+      "ot_losses": 4,
+      "pk_pct": 0.79,
+      "points": 42,
+      "pp_pct": 0.17,
+      "season_id": 8,
+      "season_type": "regular",
+      "streakCount": 1,
+      "streakType": "L",
+      "team_id": 2,
+      "wins": 12,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:standings:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_team_seasons?season_id=eq.8&season_type=eq.regular&order=points.desc&limit=12",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?season_id=eq.8&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ot,shootout",
+    },
+  ],
+}
+`;
+
+exports[`summary > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "HockeyTech 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`summary > Supabase unavailable 1`] = `
+{
+  "body": {
+    "coaches": {
+      "away": null,
+      "home": {
+        "firstName": "Head",
+        "lastName": "Home",
+      },
+    },
+    "homeTeamStats": {
+      "faceoffWinPercentage": 55,
+      "goals": 3,
+      "hits": 14,
+      "shots": 30,
+    },
+    "mvps": [
+      {
+        "homeTeam": true,
+        "isGoalie": false,
+        "player": {
+          "info": {
+            "firstName": "Alex",
+            "id": 36,
+            "jerseyNumber": "19",
+            "lastName": "Skater",
+            "playerImageURL": "https://assets.leaguestat.com/pwhl/120x160/36.jpg",
+            "position": "F",
+          },
+          "stats": {
+            "goals": 2,
+          },
+        },
+        "playerImage": "https://assets.leaguestat.com/pwhl/240x240/36.jpg",
+        "team": {
+          "abbreviation": "BOS",
+          "id": 1,
+          "name": "Boston Fleet",
+        },
+      },
+      {
+        "homeTeam": false,
+        "isGoalie": true,
+        "player": {
+          "info": {
+            "firstName": "Gus",
+            "id": 6,
+            "jerseyNumber": "30",
+            "lastName": "Keeper",
+            "playerImageURL": null,
+            "position": "G",
+          },
+          "stats": {
+            "saves": 25,
+          },
+        },
+        "playerImage": "https://img.example/g.jpg",
+        "team": {
+          "abbreviation": "MIN",
+          "id": 2,
+          "name": "Minnesota Frost",
+        },
+      },
+    ],
+    "officials": {
+      "linesmen": [
+        {
+          "firstName": "Line",
+          "jerseyNumber": null,
+          "lastName": "Two",
+        },
+      ],
+      "referees": [
+        {
+          "firstName": "Ref",
+          "jerseyNumber": 12,
+          "lastName": "One",
+        },
+      ],
+    },
+    "periods": [
+      {
+        "goals": [
+          {
+            "assists": [
+              {
+                "firstName": "Sam",
+                "id": 37,
+                "lastName": "Winger",
+              },
+            ],
+            "game_goal_id": "555",
+            "properties": {
+              "isEmptyNet": "0",
+              "isGameWinningGoal": "0",
+              "isPenaltyShot": "0",
+              "isPowerPlay": "1",
+              "isShortHanded": "0",
+            },
+            "scoredBy": {
+              "firstName": "Alex",
+              "id": 36,
+              "lastName": "Skater",
+              "playerImageURL": "https://assets.leaguestat.com/pwhl/120x160/36.jpg",
+            },
+            "team": {
+              "abbreviation": "BOS",
+              "id": 1,
+            },
+            "time": "5:00",
+          },
+        ],
+        "info": {
+          "id": 1,
+          "longName": "1st Period",
+          "shortName": "1st",
+        },
+        "stats": {
+          "homeGoals": 2,
+          "homeShots": 12,
+          "visitingGoals": 1,
+          "visitingShots": 9,
+        },
+      },
+      {
+        "goals": [],
+        "info": {
+          "id": 1,
+          "longName": "",
+          "shortName": "",
+        },
+        "stats": {
+          "homeGoals": 0,
+          "homeShots": 0,
+          "visitingGoals": 0,
+          "visitingShots": 0,
+        },
+      },
+    ],
+    "venue": "Fixture Arena",
+    "visitingTeamStats": {
+      "goals": 2,
+      "shots": 28,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:gamesummary:210",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`summary > missing required param 1`] = `
+{
+  "body": {
+    "error": "gameId required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`summary > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "coaches": {
+      "away": null,
+      "home": {
+        "firstName": "Head",
+        "lastName": "Home",
+      },
+    },
+    "homeTeamStats": {
+      "faceoffWinPercentage": 55,
+      "goals": 3,
+      "hits": 14,
+      "shots": 30,
+    },
+    "mvps": [
+      {
+        "homeTeam": true,
+        "isGoalie": false,
+        "player": {
+          "info": {
+            "firstName": "Alex",
+            "id": 36,
+            "jerseyNumber": "19",
+            "lastName": "Skater",
+            "playerImageURL": "https://assets.leaguestat.com/pwhl/120x160/36.jpg",
+            "position": "F",
+          },
+          "stats": {
+            "goals": 2,
+          },
+        },
+        "playerImage": "https://assets.leaguestat.com/pwhl/240x240/36.jpg",
+        "team": {
+          "abbreviation": "BOS",
+          "id": 1,
+          "name": "Boston Fleet",
+        },
+      },
+      {
+        "homeTeam": false,
+        "isGoalie": true,
+        "player": {
+          "info": {
+            "firstName": "Gus",
+            "id": 6,
+            "jerseyNumber": "30",
+            "lastName": "Keeper",
+            "playerImageURL": null,
+            "position": "G",
+          },
+          "stats": {
+            "saves": 25,
+          },
+        },
+        "playerImage": "https://img.example/g.jpg",
+        "team": {
+          "abbreviation": "MIN",
+          "id": 2,
+          "name": "Minnesota Frost",
+        },
+      },
+    ],
+    "officials": {
+      "linesmen": [
+        {
+          "firstName": "Line",
+          "jerseyNumber": null,
+          "lastName": "Two",
+        },
+      ],
+      "referees": [
+        {
+          "firstName": "Ref",
+          "jerseyNumber": 12,
+          "lastName": "One",
+        },
+      ],
+    },
+    "periods": [
+      {
+        "goals": [
+          {
+            "assists": [
+              {
+                "firstName": "Sam",
+                "id": 37,
+                "lastName": "Winger",
+              },
+            ],
+            "game_goal_id": "555",
+            "properties": {
+              "isEmptyNet": "0",
+              "isGameWinningGoal": "0",
+              "isPenaltyShot": "0",
+              "isPowerPlay": "1",
+              "isShortHanded": "0",
+            },
+            "scoredBy": {
+              "firstName": "Alex",
+              "id": 36,
+              "lastName": "Skater",
+              "playerImageURL": "https://assets.leaguestat.com/pwhl/120x160/36.jpg",
+            },
+            "team": {
+              "abbreviation": "BOS",
+              "id": 1,
+            },
+            "time": "5:00",
+          },
+        ],
+        "info": {
+          "id": 1,
+          "longName": "1st Period",
+          "shortName": "1st",
+        },
+        "stats": {
+          "homeGoals": 2,
+          "homeShots": 12,
+          "visitingGoals": 1,
+          "visitingShots": 9,
+        },
+      },
+      {
+        "goals": [],
+        "info": {
+          "id": 1,
+          "longName": "",
+          "shortName": "",
+        },
+        "stats": {
+          "homeGoals": 0,
+          "homeShots": 0,
+          "visitingGoals": 0,
+          "visitingShots": 0,
+        },
+      },
+    ],
+    "venue": "Fixture Arena",
+    "visitingTeamStats": {
+      "goals": 2,
+      "shots": 28,
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:gamesummary:210",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
+    },
+  ],
+}
+`;
+
+exports[`summary/narrative (game) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "AI generation failed",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`summary/narrative (game) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "cardNarrative": null,
+    "narrative": "Fixture PWHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:narrative:game:210:BOS",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`summary/narrative (game) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "cardNarrative": null,
+    "narrative": "Fixture PWHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:narrative:game:210:BOS",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "aiPrompt": "You are Sticks, EyeWall Analytics' PWHL game analyst. Write a punchy 2-3 sentence final game summary. Use the full team names (e.g. "Boston Fleet", "Minnesota Frost") when referring to teams — never use abbreviations in the narrative.
+Game: Boston Fleet (BOS) vs Minnesota Frost (MIN)
+Score: Boston Fleet 3–2 Minnesota Frost
+Corsi For%: 54.2% · SOG: 30–28 · HD Chances: 9–6
+Faceoff Win%: 55% · Hits: 14 · Penalties: Boston Fleet 2–3 Minnesota Frost
+Goals:
+Boston Fleet: Alex Skater at 5:00 P1 (PP)
+Minnesota Frost: Minnesota Frost at 12:00 P2
+Goalie: Home Goalie
+Best period: P1 (61% CF)
+Worst period: P3 (44% CF)
+
+Write in plain text, no markdown, no bullet points. Be specific about what happened.",
+      "maxTokens": 120,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`summary/narrative (period) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "AI generation failed",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`summary/narrative (period) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "cardNarrative": null,
+    "narrative": "Fixture PWHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:narrative:1:210:BOS",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`summary/narrative (period) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "cardNarrative": null,
+    "narrative": "Fixture PWHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:narrative:1:210:BOS",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "aiPrompt": "You are Sticks, EyeWall Analytics' PWHL analyst. Write a punchy 1-2 sentence period summary. Use the full team names (e.g. "Boston Fleet", "Minnesota Frost") — never abbreviations in the narrative.
+Period: 1st Period — Boston Fleet (BOS) vs Minnesota Frost (MIN)
+Corsi For%: 54.2% · SOG: 30–28 · HD Chances: 9–6
+Goals: 3–2 · Hits: 14 · Faceoffs: 55%
+Penalties this period: 5 (Boston Fleet took 2)
+Goals:
+Boston Fleet: Alex Skater at 5:00 (PP)
+Minnesota Frost: Minnesota Frost at 12:00
+
+Write in plain text, no markdown. 1-2 sentences max.",
+      "maxTokens": 80,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`team code map 1`] = `
+{
+  "1": "BOS",
+  "10": "DET",
+  "11": "HAM",
+  "12": "LV",
+  "13": "SJS",
+  "2": "MIN",
+  "3": "MTL",
+  "4": "NY",
+  "5": "OTT",
+  "6": "TOR",
+  "8": "SEA",
+  "9": "VAN",
+}
+`;
+
+exports[`team-season-summary (no completed games) > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "blocked": {
+      "car": 0,
+      "opp": 0,
+    },
+    "faceoff": {
+      "car": 0,
+      "opp": 0,
+      "pct": null,
+    },
+    "gamesPlayed": 0,
+    "hits": {
+      "car": 0,
+      "opp": 0,
+    },
+    "penalties": {
+      "car": 0,
+      "opp": 0,
+    },
+    "pkPct": null,
+    "ppPct": null,
+    "season": 8,
+    "sog": {
+      "car": 0,
+      "opp": 0,
+    },
+    "teamId": 1,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:team-season-summary:1:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-season-summary (no completed games) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`team-season-summary (no completed games) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "blocked": {
+      "car": 0,
+      "opp": 0,
+    },
+    "faceoff": {
+      "car": 0,
+      "opp": 0,
+      "pct": null,
+    },
+    "gamesPlayed": 0,
+    "hits": {
+      "car": 0,
+      "opp": 0,
+    },
+    "penalties": {
+      "car": 0,
+      "opp": 0,
+    },
+    "pkPct": null,
+    "ppPct": null,
+    "season": 8,
+    "sog": {
+      "car": 0,
+      "opp": 0,
+    },
+    "teamId": 1,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:team-season-summary:1:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?season_id=eq.8&game_state=eq.Final&or=(home_team_id.eq.1,away_team_id.eq.1)&select=game_id",
+    },
+  ],
+}
+`;
+
+exports[`team-season-summary > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "blocked": {
+      "car": 1,
+      "opp": 0,
+    },
+    "faceoff": {
+      "car": 0,
+      "opp": 1,
+      "pct": 0,
+    },
+    "gamesPlayed": 3,
+    "hits": {
+      "car": 1,
+      "opp": 0,
+    },
+    "penalties": {
+      "car": 0,
+      "opp": 1,
+    },
+    "pkPct": 0.84,
+    "ppPct": 0.22,
+    "season": 8,
+    "sog": {
+      "car": 2,
+      "opp": 1,
+    },
+    "teamId": 1,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:team-season-summary:1:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-season-summary > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`team-season-summary > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId param required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`team-season-summary > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "blocked": {
+      "car": 1,
+      "opp": 0,
+    },
+    "faceoff": {
+      "car": 0,
+      "opp": 1,
+      "pct": 0,
+    },
+    "gamesPlayed": 3,
+    "hits": {
+      "car": 1,
+      "opp": 0,
+    },
+    "penalties": {
+      "car": 0,
+      "opp": 1,
+    },
+    "pkPct": 0.84,
+    "ppPct": 0.22,
+    "season": 8,
+    "sog": {
+      "car": 2,
+      "opp": 1,
+    },
+    "teamId": 1,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:team-season-summary:1:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?season_id=eq.8&game_state=eq.Final&or=(home_team_id.eq.1,away_team_id.eq.1)&select=game_id",
+    },
+    {
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_shot_events?game_id=in.(210,209,208)&select=team_id,event_type",
+    },
+    {
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_pbp_events?game_id=in.(210,209,208)&select=team_id,event_type",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_team_seasons?team_id=eq.1&season_id=eq.8&select=pp_pct,pk_pct",
+    },
+  ],
+}
+`;
+
+exports[`team-seasons/compare > HockeyTech and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "corsi_for_pct": 53.2,
+      "corsi_for_pct_5v5": 52.4,
+      "goals_against": 70,
+      "goals_for": 90,
+      "gp": 30,
+      "losses": 8,
+      "ot_losses": 4,
+      "pk_pct": 0.84,
+      "points": 58,
+      "pp_pct": 0.22,
+      "season_id": 8,
+      "season_type": "regular",
+      "team_id": 1,
+      "wins": 18,
+    },
+    {
+      "corsi_for_pct": 47.1,
+      "corsi_for_pct_5v5": null,
+      "goals_against": 85,
+      "goals_for": 72,
+      "gp": 30,
+      "losses": 14,
+      "ot_losses": 4,
+      "pk_pct": 0.79,
+      "points": 42,
+      "pp_pct": 0.17,
+      "season_id": 8,
+      "season_type": "regular",
+      "team_id": 2,
+      "wins": 12,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:team-seasons:compare:1:8,9",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons/compare > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`team-seasons/compare > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamId and seasons (comma-separated) are required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`team-seasons/compare > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "corsi_for_pct": 53.2,
+      "corsi_for_pct_5v5": 52.4,
+      "goals_against": 70,
+      "goals_for": 90,
+      "gp": 30,
+      "losses": 8,
+      "ot_losses": 4,
+      "pk_pct": 0.84,
+      "points": 58,
+      "pp_pct": 0.22,
+      "season_id": 8,
+      "season_type": "regular",
+      "team_id": 1,
+      "wins": 18,
+    },
+    {
+      "corsi_for_pct": 47.1,
+      "corsi_for_pct_5v5": null,
+      "goals_against": 85,
+      "goals_for": 72,
+      "gp": 30,
+      "losses": 14,
+      "ot_losses": 4,
+      "pk_pct": 0.79,
+      "points": 42,
+      "pp_pct": 0.17,
+      "season_id": 8,
+      "season_type": "regular",
+      "team_id": 2,
+      "wins": 12,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:team-seasons:compare:1:8,9",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_team_seasons?team_id=eq.1&season_id=in.(8,9)&select=season_id,season_type,gp,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct",
+    },
+  ],
+}
+`;
+
+exports[`team-seasons/compare-teams > HockeyTech and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "corsi_for_pct": 53.2,
+      "corsi_for_pct_5v5": 52.4,
+      "goals_against": 70,
+      "goals_for": 90,
+      "gp": 30,
+      "losses": 8,
+      "ot_losses": 4,
+      "pk_pct": 0.84,
+      "points": 58,
+      "pp_pct": 0.22,
+      "season_id": 8,
+      "season_type": "regular",
+      "team_id": 1,
+      "wins": 18,
+    },
+    {
+      "corsi_for_pct": 47.1,
+      "corsi_for_pct_5v5": null,
+      "goals_against": 85,
+      "goals_for": 72,
+      "gp": 30,
+      "losses": 14,
+      "ot_losses": 4,
+      "pk_pct": 0.79,
+      "points": 42,
+      "pp_pct": 0.17,
+      "season_id": 8,
+      "season_type": "regular",
+      "team_id": 2,
+      "wins": 12,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:team-seasons:compare-teams:1,2:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons/compare-teams > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`team-seasons/compare-teams > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamIds (exactly two, comma-separated) and season are required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`team-seasons/compare-teams > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "corsi_for_pct": 53.2,
+      "corsi_for_pct_5v5": 52.4,
+      "goals_against": 70,
+      "goals_for": 90,
+      "gp": 30,
+      "losses": 8,
+      "ot_losses": 4,
+      "pk_pct": 0.84,
+      "points": 58,
+      "pp_pct": 0.22,
+      "season_id": 8,
+      "season_type": "regular",
+      "team_id": 1,
+      "wins": 18,
+    },
+    {
+      "corsi_for_pct": 47.1,
+      "corsi_for_pct_5v5": null,
+      "goals_against": 85,
+      "goals_for": 72,
+      "gp": 30,
+      "losses": 14,
+      "ot_losses": 4,
+      "pk_pct": 0.79,
+      "points": 42,
+      "pp_pct": 0.17,
+      "season_id": 8,
+      "season_type": "regular",
+      "team_id": 2,
+      "wins": 12,
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:team-seasons:compare-teams:1,2:8",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_team_seasons?team_id=in.(1,2)&season_id=eq.8&select=team_id,season_id,season_type,gp,wins,losses,ot_losses,points,goals_for,goals_against,pp_pct,pk_pct",
+    },
+  ],
+}
+`;
+
+exports[`team-seasons/head-to-head > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "allTimeRecord": {
+      "teamAWins": 1,
+      "teamBWins": 2,
+    },
+    "currentStreak": {
+      "count": 2,
+      "holder": "B",
+    },
+    "games": [
+      {
+        "gameDate": "2026-01-15",
+        "gameId": 210,
+        "homeTeam": 1,
+        "season": 8,
+        "teamAScore": 3,
+        "teamAWon": true,
+        "teamBScore": 2,
+      },
+      {
+        "gameDate": "2026-01-10",
+        "gameId": 209,
+        "homeTeam": 2,
+        "season": 8,
+        "teamAScore": 1,
+        "teamAWon": false,
+        "teamBScore": 4,
+      },
+      {
+        "gameDate": "2026-01-05",
+        "gameId": 208,
+        "homeTeam": 1,
+        "season": 8,
+        "teamAScore": 2,
+        "teamAWon": false,
+        "teamBScore": 3,
+      },
+    ],
+    "isThinSample": true,
+    "recentWindow": {
+      "size": 3,
+      "teamAWins": 1,
+      "teamBWins": 2,
+    },
+    "teamA": 1,
+    "teamB": 2,
+    "totalMeetings": 3,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:team-seasons:head-to-head:1,2",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons/head-to-head > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`team-seasons/head-to-head > missing required param 1`] = `
+{
+  "body": {
+    "error": "teamIds (exactly two, comma-separated) are required",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`team-seasons/head-to-head > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "allTimeRecord": {
+      "teamAWins": 1,
+      "teamBWins": 2,
+    },
+    "currentStreak": {
+      "count": 2,
+      "holder": "B",
+    },
+    "games": [
+      {
+        "gameDate": "2026-01-15",
+        "gameId": 210,
+        "homeTeam": 1,
+        "season": 8,
+        "teamAScore": 3,
+        "teamAWon": true,
+        "teamBScore": 2,
+      },
+      {
+        "gameDate": "2026-01-10",
+        "gameId": 209,
+        "homeTeam": 2,
+        "season": 8,
+        "teamAScore": 1,
+        "teamAWon": false,
+        "teamBScore": 4,
+      },
+      {
+        "gameDate": "2026-01-05",
+        "gameId": 208,
+        "homeTeam": 1,
+        "season": 8,
+        "teamAScore": 2,
+        "teamAWon": false,
+        "teamBScore": 3,
+      },
+    ],
+    "isThinSample": true,
+    "recentWindow": {
+      "size": 3,
+      "teamAWins": 1,
+      "teamBWins": 2,
+    },
+    "teamA": 1,
+    "teamB": 2,
+    "totalMeetings": 3,
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:team-seasons:head-to-head:1,2",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_state=eq.Final&or=(and(home_team_id.eq.1,away_team_id.eq.2),and(home_team_id.eq.2,away_team_id.eq.1))&select=game_id,season_id,game_date,home_team_id,away_team_id,home_score,away_score&order=season_id.asc,game_id.asc",
+    },
+  ],
+}
+`;
+
+exports[`team-seasons/head-to-head/narrative (in… > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "narrative": null,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons/head-to-head/narrative (in… > Supabase unavailable 1`] = `
+{
+  "body": {
+    "narrative": null,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons/head-to-head/narrative (in… > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "narrative": null,
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [],
+}
+`;
+
+exports[`team-seasons/head-to-head/narrative > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "AI generation failed",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`team-seasons/head-to-head/narrative > Supabase unavailable 1`] = `
+{
+  "body": {
+    "narrative": "Fixture PWHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:h2h-narrative:1,2",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`team-seasons/head-to-head/narrative > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "narrative": "Fixture PWHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:h2h-narrative:1,2",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "aiPrompt": "You are Sticks, EyeWall's hockey analyst. Write a punchy 2-3 sentence head-to-head summary for Boston Fleet vs Minnesota Frost.
+
+All-time record (since 2023-24): Boston Fleet 2-1 Minnesota Frost, across 3 meetings.
+Last 3: Boston Fleet 2-1 Minnesota Frost.
+Current streak: Boston Fleet has won 1 straight.
+
+IMPORTANT: Only 3 meetings exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.
+Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.",
+      "maxTokens": 100,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`today > HockeyTech and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "awayScore": 2,
+      "awayTeamCode": "MIN",
+      "awayTeamId": 2,
+      "gameId": 210,
+      "homeScore": 3,
+      "homeTeamCode": "BOS",
+      "homeTeamId": 1,
+      "status": "final",
+    },
+    {
+      "awayScore": 1,
+      "awayTeamCode": "BOS",
+      "awayTeamId": 1,
+      "gameId": 209,
+      "homeScore": 4,
+      "homeTeamCode": "MIN",
+      "homeTeamId": 2,
+      "status": "final",
+    },
+    {
+      "awayScore": 3,
+      "awayTeamCode": "MIN",
+      "awayTeamId": 2,
+      "gameId": 208,
+      "homeScore": 2,
+      "homeTeamCode": "BOS",
+      "homeTeamId": 1,
+      "status": "final",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:today:8",
+      "ttl": 60,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`today > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`today > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "awayScore": 2,
+      "awayTeamCode": "MIN",
+      "awayTeamId": 2,
+      "gameId": 210,
+      "homeScore": 3,
+      "homeTeamCode": "BOS",
+      "homeTeamId": 1,
+      "status": "final",
+    },
+    {
+      "awayScore": 1,
+      "awayTeamCode": "BOS",
+      "awayTeamId": 1,
+      "gameId": 209,
+      "homeScore": 4,
+      "homeTeamCode": "MIN",
+      "homeTeamId": 2,
+      "status": "final",
+    },
+    {
+      "awayScore": 3,
+      "awayTeamCode": "MIN",
+      "awayTeamId": 2,
+      "gameId": 208,
+      "homeScore": 2,
+      "homeTeamCode": "BOS",
+      "homeTeamId": 1,
+      "status": "final",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "pwhl:today:8",
+      "ttl": 60,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=eq.8&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&limit=10",
+    },
+  ],
+}
+`;
+
+exports[`transactions > HockeyTech and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "HockeyTech 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`transactions > Supabase unavailable 1`] = `
+{
+  "body": {
+    "transactions": [
+      {
+        "action": "Signed",
+        "date": "2026-08-14",
+        "from": "",
+        "player": "Neena Brick (F)",
+        "team": "Boston",
+        "type": "ADD",
+      },
+      {
+        "action": "Signed",
+        "date": "2026-08-10",
+        "from": "",
+        "player": "Sam Winger (D)",
+        "team": "Minnesota",
+        "type": "ADD",
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:transactions:8",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`transactions > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "transactions": [
+      {
+        "action": "Signed",
+        "date": "2026-08-14",
+        "from": "",
+        "player": "Neena Brick (F)",
+        "team": "Boston",
+        "type": "ADD",
+      },
+      {
+        "action": "Signed",
+        "date": "2026-08-10",
+        "from": "",
+        "player": "Sam Winger (D)",
+        "team": "Minnesota",
+        "type": "ADD",
+      },
+    ],
+  },
+  "kvWrites": [
+    {
+      "key": "pwhl:transactions:8",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=transactions&season=8&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
+    },
+  ],
+}
+`;
+
+exports[`unknown route > HockeyTech and AI unavailable 1`] = `
+{
+  "body": "EyeWall Poller",
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`unknown route > Supabase unavailable 1`] = `
+{
+  "body": "EyeWall Poller",
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`unknown route > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": "EyeWall Poller",
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [],
+}
+`;
