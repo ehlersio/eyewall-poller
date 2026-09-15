@@ -2010,7 +2010,7 @@ describe('GET /summary/generate', () => {
       makeRequest('/summary/generate?secret=test-poll-secret'), env, makeCtx(),
       new URL('https://example.com/summary/generate?secret=test-poll-secret')
     )
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(404)
     expect((await res.json()).error).toMatch(/no completed games/i)
   })
 })
@@ -2344,6 +2344,7 @@ describe('GET /prediction/analyze', () => {
     const res = await handleNHL(
       makeRequest('/prediction/analyze'), env, makeCtx(), new URL('https://example.com/prediction/analyze')
     )
+    expect(res.status).toBe(400)
     expect((await res.json()).error).toMatch(/gameId required/i)
   })
 
@@ -2719,6 +2720,7 @@ describe('POST /summary/narrative', () => {
       makeRequest('/summary/narrative?gameId=1', { method: 'POST', body: {} }), env, makeCtx(),
       new URL('https://example.com/summary/narrative?gameId=1')
     )
+    expect(res.status).toBe(400)
     expect((await res.json()).error).toMatch(/gameId and period required/i)
   })
 
@@ -2738,7 +2740,23 @@ describe('POST /summary/narrative', () => {
     const env = makeEnv()
     const req = new Request('https://example.com/summary/narrative?gameId=1&period=1', { method: 'POST', body: 'not json', headers: { 'Content-Type': 'application/json' } })
     const res = await handleNHL(req, env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=1'))
+    expect(res.status).toBe(400)
     expect((await res.json()).error).toMatch(/invalid body/i)
+  })
+
+  it('502s without caching when the AI returns nothing', async () => {
+    const env = makeEnv()
+    mockFetchWithAI('')
+    const res = await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=1&carAbbr=CAR', {
+        method: 'POST',
+        body: { carGoals: 1, oppGoals: 0, corsiForPct: 55, carSOG: 10, oppSOG: 8, carHits: 5, carFOPct: 50, penaltyCount: 2, carPenaltyCount: 1, goals: [] },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=1&carAbbr=CAR')
+    )
+    expect(res.status).toBe(502)
+    expect((await res.json()).error).toMatch(/empty/i)
+    expect(await env.CACHE.get('narrative:1:1:CAR')).toBeNull()
   })
 
   it('makes one AI call for a period summary and caches for 30 days', async () => {

@@ -254,7 +254,7 @@ async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameI
   const carRow = teamSeasonRows.find(r => r.team === tc.abbr);
   const oppRow = teamSeasonRows.find(r => r.team === oppAbbr);
   if (!carRow || !oppRow) {
-    return json({ error: `No prior-season (${prior}) data available for ${tc.abbr} or ${oppAbbr} — cannot generate a preseason estimate yet.` });
+    return errorJson(404, { error: `No prior-season (${prior}) data available for ${tc.abbr} or ${oppAbbr} — cannot generate a preseason estimate yet.` });
   }
 
   const carGpg = carRow.goals_for_pg ?? 0;
@@ -317,7 +317,7 @@ Write the analysis now. Mention the single most decisive factor from last season
     return errorJson(502, { error: 'AI generation failed' });
   }
   const narrative = aiResponse.response?.trim() || '';
-  if (!narrative) return json({ error: 'Empty response' });
+  if (!narrative) return errorJson(502, { error: 'Empty response' });
 
   const result = {
     gameId,
@@ -2909,7 +2909,7 @@ Only reference the two teams named above and the numbers given -- no player name
     const recent   = (schedule || [])
       .filter(g => isCompleted(g))
       .sort((a, b) => new Date(b.gameDate).getTime() - new Date(a.gameDate).getTime())[0];
-    if (!recent) return json({ error: 'No completed games found' });
+    if (!recent) return errorJson(404, { error: 'No completed games found' });
     // Ensure PBP is cached first
     const pbp = await kvGet(env, `pbp:${recent.id}`);
     if (!pbp) {
@@ -2935,7 +2935,7 @@ Only reference the two teams named above and the numbers given -- no player name
     if (limited) return limited;
     const gameId    = url.searchParams.get('gameId');
     const forceRegen = url.searchParams.get('force') === '1';
-    if (!gameId) return json({ error: 'gameId required' });
+    if (!gameId) return badRequest('gameId required');
     const tc = await getTeamConfig(request, env);
 
     // Team-scoped: the same gameId can legitimately be requested from
@@ -2961,7 +2961,7 @@ Only reference the two teams named above and the numbers given -- no player name
 
     // Find this game
     const game = schedule.find(g => String(g.id) === String(gameId));
-    if (!game) return json({ error: 'Game not found in schedule' });
+    if (!game) return errorJson(404, { error: 'Game not found in schedule' });
 
     const isHome    = game.homeTeam?.abbrev === tc.abbr;
     const oppAbbr   = isHome ? game.awayTeam?.abbrev : game.homeTeam?.abbrev;
@@ -2992,7 +2992,7 @@ Only reference the two teams named above and the numbers given -- no player name
     const carTeam = findTeam(tc.abbr);
     const oppTeam = findTeam(oppAbbr);
 
-    if (!carTeam || !oppTeam) return json({ error: 'Team standings not found' });
+    if (!carTeam || !oppTeam) return errorJson(404, { error: 'Team standings not found' });
 
     // Calculate key metrics
     const carGp  = carTeam.gamesPlayed || 1;
@@ -3146,7 +3146,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       return errorJson(502, { error: 'AI generation failed' });
     }
     const narrative = aiResponse.response?.trim() || '';
-    if (!narrative) return json({ error: 'Empty response' });
+    if (!narrative) return errorJson(502, { error: 'Empty response' });
 
     const result = {
       gameId,
@@ -3194,7 +3194,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     if (limited) return limited;
     const gameId = url.searchParams.get('gameId');
     const period = url.searchParams.get('period'); // 'game' or period number
-    if (!gameId || !period) return json({ error: 'gameId and period required' });
+    if (!gameId || !period) return badRequest('gameId and period required');
     // Key includes carAbbr so each team gets its own cached perspective
     const carAbbrKey = (url.searchParams.get('carAbbr') || 'UNK').toUpperCase();
     const kvKey  = `narrative:${period}:${gameId}:${carAbbrKey}`;
@@ -3203,7 +3203,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
 
     // Stats payload sent by the client
     let stats;
-    try { stats = await request.json(); } catch { return json({ error: 'Invalid body' }); }
+    try { stats = await request.json(); } catch { return badRequest('Invalid body'); }
 
     const isGame   = period === 'game';
     const oppAbbr  = stats.oppAbbr || 'OPP';
@@ -3300,7 +3300,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
 
     const narrative     = aiResponse.response?.trim() || '';
     const cardNarrative = cardResponse?.response?.trim() || null;
-    if (!narrative) return json({ error: 'Empty response' });
+    if (!narrative) return errorJson(502, { error: 'Empty response' });
 
     const result = { narrative, cardNarrative, gameId, period, generatedAt: new Date().toISOString() };
     // Cache 30 days — narratives never change for a completed period

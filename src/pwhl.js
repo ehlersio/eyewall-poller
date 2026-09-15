@@ -1539,7 +1539,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
         messages: [{ role: 'user', content: prompt }],
       });
       const blurb = aiResponse.response?.trim() || '';
-      if (!blurb) return json({ error: 'Empty AI response' });
+      if (!blurb) return errorJson(502, { error: 'Empty AI response' });
       return json({ blurb });
     } catch (e) {
       console.error('PWHL scout AI error:', e);
@@ -2063,7 +2063,7 @@ Write in plain text, no markdown. 1-2 sentences max.`;
           max_tokens: isGame ? 120 : 80,
         });
         const narrative = (aiResponse.response || '').trim();
-        if (!narrative) return json({ error: 'Empty AI response' });
+        if (!narrative) return errorJson(502, { error: 'Empty AI response' });
 
         let cardNarrative = null;
         if (isGame && narrative.length > 120) {

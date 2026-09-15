@@ -894,6 +894,7 @@ describe('POST /pwhl/scout', () => {
       makeRequest('/pwhl/scout', { method: 'POST', body: { name: 'X', position: 'F', stats: {} } }),
       env, makeCtx(), new URL('https://example.com/pwhl/scout')
     )
+    expect(res.status).toBe(502)
     expect((await res.json()).error).toMatch(/empty/i)
   })
 
@@ -974,6 +975,21 @@ describe('POST /pwhl/summary/narrative', () => {
       env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=1&carAbbr=BOS')
     )
     expect(res.status).toBe(502)
+  })
+
+  it('502s without caching when the AI returns nothing', async () => {
+    const env = makeEnv()
+    mockFetchWithAI('')
+    const res = await handlePWHL(
+      makeRequest('/pwhl/summary/narrative?gameId=210&period=1&carAbbr=BOS', {
+        method: 'POST',
+        body: { carAbbr: 'BOS', oppAbbr: 'MTL', goals: [] },
+      }),
+      env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=1&carAbbr=BOS')
+    )
+    expect(res.status).toBe(502)
+    expect((await res.json()).error).toMatch(/empty/i)
+    expect(await env.CACHE.get('pwhl:narrative:1:210:BOS')).toBeNull()
   })
 })
 

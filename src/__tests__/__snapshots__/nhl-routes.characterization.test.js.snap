@@ -4511,7 +4511,7 @@ exports[`prediction/analyze (force regenerate) > NHL API and AI unavailable 1`] 
     "error": "Game not found in schedule",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 404,
 }
 `;
 
@@ -4618,7 +4618,7 @@ exports[`prediction/analyze (game not in schedul… > NHL API and AI unavailable
     "error": "Game not found in schedule",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 404,
 }
 `;
 
@@ -4633,7 +4633,7 @@ exports[`prediction/analyze (game not in schedul… > Supabase unavailable 1`] =
       "ttl": 600,
     },
   ],
-  "status": 200,
+  "status": 404,
 }
 `;
 
@@ -4648,7 +4648,7 @@ exports[`prediction/analyze (game not in schedul… > response, upstream request
       "ttl": 600,
     },
   ],
-  "status": 200,
+  "status": 404,
   "upstream": [
     {
       "url": "https://api-web.nhle.com/v1/club-schedule-season/CAR/20252026",
@@ -4663,7 +4663,7 @@ exports[`prediction/analyze (in season) > NHL API and AI unavailable 1`] = `
     "error": "Game not found in schedule",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 404,
 }
 `;
 
@@ -4770,7 +4770,7 @@ exports[`prediction/analyze (no gameId) > NHL API and AI unavailable 1`] = `
     "error": "gameId required",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 400,
 }
 `;
 
@@ -4780,7 +4780,7 @@ exports[`prediction/analyze (no gameId) > Supabase unavailable 1`] = `
     "error": "gameId required",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 400,
 }
 `;
 
@@ -4790,7 +4790,7 @@ exports[`prediction/analyze (no gameId) > response, upstream requests and KV wri
     "error": "gameId required",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 400,
   "upstream": [],
 }
 `;
@@ -4801,7 +4801,7 @@ exports[`prediction/analyze (preseason fallback) > NHL API and AI unavailable 1`
     "error": "Game not found in schedule",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 404,
 }
 `;
 
@@ -5999,7 +5999,7 @@ exports[`summary/generate (no completed game cac… > NHL API and AI unavailable
     "error": "No completed games found",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 404,
 }
 `;
 
@@ -6009,7 +6009,7 @@ exports[`summary/generate (no completed game cac… > Supabase unavailable 1`] =
     "error": "No completed games found",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 404,
 }
 `;
 
@@ -6019,7 +6019,7 @@ exports[`summary/generate (no completed game cac… > response, upstream request
     "error": "No completed games found",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 404,
   "upstream": [],
 }
 `;
@@ -6149,7 +6149,7 @@ exports[`summary/narrative (no period) > NHL API and AI unavailable 1`] = `
     "error": "gameId and period required",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 400,
 }
 `;
 
@@ -6159,7 +6159,7 @@ exports[`summary/narrative (no period) > Supabase unavailable 1`] = `
     "error": "gameId and period required",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 400,
 }
 `;
 
@@ -6169,7 +6169,7 @@ exports[`summary/narrative (no period) > response, upstream requests and KV writ
     "error": "gameId and period required",
   },
   "kvWrites": [],
-  "status": 200,
+  "status": 400,
   "upstream": [],
 }
 `;
