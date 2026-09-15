@@ -21,8 +21,57 @@ import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES } from './ahl.js';
 import { handleECHL, ECHL_TEAM_CODES, fetchECHLNews, pollECHL } from './echl.js';
-import { corsHeaders, json, kvGet, kvPut, sbError, badRequest, sbHeaders, SB_URL, SB_ANON, verifyAdminUser } from './shared.js';
+import { corsHeaders, json, kvGet, kvPut, cachedJson, sbError, badRequest, sbHeaders, SB_URL, SB_ANON, verifyAdminUser } from './shared.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
+
+// GET /config/seasons/comparison, one entry per league. NHL's team_seasons is
+// keyed by season/team and has no season metadata; PWHL/AHL/ECHL's
+// {league}_team_seasons are keyed by season_id/team_id and join season type
+// and start year from seasons.js. Active team counts come from the same code
+// maps every roster-aware route uses -- never hardcoded, since PWHL's 2026-27
+// expansion changed its count.
+const COMPARISON_LEAGUES = [
+  { key: 'nhl',  label: 'NHL',  teams: TEAM_CONFIGS,    table: 'team_seasons?select=season,team&game_type=eq.2&limit=1000', seasonCol: 'season',    teamCol: 'team' },
+  { key: 'pwhl', label: 'PWHL', teams: PWHL_TEAM_CODES, table: 'pwhl_team_seasons?select=season_id,team_id&limit=2000',     seasonCol: 'season_id', teamCol: 'team_id', meta: env => getAllPWHLSeasons(env) },
+  { key: 'ahl',  label: 'AHL',  teams: AHL_TEAM_CODES,  table: 'ahl_team_seasons?select=season_id,team_id&limit=2000',      seasonCol: 'season_id', teamCol: 'team_id', meta: env => getAllAHLSeasons(env) },
+  { key: 'echl', label: 'ECHL', teams: ECHL_TEAM_CODES, table: 'echl_team_seasons?select=season_id,team_id&limit=2000',     seasonCol: 'season_id', teamCol: 'team_id', meta: env => getAllECHLSeasons(env) },
+];
+
+// One league's { activeTeamCount, seasons }. A failed read (or metadata
+// lookup) degrades that league to an empty season list without failing
+// the others.
+async function comparisonSeasons(env, lg) {
+  const activeTeamCount = Object.keys(lg.teams).length;
+  let seasons = [];
+  try {
+    const [r, meta] = await Promise.all([
+      fetch(`${SB_URL}/rest/v1/${lg.table}`, { headers: sbHeaders() }),
+      lg.meta ? lg.meta(env) : null,
+    ]);
+    if (!r.ok) throw new Error(`Supabase ${r.status}`);
+    const rows = await r.json();
+    const metaById = new Map((meta || []).map(m => [m.seasonId, m]));
+    const bySeason = new Map();
+    for (const row of rows) {
+      const id = row[lg.seasonCol];
+      if (!bySeason.has(id)) bySeason.set(id, new Set());
+      bySeason.get(id).add(row[lg.teamCol]);
+    }
+    // Newest first. Season ids are numbers (a Supabase bigint for NHL), not strings.
+    seasons = [...bySeason.entries()]
+      .sort(([a], [b]) => b - a)
+      .map(([id, teams]) => ({
+        ...(lg.meta
+          ? { seasonId: id, seasonType: metaById.get(id)?.seasonType ?? null, startYear: metaById.get(id)?.startYear ?? null }
+          : { season: id }),
+        teamCount: teams.size,
+        comparable: teams.size > activeTeamCount / 2,
+      }));
+  } catch (e) {
+    console.warn(`${lg.label} comparison-seasons query failed: ${e.message}`);
+  }
+  return { activeTeamCount, seasons };
+}
 
 export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
@@ -80,138 +129,12 @@ export async function handleRequest(request, env, ctx) {
   // still be missing one specific team's row. Two separate signals, not
   // one collapsed into the other.
   if (url.pathname === '/config/seasons/comparison') {
-    const kvKey  = 'config:seasons:comparison';
-    const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
-
-    const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
-    const nhlActiveTeamCount  = Object.keys(TEAM_CONFIGS).length;
-    const pwhlActiveTeamCount = Object.keys(PWHL_TEAM_CODES).length;
-
-    let nhlSeasons = [];
-    try {
-      const r = await fetch(
-        `${SB_URL}/rest/v1/team_seasons?select=season,team&game_type=eq.2&limit=1000`,
-        { headers: sbH }
-      );
-      if (!r.ok) throw new Error(`Supabase ${r.status}`);
-      const rows = await r.json();
-      const bySeason = new Map();
-      for (const row of rows) {
-        if (!bySeason.has(row.season)) bySeason.set(row.season, new Set());
-        bySeason.get(row.season).add(row.team);
-      }
-      nhlSeasons = [...bySeason.entries()]
-        .map(([season, teams]) => ({
-          season,
-          teamCount: teams.size,
-          comparable: teams.size > nhlActiveTeamCount / 2,
-        }))
-        .sort((a, b) => b.season - a.season); // season is a Supabase bigint (number), not a string
-    } catch (e) {
-      console.warn(`NHL comparison-seasons query failed: ${e.message}`);
-    }
-
-    let pwhlSeasons = [];
-    try {
-      const [r, meta] = await Promise.all([
-        fetch(`${SB_URL}/rest/v1/pwhl_team_seasons?select=season_id,team_id&limit=2000`, { headers: sbH }),
-        getAllPWHLSeasons(env),
-      ]);
-      if (!r.ok) throw new Error(`Supabase ${r.status}`);
-      const rows = await r.json();
-      const metaById = new Map((meta || []).map(m => [m.seasonId, m]));
-      const bySeason = new Map();
-      for (const row of rows) {
-        if (!bySeason.has(row.season_id)) bySeason.set(row.season_id, new Set());
-        bySeason.get(row.season_id).add(row.team_id);
-      }
-      pwhlSeasons = [...bySeason.entries()]
-        .map(([seasonId, teams]) => ({
-          seasonId,
-          seasonType: metaById.get(seasonId)?.seasonType ?? null,
-          startYear:  metaById.get(seasonId)?.startYear ?? null,
-          teamCount:  teams.size,
-          comparable: teams.size > pwhlActiveTeamCount / 2,
-        }))
-        .sort((a, b) => b.seasonId - a.seasonId);
-    } catch (e) {
-      console.warn(`PWHL comparison-seasons query failed: ${e.message}`);
-    }
-
-    // AHL/ECHL entries added 2026-08-30 -- see seasons.js's
-    // getAllAHLSeasons()/getAllECHLSeasons() comments for why these were
-    // missing (AHLTeamView.jsx's own comment claimed an "AHL entry" here
-    // since AHL/PWHL parity Phase 4, but this route never actually built
-    // one, so AHL's "Compare Seasons" picker has been showing its "no
-    // seasons" empty state this whole time). Mirrors the PWHL block above
-    // exactly -- same team_seasons-grouping shape, same season-metadata
-    // join, just against ahl_team_seasons/echl_team_seasons.
-    const ahlActiveTeamCount  = Object.keys(AHL_TEAM_CODES).length;
-    const echlActiveTeamCount = Object.keys(ECHL_TEAM_CODES).length;
-
-    let ahlSeasons = [];
-    try {
-      const [r, meta] = await Promise.all([
-        fetch(`${SB_URL}/rest/v1/ahl_team_seasons?select=season_id,team_id&limit=2000`, { headers: sbH }),
-        getAllAHLSeasons(env),
-      ]);
-      if (!r.ok) throw new Error(`Supabase ${r.status}`);
-      const rows = await r.json();
-      const metaById = new Map((meta || []).map(m => [m.seasonId, m]));
-      const bySeason = new Map();
-      for (const row of rows) {
-        if (!bySeason.has(row.season_id)) bySeason.set(row.season_id, new Set());
-        bySeason.get(row.season_id).add(row.team_id);
-      }
-      ahlSeasons = [...bySeason.entries()]
-        .map(([seasonId, teams]) => ({
-          seasonId,
-          seasonType: metaById.get(seasonId)?.seasonType ?? null,
-          startYear:  metaById.get(seasonId)?.startYear ?? null,
-          teamCount:  teams.size,
-          comparable: teams.size > ahlActiveTeamCount / 2,
-        }))
-        .sort((a, b) => b.seasonId - a.seasonId);
-    } catch (e) {
-      console.warn(`AHL comparison-seasons query failed: ${e.message}`);
-    }
-
-    let echlSeasons = [];
-    try {
-      const [r, meta] = await Promise.all([
-        fetch(`${SB_URL}/rest/v1/echl_team_seasons?select=season_id,team_id&limit=2000`, { headers: sbH }),
-        getAllECHLSeasons(env),
-      ]);
-      if (!r.ok) throw new Error(`Supabase ${r.status}`);
-      const rows = await r.json();
-      const metaById = new Map((meta || []).map(m => [m.seasonId, m]));
-      const bySeason = new Map();
-      for (const row of rows) {
-        if (!bySeason.has(row.season_id)) bySeason.set(row.season_id, new Set());
-        bySeason.get(row.season_id).add(row.team_id);
-      }
-      echlSeasons = [...bySeason.entries()]
-        .map(([seasonId, teams]) => ({
-          seasonId,
-          seasonType: metaById.get(seasonId)?.seasonType ?? null,
-          startYear:  metaById.get(seasonId)?.startYear ?? null,
-          teamCount:  teams.size,
-          comparable: teams.size > echlActiveTeamCount / 2,
-        }))
-        .sort((a, b) => b.seasonId - a.seasonId);
-    } catch (e) {
-      console.warn(`ECHL comparison-seasons query failed: ${e.message}`);
-    }
-
-    const result = {
-      nhl:  { activeTeamCount: nhlActiveTeamCount,  seasons: nhlSeasons },
-      pwhl: { activeTeamCount: pwhlActiveTeamCount, seasons: pwhlSeasons },
-      ahl:  { activeTeamCount: ahlActiveTeamCount,  seasons: ahlSeasons },
-      echl: { activeTeamCount: echlActiveTeamCount, seasons: echlSeasons },
-    };
-    await kvPut(env, kvKey, result, 3600); // 1hr — matches /team-seasons' own cache TTL
-    return json(result);
+    // 1hr — matches /team-seasons' own cache TTL. Leagues are read in
+    // parallel; each one's fetch is issued first and in list order.
+    return cachedJson(env, 'config:seasons:comparison', 3600, async () => {
+      const results = await Promise.all(COMPARISON_LEAGUES.map(lg => comparisonSeasons(env, lg)));
+      return Object.fromEntries(COMPARISON_LEAGUES.map((lg, i) => [lg.key, results[i]]));
+    });
   }
 
   // Flat NHL+PWHL player list for the global player-search autocomplete —
