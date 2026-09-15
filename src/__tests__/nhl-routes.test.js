@@ -36,7 +36,7 @@ vi.mock('../shared.js', async (importOriginal) => {
   return { ...actual, sendPush: sendPushMock }
 })
 
-import { handleNHL, poll } from '../nhl.js'
+import { handleNHL, poll, refreshPPUnits } from '../nhl.js'
 import { resolveNHLSeason } from '../seasons.js'
 
 beforeEach(() => {
@@ -2195,6 +2195,56 @@ describe('poll() — multi-team dual broadcast', () => {
     await poll(env, makeCtx())
 
     expect(aiCalls(globalThis.fetch)).toHaveLength(0)
+  })
+
+  // Per-minute cron cost: standings are refetched only once their 5-min
+  // cache lapses, and the unread teamstats fetch is gone entirely.
+  function polledUrls() {
+    return globalThis.fetch.mock.calls.map(([u]) => String(u))
+  }
+
+  it('skips the standings fetch while the cached copy is still fresh', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({ standings: [{ teamAbbrev: { default: 'CAR' } }] }) })
+    mockScoreboardAndPbp({})
+
+    await poll(env, makeCtx())
+
+    expect(polledUrls().some(u => u.includes('/standings/now'))).toBe(false)
+  })
+
+  it('fetches standings when the cache is cold, and never fetches team stats', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache() })
+    mockScoreboardAndPbp({})
+
+    await poll(env, makeCtx())
+
+    expect(polledUrls().some(u => u.includes('/standings/now'))).toBe(true)
+    expect(polledUrls().some(u => u.includes('/team/summary'))).toBe(false)
+  })
+})
+
+describe('refreshPPUnits()', () => {
+  it('returns a warm pp_units:all without re-reading Supabase', async () => {
+    const cached = { CAR: { PP: { 1: [8478402] }, PK: {} } }
+    const env = makeEnv({ CACHE: makeFakeCache({ 'pp_units:all': cached }) })
+    globalThis.fetch = vi.fn()
+
+    expect(await refreshPPUnits(env)).toEqual(cached)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('re-reads Supabase when forced, even with a warm cache', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({ 'pp_units:all': { OLD: { PP: {}, PK: {} } } }) })
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ team: 'CAR', unit_type: 'PP', unit_number: 1, player_ids: [8478402] }],
+    })
+
+    const map = await refreshPPUnits(env, { force: true })
+
+    expect(map).toEqual({ CAR: { PP: { 1: [8478402] }, PK: {} } })
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(await env.CACHE.get('pp_units:all'))).toEqual(map)
   })
 })
 

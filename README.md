@@ -221,10 +221,9 @@ Key patterns:
 | `live:gameId` | 60s | Current live NHL game ID |
 | `pbp:{gameId}` | 60s live / 1hr final | NHL play-by-play |
 | `boxscore:{gameId}` | 60s live / 1hr final | NHL boxscore |
-| `standings` | 5min | NHL standings |
-| `teamstats:{ABBR}` | 10min | NHL team summary stats |
+| `standings` | 5min | NHL standings — `poll()` refetches only once this lapses, not every tick |
 | `news:{ABBR}` | 30min | NHL team news |
-| `pp_units:all` | 4hr | PP/PK unit rosters |
+| `pp_units:all` | 4hr | PP/PK unit rosters — the cron re-reads Supabase only once this lapses; `/pp-units/refresh` forces a re-read (e.g. right after a pipeline run) |
 | `push:subs` | 1yr | Push subscriptions — Web Push (`endpoint`+`keys`) and, as of 2026-09, native iOS (`platform: 'ios'` + APNs device `token`) share this one array; `sendPush()`/`broadcast()` branch on `sub.platform` |
 | `apns:jwt` | 55min | Cached APNs auth JWT (ES256, signed with `APNS_AUTH_KEY`) — Apple asks clients not to mint a fresh one per request; see `shared.js`'s `buildAPNsJWT()` |
 | `pwhl:standings:{season}` | 1hr | PWHL standings |

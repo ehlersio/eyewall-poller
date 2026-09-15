@@ -16,7 +16,6 @@ import { summarizeStarters } from './probableStarters.js';
 import { summarizeScorecard } from './scorecard.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
-const STATS_BASE = 'https://api.nhle.com/stats/rest/en';
 
 // ── Team configuration ────────────────────────────────────────
 // All 32 teams. The poll() scheduled job uses DEFAULT_TEAM_ABBR.
@@ -1567,16 +1566,16 @@ export async function poll(env, _ctx) {
     }
   }
 
-  // 4. Standings
-  const standings = await nhlGet(`${NHL_BASE}/standings/now`);
-  await kvPut(env, 'standings', standings?.standings || [], 300);
+  // 4. Standings — only once the 5-min cache has lapsed, not every tick.
+  // They only move when a game ends, and a per-minute rewrite cost a KV
+  // write a minute for nothing.
+  if (!(await env.CACHE.get('standings'))) {
+    const standings = await nhlGet(`${NHL_BASE}/standings/now`);
+    await kvPut(env, 'standings', standings?.standings || [], 300);
+  }
 
-  // 5. Team stats
-  const exp = `gameTypeId=2 and seasonId=${season} and teamId=${TEAM_ID}`;
-  const teamSummary = await nhlGet(
-    `${STATS_BASE}/team/summary?isAggregate=false&isGame=false&sort=wins&limit=1&cayenneExp=${encodeURIComponent(exp)}`
-  ).catch(() => null);
-  if (teamSummary) await kvPut(env, `teamstats:${TEAM_ABBR}`, teamSummary?.data?.[0] || null, 600);
+  // 5. (Team-stats fetch removed 2026-09 -- nothing ever read the
+  // teamstats:{ABBR} key it wrote every minute.)
 
   // 6. (Sportsbook odds fetch removed 2026-09 -- the app shows no betting content.)
 
@@ -1587,7 +1586,9 @@ export async function poll(env, _ctx) {
   // MoneyPuck analytics are populated via POST /moneypuck/ingest from GitHub Actions.
   // Cloudflare Workers IPs are blocked by MoneyPuck; GH-hosted runners are not.
   // The cron no longer attempts to fetch — it would always 403.
-  {
+  // Checked once an hour rather than every tick: it's 32 KV reads that
+  // only feed this log line.
+  if (new Date().getUTCMinutes() === 0) {
     const staleTeams = (
       await Promise.all(
         Object.keys(TEAM_CONFIGS).map(async abbr => {
@@ -1606,7 +1607,15 @@ export async function poll(env, _ctx) {
 
 // ── PP/PK unit refresh ──────────────────────────────────────
 
-export async function refreshPPUnits(env) {
+// Cache-first: scheduled() calls this every minute, but special_teams_units
+// only changes when the nightly pipeline runs, so a warm pp_units:all is
+// returned as-is instead of re-reading Supabase and rewriting KV each tick.
+// { force: true } re-reads regardless (/pp-units/refresh, after a pipeline run).
+export async function refreshPPUnits(env, { force = false } = {}) {
+  if (!force) {
+    const cached = await kvGet(env, 'pp_units:all');
+    if (cached) return cached;
+  }
   const season = await resolveNHLSeason(env);
   const r = await fetch(
     `${SB_URL}/rest/v1/special_teams_units` +
@@ -2970,7 +2979,7 @@ Only reference the two teams named above and the numbers given -- no player name
     const secret = url.searchParams.get('secret');
     if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
     ctx.waitUntil(
-      refreshPPUnits(env)
+      refreshPPUnits(env, { force: true })
         .then(map => console.log(`PP units done: ${Object.keys(map).length} teams`))
         .catch(e => console.error('PP units error:', e.message))
     );
