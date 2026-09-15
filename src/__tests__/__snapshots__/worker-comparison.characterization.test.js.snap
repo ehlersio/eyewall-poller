@@ -1,0 +1,250 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`GET /config/seasons/comparison > a season-metadata lookup that throws empties only that league 1`] = `
+{
+  "ahl": 0,
+  "echl": 2,
+  "nhl": 2,
+  "pwhl": 2,
+}
+`;
+
+exports[`GET /config/seasons/comparison > all four leagues: response, upstream requests and KV write 1`] = `
+{
+  "body": {
+    "ahl": {
+      "activeTeamCount": 33,
+      "seasons": [
+        {
+          "comparable": false,
+          "seasonId": 92,
+          "seasonType": "playoffs",
+          "startYear": 2025,
+          "teamCount": 10,
+        },
+        {
+          "comparable": true,
+          "seasonId": 90,
+          "seasonType": "regular",
+          "startYear": 2025,
+          "teamCount": 20,
+        },
+        {
+          "comparable": false,
+          "seasonId": 88,
+          "seasonType": null,
+          "startYear": null,
+          "teamCount": 3,
+        },
+      ],
+    },
+    "echl": {
+      "activeTeamCount": 30,
+      "seasons": [
+        {
+          "comparable": false,
+          "seasonId": 76,
+          "seasonType": null,
+          "startYear": null,
+          "teamCount": 5,
+        },
+        {
+          "comparable": true,
+          "seasonId": 73,
+          "seasonType": "regular",
+          "startYear": 2025,
+          "teamCount": 18,
+        },
+      ],
+    },
+    "nhl": {
+      "activeTeamCount": 32,
+      "seasons": [
+        {
+          "comparable": true,
+          "season": 20262027,
+          "teamCount": 20,
+        },
+        {
+          "comparable": false,
+          "season": 20232024,
+          "teamCount": 16,
+        },
+      ],
+    },
+    "pwhl": {
+      "activeTeamCount": 12,
+      "seasons": [
+        {
+          "comparable": false,
+          "seasonId": 9,
+          "seasonType": "playoffs",
+          "startYear": 2025,
+          "teamCount": 4,
+        },
+        {
+          "comparable": true,
+          "seasonId": 8,
+          "seasonType": "regular",
+          "startYear": 2025,
+          "teamCount": 8,
+        },
+      ],
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "config:seasons:comparison",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_seasons?select=season,team&game_type=eq.2&limit=1000",
+    "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_team_seasons?select=season_id,team_id&limit=2000",
+    "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?select=season_id,team_id&limit=2000",
+    "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?select=season_id,team_id&limit=2000",
+  ],
+}
+`;
+
+exports[`GET /config/seasons/comparison > missing season metadata leaves seasonType/startYear null 1`] = `
+{
+  "ahl": {
+    "activeTeamCount": 33,
+    "seasons": [
+      {
+        "comparable": false,
+        "seasonId": 92,
+        "seasonType": null,
+        "startYear": null,
+        "teamCount": 10,
+      },
+      {
+        "comparable": true,
+        "seasonId": 90,
+        "seasonType": null,
+        "startYear": null,
+        "teamCount": 20,
+      },
+      {
+        "comparable": false,
+        "seasonId": 88,
+        "seasonType": null,
+        "startYear": null,
+        "teamCount": 3,
+      },
+    ],
+  },
+  "echl": {
+    "activeTeamCount": 30,
+    "seasons": [
+      {
+        "comparable": false,
+        "seasonId": 76,
+        "seasonType": null,
+        "startYear": null,
+        "teamCount": 5,
+      },
+      {
+        "comparable": true,
+        "seasonId": 73,
+        "seasonType": null,
+        "startYear": null,
+        "teamCount": 18,
+      },
+    ],
+  },
+  "pwhl": {
+    "activeTeamCount": 12,
+    "seasons": [
+      {
+        "comparable": false,
+        "seasonId": 9,
+        "seasonType": null,
+        "startYear": null,
+        "teamCount": 4,
+      },
+      {
+        "comparable": true,
+        "seasonId": 8,
+        "seasonType": null,
+        "startYear": null,
+        "teamCount": 8,
+      },
+    ],
+  },
+}
+`;
+
+exports[`GET /config/seasons/comparison > only that league empties when ahl_team_seasons fails 1`] = `
+{
+  "counts": {
+    "ahl": 0,
+    "echl": 2,
+    "nhl": 2,
+    "pwhl": 2,
+  },
+  "kvWrites": [
+    {
+      "key": "config:seasons:comparison",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`GET /config/seasons/comparison > only that league empties when echl_team_seasons fails 1`] = `
+{
+  "counts": {
+    "ahl": 3,
+    "echl": 0,
+    "nhl": 2,
+    "pwhl": 2,
+  },
+  "kvWrites": [
+    {
+      "key": "config:seasons:comparison",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`GET /config/seasons/comparison > only that league empties when pwhl_team_seasons fails 1`] = `
+{
+  "counts": {
+    "ahl": 3,
+    "echl": 2,
+    "nhl": 2,
+    "pwhl": 0,
+  },
+  "kvWrites": [
+    {
+      "key": "config:seasons:comparison",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`GET /config/seasons/comparison > only that league empties when team_seasons fails 1`] = `
+{
+  "counts": {
+    "ahl": 3,
+    "echl": 2,
+    "nhl": 0,
+    "pwhl": 2,
+  },
+  "kvWrites": [
+    {
+      "key": "config:seasons:comparison",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
