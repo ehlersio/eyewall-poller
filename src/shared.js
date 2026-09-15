@@ -131,8 +131,13 @@ export function unauthorized() {
   return new Response('Unauthorized', { status: 401 });
 }
 
+// JSON error body with CORS headers, e.g. errorJson(404, { error: 'Player not found' }).
+export function errorJson(status, body) {
+  return new Response(JSON.stringify(body), { status, headers: corsHeaders() });
+}
+
 export function badRequest(msg) {
-  return new Response(JSON.stringify({ error: msg }), { status: 400, headers: corsHeaders() });
+  return errorJson(400, { error: msg });
 }
 
 export function tooManyRequests() {
@@ -191,8 +196,40 @@ export async function generateText(env, { messages, max_tokens = 1024 } = {}) {
   return { response: data?.choices?.[0]?.message?.content ?? '' };
 }
 
+// 502 for a failed Supabase read. With no status, several reads failed
+// together (a route that needs all of them).
 export function sbError(status) {
-  return new Response(JSON.stringify({ error: `Supabase ${status}` }), { status: 502, headers: corsHeaders() });
+  return errorJson(502, { error: status == null ? 'Supabase error' : `Supabase ${status}` });
+}
+
+// ── Route-handler helpers ─────────────────────────────────────
+
+// Supabase GET. Resolves to the parsed rows, or to sbError(status) -- a
+// Response the route returns as-is. `headers` are added to the auth headers
+// (e.g. Range for paging past the 1,000-row cap).
+export async function sbRows(url, headers = {}) {
+  const res = await fetch(url, { headers: { ...sbHeaders(), ...headers } });
+  if (!res.ok) return sbError(res.status);
+  return res.json();
+}
+
+// sbRows for an optional read: `fallback` instead of an error.
+export async function sbRowsOr(url, fallback) {
+  const rows = await sbRows(url);
+  return rows instanceof Response ? fallback : rows;
+}
+
+// Serve `key` from KV, or run build(), cache its result and serve it.
+// build() may return a Response instead (an error, a 404, a deliberately
+// uncached null), which goes back as-is and uncached. `ttl` is seconds, or
+// a function of the built data.
+export async function cachedJson(env, key, ttl, build) {
+  const cached = await kvGet(env, key);
+  if (cached) return json(cached);
+  const data = await build();
+  if (data instanceof Response) return data;
+  await kvPut(env, key, data, typeof ttl === 'function' ? ttl(data) : ttl);
+  return json(data);
 }
 
 // ── JSONP unwrap ──────────────────────────────────────────────
