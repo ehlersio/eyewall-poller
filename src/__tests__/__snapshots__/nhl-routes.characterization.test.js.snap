@@ -6036,8 +6036,11 @@ exports[`summary/generate (no secret) > response, upstream requests and KV write
 
 exports[`summary/narrative (game) > NHL API and AI unavailable 1`] = `
 {
+  "body": {
+    "error": "AI generation failed",
+  },
   "kvWrites": [],
-  "threw": "OpenRouter 503",
+  "status": 502,
 }
 `;
 
@@ -6158,8 +6161,11 @@ exports[`summary/narrative (no period) > response, upstream requests and KV writ
 
 exports[`summary/narrative (period) > NHL API and AI unavailable 1`] = `
 {
+  "body": {
+    "error": "AI generation failed",
+  },
   "kvWrites": [],
-  "threw": "OpenRouter 503",
+  "status": 502,
 }
 `;
 

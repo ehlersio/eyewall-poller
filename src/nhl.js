@@ -3259,16 +3259,22 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
         )
       : null;
 
-    const [aiResponse, cardResponse] = await Promise.all([
-      generateText(env, {
-        messages: [{ role: 'user', content: prompt }],
-      }),
-      cardPrompt
-        ? generateText(env, {
-            messages: [{ role: 'user', content: cardPrompt }],
-          })
-        : Promise.resolve(null),
-    ]);
+    let aiResponse, cardResponse;
+    try {
+      [aiResponse, cardResponse] = await Promise.all([
+        generateText(env, {
+          messages: [{ role: 'user', content: prompt }],
+        }),
+        cardPrompt
+          ? generateText(env, {
+              messages: [{ role: 'user', content: cardPrompt }],
+            })
+          : Promise.resolve(null),
+      ]);
+    } catch (e) {
+      console.error('[NHL] narrative AI error:', e);
+      return errorJson(502, { error: 'AI generation failed' });
+    }
 
     const narrative     = aiResponse.response?.trim() || '';
     const cardNarrative = cardResponse?.response?.trim() || null;
