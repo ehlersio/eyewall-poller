@@ -446,13 +446,21 @@ export async function getAllAHLSeasonTypes(env) {
 // new Compare Seasons feature (parity plan Phase 4 equivalent) working
 // season labels from day one, instead of reproducing the same gap a third
 // time.
+//
+// Also served whole as GET /config/seasons/ahl-seasons, which
+// eyewall-pipeline's hockeytech_stats.py reads for any season's type and
+// its start/end dates (the game-log pull's date window) -- hence
+// seasonName/startDate/endDate, which the comparison route doesn't use.
 export async function getAllAHLSeasons(env) {
   try {
     const seasons = await fetchAHLSeasons(env);
     return seasons.map(s => ({
       seasonId: Number(s.season_id),
+      seasonName: s.season_name || null,
       seasonType: ahlSeasonTypeFromName(s.season_name, s.playoff, s.career),
       startYear: deriveStartYear(s.start_date, s.season_name),
+      startDate: s.start_date || null,
+      endDate: s.end_date || null,
     }));
   } catch (e) {
     console.warn(`AHL season list resolve failed: ${e.message}`);
@@ -552,13 +560,17 @@ export async function getAllECHLSeasonTypes(env) {
 // why this exists (fixes a real, already-shipped gap in AHL's own
 // /config/seasons/comparison entry, and gives ECHL's own Compare Seasons
 // feature the same working season labels from day one).
+// Also served whole as GET /config/seasons/echl-seasons (see getAllAHLSeasons()).
 export async function getAllECHLSeasons(env) {
   try {
     const seasons = await fetchECHLSeasons(env);
     return seasons.map(s => ({
       seasonId: Number(s.season_id),
+      seasonName: s.season_name || null,
       seasonType: echlSeasonTypeFromName(s.season_name, s.playoff, s.career),
       startYear: deriveStartYear(s.start_date, s.season_name),
+      startDate: s.start_date || null,
+      endDate: s.end_date || null,
     }));
   } catch (e) {
     console.warn(`ECHL season list resolve failed: ${e.message}`);

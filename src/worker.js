@@ -21,7 +21,7 @@ import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES } from './ahl.js';
 import { handleECHL, ECHL_TEAM_CODES, fetchECHLNews, pollECHL } from './echl.js';
-import { corsHeaders, json, kvGet, kvPut, cachedJson, sbError, badRequest, sbHeaders, SB_URL, SB_ANON, verifyAdminUser } from './shared.js';
+import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, sbHeaders, SB_URL, SB_ANON, verifyAdminUser } from './shared.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
 // GET /config/seasons/comparison, one entry per league. NHL's team_seasons is
@@ -104,6 +104,19 @@ export async function handleRequest(request, env, ctx) {
       );
     }
     return json(types);
+  }
+
+  // Every AHL/ECHL season HockeyTech's feed knows about -- id, name, type,
+  // start/end date -- for eyewall-pipeline's hockeytech_stats.py, which
+  // needs any season's type and its date window (to scope the game-log
+  // pull), not just the current season's. Same KV-cached feed
+  // resolveAHLSeason()/resolveECHLSeason() read. 502 when the feed is
+  // unavailable, same as /config/seasons/pwhl-types.
+  if (url.pathname === '/config/seasons/ahl-seasons' || url.pathname === '/config/seasons/echl-seasons') {
+    const isAhl = url.pathname === '/config/seasons/ahl-seasons';
+    const seasons = isAhl ? await getAllAHLSeasons(env) : await getAllECHLSeasons(env);
+    if (!seasons) return errorJson(502, { error: `${isAhl ? 'AHL' : 'ECHL'} seasons unavailable` });
+    return json(seasons);
   }
 
   // Season-by-season "is this comparable yet" signal for the

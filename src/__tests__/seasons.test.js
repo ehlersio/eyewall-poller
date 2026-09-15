@@ -26,6 +26,8 @@ import {
   nextSeasonHasImminentSchedule,
   resolvePWHLSeason,
   getAllPWHLSeasonTypes,
+  getAllAHLSeasons,
+  getAllECHLSeasons,
   deriveSeasonType,
   deriveStartYear,
 } from '../seasons.js'
@@ -515,5 +517,45 @@ describe('getAllPWHLSeasonTypes', () => {
     globalThis.fetch.mockResolvedValue({ ok: false, status: 502 })
     const result = await getAllPWHLSeasonTypes(env)
     expect(result).toBeNull()
+  })
+})
+
+// ── getAllAHLSeasons / getAllECHLSeasons ──────────────────────
+// Back /config/seasons/comparison (seasonType/startYear) and the pipeline's
+// /config/seasons/{ahl,echl}-seasons (name, type and start/end dates).
+describe.each([
+  ['getAllAHLSeasons', getAllAHLSeasons, 'config:season:ahl:seasons', 'client_code=ahl'],
+  ['getAllECHLSeasons', getAllECHLSeasons, 'config:season:echl:seasons', 'client_code=echl'],
+])('%s', (_name, getAll, kvKey, clientParam) => {
+  const FEED = [
+    { season_id: '90', season_name: '2025-26 Regular Season', career: '1', playoff: '0', start_date: '2025-10-10', end_date: '2026-04-19' },
+    { season_id: '92', season_name: '2026 Calder Cup Playoffs', career: '1', playoff: '1', start_date: '2026-04-22', end_date: '2026-06-20' },
+    { season_id: '5', season_name: '2026 All-Star Challenge', career: '0', playoff: '0', start_date: '', end_date: null },
+  ]
+
+  it('returns every season with its name, type, start year and dates', async () => {
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockResolvedValue({ ok: true, text: async () => JSON.stringify({ SiteKit: { Seasons: FEED } }) })
+
+    expect(await getAll(env)).toEqual([
+      { seasonId: 90, seasonName: '2025-26 Regular Season', seasonType: 'regular', startYear: 2025, startDate: '2025-10-10', endDate: '2026-04-19' },
+      { seasonId: 92, seasonName: '2026 Calder Cup Playoffs', seasonType: 'playoffs', startYear: 2026, startDate: '2026-04-22', endDate: '2026-06-20' },
+      { seasonId: 5, seasonName: '2026 All-Star Challenge', seasonType: 'allstar', startYear: 2026, startDate: null, endDate: null },
+    ])
+    expect(String(globalThis.fetch.mock.calls[0][0])).toContain(clientParam)
+    expect(kvPut).toHaveBeenCalledWith(env, kvKey, FEED, expect.any(Number))
+  })
+
+  it('reads the cached feed instead of refetching', async () => {
+    kvGet.mockImplementation((_env, key) => Promise.resolve(key === kvKey ? FEED : null))
+    const result = await getAll(env)
+    expect(result).toHaveLength(3)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('returns null (not a thrown error) when the feed fetch fails', async () => {
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockResolvedValue({ ok: false, status: 503 })
+    expect(await getAll(env)).toBeNull()
   })
 })
