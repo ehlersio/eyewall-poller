@@ -4301,18 +4301,18 @@ exports[`echl > player/landing (unknown player) > response, upstream requests an
 exports[`echl > player-game-log > Supabase unavailable 1`] = `
 {
   "body": {
-    "error": "Not found",
+    "error": "Supabase error",
   },
-  "status": 404,
+  "status": 502,
 }
 `;
 
 exports[`echl > player-game-log > missing required param 1`] = `
 {
   "body": {
-    "error": "Not found",
+    "error": "playerId required",
   },
-  "status": 404,
+  "status": 400,
   "upstream": [],
 }
 `;
@@ -4320,11 +4320,60 @@ exports[`echl > player-game-log > missing required param 1`] = `
 exports[`echl > player-game-log > response, upstream requests and KV writes; repeat call 1`] = `
 {
   "body": {
-    "error": "Not found",
+    "goalies": [
+      {
+        "game_id": 1028992,
+        "goals_against": 4,
+        "player_id": 7001,
+        "saves": 30,
+        "season_id": 73,
+        "shots_against": 34,
+        "team_id": 99,
+        "toi_seconds": 3600,
+      },
+    ],
+    "skaters": [
+      {
+        "assists": 1,
+        "game_id": 1028992,
+        "goals": 2,
+        "penalty_minutes": 2,
+        "player_id": 6681,
+        "plus_minus": 2,
+        "points": 3,
+        "season_id": 73,
+        "shots": 5,
+        "team_id": 8,
+      },
+      {
+        "assists": 1,
+        "game_id": 1028990,
+        "goals": 0,
+        "penalty_minutes": 0,
+        "player_id": 6682,
+        "plus_minus": -1,
+        "points": 1,
+        "season_id": 73,
+        "shots": 2,
+        "team_id": 8,
+      },
+    ],
   },
-  "kvWrites": [],
-  "status": 404,
-  "upstream": [],
+  "kvWrites": [
+    {
+      "key": "echl:pgamelog:6681:73",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_skater_game_box?player_id=eq.6681&season_id=eq.73&order=game_id.asc",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goalie_game_box?player_id=eq.6681&season_id=eq.73&order=game_id.asc",
+    },
+  ],
 }
 `;
 
