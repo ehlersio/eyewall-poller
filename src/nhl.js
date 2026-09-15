@@ -1751,7 +1751,12 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/nhl/today' && request.method === 'GET') {
     // 60s TTL — matches poll()'s live cadence
     return cachedJson(env, 'nhl:today', 60, async () => {
-      const scoreboard  = await nhlGet(`${NHL_BASE}/score/now`);
+      let scoreboard;
+      try {
+        scoreboard = await nhlGet(`${NHL_BASE}/score/now`);
+      } catch (e) {
+        return errorJson(502, { error: e.message });
+      }
       const todaysGames = scoreboard?.games || [];
       const games = todaysGames.map(g => ({
         gameId:       g.id,
