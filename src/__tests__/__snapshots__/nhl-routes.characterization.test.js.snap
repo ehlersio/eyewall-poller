@@ -274,8 +274,11 @@ exports[`draft/analyze (no secret) > response, upstream requests and KV writes; 
 
 exports[`draft/analyze > NHL API and AI unavailable 1`] = `
 {
+  "body": {
+    "error": "AI generation failed",
+  },
   "kvWrites": [],
-  "threw": "OpenRouter 503",
+  "status": 502,
 }
 `;
 

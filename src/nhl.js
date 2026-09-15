@@ -3655,15 +3655,21 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       return new Response(`Bad request: ${e.message}`, { status: 400 });
     }
 
-    const aiResponse = await generateText(env, {
-      messages: [
-        {
-          role: 'system',
-          content: `You are Sticks, the EyeWall Analytics draft analyst. You give sharp, specific 2-3 sentence pick analyses. Focus on value relative to rank, team fit, and player type. No filler. No "This is a great pick" openers. Be direct.`,
-        },
-        { role: 'user', content: body.prompt },
-      ],
-    });
+    let aiResponse;
+    try {
+      aiResponse = await generateText(env, {
+        messages: [
+          {
+            role: 'system',
+            content: `You are Sticks, the EyeWall Analytics draft analyst. You give sharp, specific 2-3 sentence pick analyses. Focus on value relative to rank, team fit, and player type. No filler. No "This is a great pick" openers. Be direct.`,
+          },
+          { role: 'user', content: body.prompt },
+        ],
+      });
+    } catch (e) {
+      console.error('Draft analyze AI error:', e);
+      return errorJson(502, { error: 'AI generation failed' });
+    }
 
     const analysis = aiResponse.response?.trim() || '';
     if (!analysis) return errorJson(502, { error: 'Empty AI response' });
