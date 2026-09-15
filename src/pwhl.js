@@ -230,11 +230,12 @@ export async function pollPWHL(env) {
     const games = await schedRes.json();
     if (!games?.length) return;
 
-    // Only process in-progress games
-    const liveGames = games.filter(g => deriveGameStatus(g) === 'live');
-    if (!liveGames.length) return;
+    // Live games, plus games that have gone final -- pollPWHLGame() sends a
+    // final game's game-over push once, then skips it.
+    const activeGames = games.filter(g => ['live', 'final'].includes(deriveGameStatus(g)));
+    if (!activeGames.length) return;
 
-    for (const game of liveGames) {
+    for (const game of activeGames) {
       await pollPWHLGame(env, game).catch(e =>
         console.error(`[PWHL poll] game ${game.game_id}: ${e.message}`)
       );
@@ -250,6 +251,16 @@ async function pollPWHLGame(env, game) {
   const awayId    = game.away_team_id;
   const homeAbbr  = PWHL_TEAM_CODES[homeId] || String(homeId);
   const awayAbbr  = PWHL_TEAM_CODES[awayId]  || String(awayId);
+
+  // A final game gets its game-over push only if this poll followed it
+  // live (a push state exists), and only once. Checked before the PBP
+  // fetch, so a finished game costs two KV reads a tick, not a HockeyTech
+  // call -- and one that ended before the Worker ever saw it live gets no
+  // stale "Final" push. Same logic as hockeytech.js's pollGame().
+  if (deriveGameStatus(game) === 'final') {
+    if (await kvGet(env, `pwhl:push:final:${gameId}`)) return;
+    if (!(await kvGet(env, `pwhl:push:state:${gameId}`))) return;
+  }
 
   // Fetch live PBP from HockeyTech
   const pbpRes = await fetch(

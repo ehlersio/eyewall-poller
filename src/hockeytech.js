@@ -154,10 +154,12 @@ export function createHockeyTechLeague(cfg) {
       const games = await schedRes.json();
       if (!games?.length) return;
 
-      const liveGames = games.filter(g => deriveGameStatus(g) === 'live');
-      if (!liveGames.length) return;
+      // Live games, plus games that have gone final -- pollGame() sends a
+      // final game's game-over push once, then skips it.
+      const activeGames = games.filter(g => ['live', 'final'].includes(deriveGameStatus(g)));
+      if (!activeGames.length) return;
 
-      for (const game of liveGames) {
+      for (const game of activeGames) {
         await pollGame(env, game).catch(e =>
           console.error(`[${label} poll] game ${game.game_id}: ${e.message}`)
         );
@@ -173,6 +175,16 @@ export function createHockeyTechLeague(cfg) {
     const awayId   = game.away_team_id;
     const homeAbbr = teamCodes[homeId] || String(homeId);
     const awayAbbr = teamCodes[awayId] || String(awayId);
+
+    // A final game gets its game-over push only if this poll followed it
+    // live (a push state exists), and only once. Checked before the PBP
+    // fetch, so a finished game costs two KV reads a tick, not a HockeyTech
+    // call -- and one that ended before the Worker ever saw it live (e.g.
+    // right after a deploy) gets no stale "Final" push.
+    if (deriveGameStatus(game) === 'final') {
+      if (await kvGet(env, `${key}:push:final:${gameId}`)) return;
+      if (!(await kvGet(env, `${key}:push:state:${gameId}`))) return;
+    }
 
     const pbpRes = await htFetch(htGameUrl('gameCenterPlayByPlay', gameId));
     if (!pbpRes.ok) return;
@@ -327,9 +339,8 @@ export function createHockeyTechLeague(cfg) {
     }
 
     // ── Game over ──────────────────────────────────────────
-    // Unreachable today: poll() only passes live games in, so a game is
-    // never 'final' here (pinned by the characterization suite; pollPWHL
-    // has the same gap).
+    // Any goals since the last tick were processed above, so the final
+    // score here matches the goal pushes already sent.
     if (deriveGameStatus(game) === 'final') {
       const finalKey = `${key}:push:final:${gameId}`;
       if (!(await kvGet(env, finalKey))) {

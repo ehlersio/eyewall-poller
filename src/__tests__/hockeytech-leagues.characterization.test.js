@@ -449,11 +449,32 @@ describe.each(LEAGUES)('$key', (L) => {
       expect(sendPushMock).not.toHaveBeenCalled()
     })
 
-    it('a game that is already final when polled is skipped (records current behavior: no game-over push)', async () => {
-      installUpstream(L, { overrides: { game_log: [liveGame({ home_score: 4, away_score: 2, game_state: 'Final', game_status_code: 4 })] } })
+    const finalGame = () => liveGame({ home_score: 4, away_score: 2, game_state: 'Final', game_status_code: 4 })
+
+    it('a game already final the first time it is polled gets no game-over push', async () => {
+      installUpstream(L, { overrides: { game_log: [finalGame()] } })
       const { env, kvWrites } = makeRecordingEnv({ 'push:subs': subsFor() }, { VAPID_PRIVATE_KEY: 'k' })
       await L.poll(env)
       expect({ upstream: upstreamCalls(), pushes: pushes(), kvWrites }).toMatchSnapshot()
+    })
+
+    it('a game followed live gets exactly one game-over push when it goes final', async () => {
+      installUpstream(L, { overrides: { game_log: [liveGame()] } })
+      const { env, kvWrites } = makeRecordingEnv({ 'push:subs': subsFor() }, { VAPID_PRIVATE_KEY: 'k' })
+      await L.poll(env)
+
+      installUpstream(L, { overrides: { game_log: [finalGame()] } })
+      sendPushMock.mockClear()
+      kvWrites.length = 0
+      await L.poll(env)
+      expect({ upstream: upstreamCalls(), pushes: pushes(), kvWrites }).toMatchSnapshot()
+
+      sendPushMock.mockClear()
+      globalThis.fetch.mockClear()
+      await L.poll(env)
+      expect(sendPushMock).not.toHaveBeenCalled()
+      // Only today's schedule is fetched -- no PBP call for a finished game.
+      expect(upstreamCalls().map(c => c.url).filter(u => u.includes('hockeytech'))).toEqual([])
     })
 
     it('prunes subscriptions whose push endpoint has expired', async () => {

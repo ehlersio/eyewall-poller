@@ -1600,13 +1600,60 @@ exports[`ahl > players > response, upstream requests and KV writes; repeat call 
 }
 `;
 
-exports[`ahl > poll > a game that is already final when polled is skipped (records current behavior: no game-over push) 1`] = `
+exports[`ahl > poll > a game already final the first time it is polled gets no game-over push 1`] = `
 {
   "kvWrites": [],
   "pushes": [],
   "upstream": [
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_date=eq.2026-01-15&season_id=eq.90&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+  ],
+}
+`;
+
+exports[`ahl > poll > a game followed live gets exactly one game-over push when it goes final 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "ahl:push:final:1028992",
+      "ttl": 172800,
+    },
+    {
+      "key": "ahl:push:state:1028992",
+      "ttl": 86400,
+    },
+  ],
+  "pushes": [
+    {
+      "body": "Final score — great win!",
+      "tag": "ahl-win-1028992-home",
+      "title": "🏆 TOR Win! TOR 4–2 ROC",
+      "to": "https://push.example/home",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "Final score.",
+      "tag": "ahl-final-1028992-away",
+      "title": "Final: ROC 2–4 TOR",
+      "to": "https://push.example/away",
+      "url": "/ahl/shots",
+    },
+    {
+      "body": "Final score.",
+      "tag": "ahl-final-1028992-away",
+      "title": "Final: ROC 2–4 TOR",
+      "to": "https://push.example/away-no-opp-goals",
+      "url": "/ahl/shots",
+    },
+  ],
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_date=eq.2026-01-15&season_id=eq.90&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+    {
+      "referer": "https://theahl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=1028992&key=ccb91f29d6744675&client_code=ahl&lang=en&league_id=",
     },
   ],
 }
@@ -4609,13 +4656,60 @@ exports[`echl > players > response, upstream requests and KV writes; repeat call
 }
 `;
 
-exports[`echl > poll > a game that is already final when polled is skipped (records current behavior: no game-over push) 1`] = `
+exports[`echl > poll > a game already final the first time it is polled gets no game-over push 1`] = `
 {
   "kvWrites": [],
   "pushes": [],
   "upstream": [
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_date=eq.2026-01-15&season_id=eq.73&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+  ],
+}
+`;
+
+exports[`echl > poll > a game followed live gets exactly one game-over push when it goes final 1`] = `
+{
+  "kvWrites": [
+    {
+      "key": "echl:push:final:1028992",
+      "ttl": 172800,
+    },
+    {
+      "key": "echl:push:state:1028992",
+      "ttl": 86400,
+    },
+  ],
+  "pushes": [
+    {
+      "body": "Final score — great win!",
+      "tag": "echl-win-1028992-home",
+      "title": "🏆 FLA Win! FLA 4–2 TR",
+      "to": "https://push.example/home",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "Final score.",
+      "tag": "echl-final-1028992-away",
+      "title": "Final: TR 2–4 FLA",
+      "to": "https://push.example/away",
+      "url": "/echl/shots",
+    },
+    {
+      "body": "Final score.",
+      "tag": "echl-final-1028992-away",
+      "title": "Final: TR 2–4 FLA",
+      "to": "https://push.example/away-no-opp-goals",
+      "url": "/echl/shots",
+    },
+  ],
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_date=eq.2026-01-15&season_id=eq.73&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+    {
+      "referer": "https://echl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=1028992&key=2c2b89ea7345cae8&client_code=echl&lang=en&league_id=",
     },
   ],
 }
