@@ -2,25 +2,31 @@
 
 exports[`AI unavailable on its own > prediction/analyze (in season) 1`] = `
 {
+  "body": {
+    "error": "AI generation failed",
+  },
   "kvWrites": [
     {
       "key": "schedule:CAR:20252026",
       "ttl": 600,
     },
   ],
-  "threw": "OpenRouter 503",
+  "status": 502,
 }
 `;
 
 exports[`AI unavailable on its own > prediction/analyze (preseason fallback) 1`] = `
 {
+  "body": {
+    "error": "AI generation failed",
+  },
   "kvWrites": [
     {
       "key": "schedule:CAR:20252026",
       "ttl": 600,
     },
   ],
-  "threw": "OpenRouter 503",
+  "status": 502,
 }
 `;
 
@@ -4511,13 +4517,16 @@ exports[`prediction/analyze (force regenerate) > NHL API and AI unavailable 1`] 
 
 exports[`prediction/analyze (force regenerate) > Supabase unavailable 1`] = `
 {
+  "body": {
+    "error": "Supabase 503: team_elo_ratings?team=in.(CAR,BOS)&select=team,rating",
+  },
   "kvWrites": [
     {
       "key": "schedule:CAR:20252026",
       "ttl": 600,
     },
   ],
-  "threw": "Supabase 503: team_elo_ratings?team=in.(CAR,BOS)&select=team,rating",
+  "status": 502,
 }
 `;
 
@@ -4660,13 +4669,16 @@ exports[`prediction/analyze (in season) > NHL API and AI unavailable 1`] = `
 
 exports[`prediction/analyze (in season) > Supabase unavailable 1`] = `
 {
+  "body": {
+    "error": "Supabase 503: team_elo_ratings?team=in.(CAR,BOS)&select=team,rating",
+  },
   "kvWrites": [
     {
       "key": "schedule:CAR:20252026",
       "ttl": 600,
     },
   ],
-  "threw": "Supabase 503: team_elo_ratings?team=in.(CAR,BOS)&select=team,rating",
+  "status": 502,
 }
 `;
 
@@ -4795,13 +4807,16 @@ exports[`prediction/analyze (preseason fallback) > NHL API and AI unavailable 1`
 
 exports[`prediction/analyze (preseason fallback) > Supabase unavailable 1`] = `
 {
+  "body": {
+    "error": "Supabase 503: team_seasons?team=in.(CAR,BOS)&season=eq.20242025&game_type=eq.2&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,corsi_for_pct,corsi_for_pct_5v5",
+  },
   "kvWrites": [
     {
       "key": "schedule:CAR:20252026",
       "ttl": 600,
     },
   ],
-  "threw": "Supabase 503: team_seasons?team=in.(CAR,BOS)&season=eq.20242025&game_type=eq.2&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,corsi_for_pct,corsi_for_pct_5v5",
+  "status": 502,
 }
 `;
 
