@@ -32,9 +32,7 @@
  *     shots on goal. /prediction drops the Corsi term entirely.
  */
 
-import { kvGet, kvPut, json, corsHeaders, SB_URL, SB_ANON, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, subId, deriveGameStatus, normalizeLink, recordHealth } from './shared.js';
-
-const sbH = { apikey: SB_ANON, Authorization: `Bearer ${SB_ANON}` };
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, subId, deriveGameStatus, normalizeLink, recordHealth } from './shared.js';
 
 // Both leagues' regular season starts early October and playoffs run
 // through June.
@@ -145,13 +143,11 @@ export function createHockeyTechLeague(cfg) {
       const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
       const todayStr = nowET.toISOString().slice(0, 10);
 
-      const schedRes = await fetch(
+      const games = await sbRowsOr(
         `${table('game_log')}?game_date=eq.${todayStr}&season_id=eq.${seasonId}` +
         `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10`,
-        { headers: sbH }
+        []
       );
-      if (!schedRes.ok) return;
-      const games = await schedRes.json();
       if (!games?.length) return;
 
       // Live games, plus games that have gone final -- pollGame() sends a
@@ -424,90 +420,67 @@ export function createHockeyTechLeague(cfg) {
     // regulation_wins + non_reg_wins addition.
     if (url.pathname === `${P}/standings`) {
       const season = await seasonParam(url, env);
-      const kvKey = `${key}:standings:${season}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+      return cachedJson(env, `${key}:standings:${season}`, 3600, async () => {
+        const seasonType = await resolveSeasonType(env, season);
+        const [rows, games] = await Promise.all([
+          sbRows(`${table('team_seasons')}?season_id=eq.${season}&season_type=eq.${seasonType}&order=points.desc&limit=32`),
+          sbRowsOr(
+            `${table('game_log')}?season_id=eq.${season}&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score`,
+            []
+          ),
+        ]);
+        if (rows instanceof Response) return rows;
 
-      const seasonType = await resolveSeasonType(env, season);
-      const [standRes, gameRes] = await Promise.all([
-        fetch(
-          `${table('team_seasons')}?season_id=eq.${season}&season_type=eq.${seasonType}&order=points.desc&limit=32`,
-          { headers: sbH }
-        ),
-        fetch(
-          `${table('game_log')}?season_id=eq.${season}&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score`,
-          { headers: sbH }
-        ),
-      ]);
-      if (!standRes.ok) return new Response(JSON.stringify({ error: `Supabase ${standRes.status}` }), { status: 502, headers: corsHeaders() });
-      const rows = await standRes.json();
-      const games = gameRes.ok ? await gameRes.json() : [];
-
-      // No OT/shootout columns on the game log, so every non-win is a plain
-      // loss ('L'), never split into a PWHL-style OT loss ('O').
-      const teamStats = {};
-      for (const g of games) {
-        for (const [tid, myScore, oppScore] of [
-          [g.home_team_id, g.home_score, g.away_score],
-          [g.away_team_id, g.away_score, g.home_score],
-        ]) {
-          if (!tid) continue;
-          if (!teamStats[tid]) teamStats[tid] = { games: [] };
-          teamStats[tid].games.push(myScore > oppScore ? 'W' : 'L');
+        // No OT/shootout columns on the game log, so every non-win is a plain
+        // loss ('L'), never split into a PWHL-style OT loss ('O').
+        const teamStats = {};
+        for (const g of games) {
+          for (const [tid, myScore, oppScore] of [
+            [g.home_team_id, g.home_score, g.away_score],
+            [g.away_team_id, g.away_score, g.home_score],
+          ]) {
+            if (!tid) continue;
+            if (!teamStats[tid]) teamStats[tid] = { games: [] };
+            teamStats[tid].games.push(myScore > oppScore ? 'W' : 'L');
+          }
         }
-      }
-      const enriched = rows.map(r => {
-        const ts = teamStats[r.team_id];
-        if (!ts) return r;
-        const last10 = ts.games.slice(0, 10);
-        const l10W = last10.filter(x => x === 'W').length;
-        const l10L = last10.filter(x => x === 'L').length;
-        let streak = 0, streakType = '';
-        for (const res of ts.games) {
-          if (!streakType) { streakType = res; streak = 1; }
-          else if (res === streakType) streak++;
-          else break;
-        }
-        return { ...r, l10W, l10L, streakType, streakCount: streak };
+        const enriched = rows.map(r => {
+          const ts = teamStats[r.team_id];
+          if (!ts) return r;
+          const last10 = ts.games.slice(0, 10);
+          const l10W = last10.filter(x => x === 'W').length;
+          const l10L = last10.filter(x => x === 'L').length;
+          let streak = 0, streakType = '';
+          for (const res of ts.games) {
+            if (!streakType) { streakType = res; streak = 1; }
+            else if (res === streakType) streak++;
+            else break;
+          }
+          return { ...r, l10W, l10L, streakType, streakCount: streak };
+        });
+        return enriched;
       });
-      await kvPut(env, kvKey, enriched, 3600);
-      return json(enriched);
     }
 
     // GET /{league}/schedule?teamId=444&season=90
     if (url.pathname === `${P}/schedule`) {
       const season = await seasonParam(url, env);
       const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
-      if (!teamId) return new Response(JSON.stringify({ error: 'teamId param required' }), { status: 400, headers: corsHeaders() });
-      const kvKey = `${key}:schedule:${teamId}:${season}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
-      const r = await fetch(
-        `${table('game_log')}?season_id=eq.${season}&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&order=game_date.asc&limit=150`,
-        { headers: sbH }
-      );
-      if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
-      const rows = await r.json();
-      await kvPut(env, kvKey, rows, 1800);
-      return json(rows);
+      if (!teamId) return badRequest('teamId param required');
+      return cachedJson(env, `${key}:schedule:${teamId}:${season}`, 1800, () => sbRows(
+        `${table('game_log')}?season_id=eq.${season}&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&order=game_date.asc&limit=150`
+      ));
     }
 
     // GET /{league}/roster?teamId=444
     // Bare player list for name resolution (shot map tooltips, etc.).
     if (url.pathname === `${P}/roster`) {
       const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
-      if (!teamId) return new Response(JSON.stringify({ error: 'teamId param required' }), { status: 400, headers: corsHeaders() });
-      const kvKey = `${key}:roster:${teamId}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
-      const r = await fetch(
-        `${table('players')}?team_id=eq.${teamId}&select=player_id,first_name,last_name,position,jersey_number&limit=60`,
-        { headers: sbH }
-      );
-      if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
-      const rows = await r.json();
-      await kvPut(env, kvKey, rows, 24 * 3600); // 24hr — roster rarely changes
-      return json(rows);
+      if (!teamId) return badRequest('teamId param required');
+      // 24hr — roster rarely changes
+      return cachedJson(env, `${key}:roster:${teamId}`, 24 * 3600, () => sbRows(
+        `${table('players')}?team_id=eq.${teamId}&select=player_id,first_name,last_name,position,jersey_number&limit=60`
+      ));
     }
 
     // GET /{league}/players?teamId=444&season=90
@@ -516,108 +489,79 @@ export function createHockeyTechLeague(cfg) {
     if (url.pathname === `${P}/players`) {
       const season = await seasonParam(url, env);
       const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
-      if (!teamId) return new Response(JSON.stringify({ error: 'teamId param required' }), { status: 400, headers: corsHeaders() });
-      const kvKey = `${key}:players:${teamId}:${season}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+      if (!teamId) return badRequest('teamId param required');
+      return cachedJson(env, `${key}:players:${teamId}:${season}`, 3600, async () => {
+        const seasonType = await resolveSeasonType(env, season);
+        const reads = await Promise.all([
+          sbRows(`${table('player_seasons')}?team_id=eq.${teamId}&season_id=eq.${season}&season_type=eq.${seasonType}&order=points.desc&limit=40`),
+          sbRows(`${table('goalie_seasons')}?team_id=eq.${teamId}&season_id=eq.${season}&season_type=eq.${seasonType}&order=gp.desc&limit=5`),
+          sbRows(`${table('players')}?team_id=eq.${teamId}&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=80`),
+        ]);
+        if (reads.some(r => r instanceof Response)) return sbError();
+        const [skaters, goalies, rosterRaw] = reads;
 
-      const seasonType = await resolveSeasonType(env, season);
-      const [skatersRes, goaliesRes, rosterRes] = await Promise.all([
-        fetch(
-          `${table('player_seasons')}?team_id=eq.${teamId}&season_id=eq.${season}&season_type=eq.${seasonType}&order=points.desc&limit=40`,
-          { headers: sbH }
-        ),
-        fetch(
-          `${table('goalie_seasons')}?team_id=eq.${teamId}&season_id=eq.${season}&season_type=eq.${seasonType}&order=gp.desc&limit=5`,
-          { headers: sbH }
-        ),
-        fetch(
-          `${table('players')}?team_id=eq.${teamId}&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=80`,
-          { headers: sbH }
-        ),
-      ]);
-      if (!skatersRes.ok || !goaliesRes.ok || !rosterRes.ok) {
-        return new Response(JSON.stringify({ error: 'Supabase error' }), { status: 502, headers: corsHeaders() });
-      }
-      const [skaters, goalies, rosterRaw] = await Promise.all([skatersRes.json(), goaliesRes.json(), rosterRes.json()]);
+        const allPlayers = await sbRowsOr(
+          `${table('players')}?select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=1500`,
+          rosterRaw
+        );
 
-      const allPlayersRes = await fetch(
-        `${table('players')}?select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=1500`,
-        { headers: sbH }
-      );
-      const allPlayers = allPlayersRes.ok ? await allPlayersRes.json() : rosterRaw;
-
-      const nameMap = {};
-      for (const p of allPlayers) {
-        nameMap[p.player_id] = {
-          player_name: `${p.first_name || ''} ${p.last_name || ''}`.trim(),
-          first_name: p.first_name || null,
-          last_name: p.last_name || null,
-          position: p.position || null,
-          jersey_number: p.jersey_number || null,
-          birth_date: p.birth_date || null,
-          birth_place: p.birth_place || null,
-          shoots: p.shoots || null,
-          height_inches: p.height_inches || null,
-          weight_lbs: p.weight_lbs || null,
-          headshot: headshot(p.player_id),
-        };
-      }
-      const skatersWithNames = skaters.map(s => ({ ...s, ...nameMap[s.player_id] }));
-      const goaliesWithNames = goalies.map(g => ({ ...g, ...nameMap[g.player_id] }));
-      const rosterFull = rosterRaw
-        .map(p => ({ ...p, headshot: headshot(p.player_id) }))
-        .sort((a, b) => {
-          if (a.jersey_number == null && b.jersey_number == null) return 0;
-          if (a.jersey_number == null) return 1;
-          if (b.jersey_number == null) return -1;
-          return a.jersey_number - b.jersey_number;
-        });
-      const result = { skaters: skatersWithNames, goalies: goaliesWithNames, roster: rosterFull };
-      await kvPut(env, kvKey, result, 3600);
-      return json(result);
+        const nameMap = {};
+        for (const p of allPlayers) {
+          nameMap[p.player_id] = {
+            player_name: `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+            first_name: p.first_name || null,
+            last_name: p.last_name || null,
+            position: p.position || null,
+            jersey_number: p.jersey_number || null,
+            birth_date: p.birth_date || null,
+            birth_place: p.birth_place || null,
+            shoots: p.shoots || null,
+            height_inches: p.height_inches || null,
+            weight_lbs: p.weight_lbs || null,
+            headshot: headshot(p.player_id),
+          };
+        }
+        const skatersWithNames = skaters.map(s => ({ ...s, ...nameMap[s.player_id] }));
+        const goaliesWithNames = goalies.map(g => ({ ...g, ...nameMap[g.player_id] }));
+        const rosterFull = rosterRaw
+          .map(p => ({ ...p, headshot: headshot(p.player_id) }))
+          .sort((a, b) => {
+            if (a.jersey_number == null && b.jersey_number == null) return 0;
+            if (a.jersey_number == null) return 1;
+            if (b.jersey_number == null) return -1;
+            return a.jersey_number - b.jersey_number;
+          });
+        const result = { skaters: skatersWithNames, goalies: goaliesWithNames, roster: rosterFull };
+        return result;
+      });
     }
 
     // GET /{league}/league-players?season=90
     // All teams' skater + goalie season stats (Leaders tab).
     if (url.pathname === `${P}/league-players`) {
       const season = await seasonParam(url, env);
-      const kvKey = `${key}:leagueplayers:${season}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
-      const seasonType = await resolveSeasonType(env, season);
-      const [skatersRes, goaliesRes] = await Promise.all([
-        fetch(
-          `${table('player_seasons')}?season_id=eq.${season}&season_type=eq.${seasonType}&select=player_id,team_id,goals,assists,points,gp,shots,pp_goals,sh_goals,pim,plus_minus&order=points.desc&limit=600`,
-          { headers: sbH }
-        ),
-        fetch(
-          `${table('goalie_seasons')}?season_id=eq.${season}&season_type=eq.${seasonType}&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against&order=sv_pct.desc&limit=80`,
-          { headers: sbH }
-        ),
-      ]);
-      if (!skatersRes.ok || !goaliesRes.ok) {
-        return new Response(JSON.stringify({ error: 'Supabase error' }), { status: 502, headers: corsHeaders() });
-      }
-      const [skaters, goalies] = await Promise.all([skatersRes.json(), goaliesRes.json()]);
+      return cachedJson(env, `${key}:leagueplayers:${season}`, 3600 * 2, async () => {
+        const seasonType = await resolveSeasonType(env, season);
+        const reads = await Promise.all([
+          sbRows(`${table('player_seasons')}?season_id=eq.${season}&season_type=eq.${seasonType}&select=player_id,team_id,goals,assists,points,gp,shots,pp_goals,sh_goals,pim,plus_minus&order=points.desc&limit=600`),
+          sbRows(`${table('goalie_seasons')}?season_id=eq.${season}&season_type=eq.${seasonType}&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against&order=sv_pct.desc&limit=80`),
+        ]);
+        if (reads.some(r => r instanceof Response)) return sbError();
+        const [skaters, goalies] = reads;
 
-      const nameRes = await fetch(
-        `${table('players')}?select=player_id,first_name,last_name,position,team_id&limit=1500`,
-        { headers: sbH }
-      );
-      const nameRows = nameRes.ok ? await nameRes.json() : [];
-      const nameMap = {};
-      for (const p of nameRows) {
-        nameMap[p.player_id] = {
-          player_name: `${p.first_name || ''} ${p.last_name || ''}`.trim(),
-          first_name: p.first_name, last_name: p.last_name, position: p.position,
-        };
-      }
-      const enrichSkaters = skaters.map(s => ({ ...s, ...nameMap[s.player_id] }));
-      const enrichGoalies = goalies.map(g => ({ ...g, ...nameMap[g.player_id] }));
-      const result = { skaters: enrichSkaters, goalies: enrichGoalies };
-      await kvPut(env, kvKey, result, 3600 * 2);
-      return json(result);
+        const nameRows = await sbRowsOr(`${table('players')}?select=player_id,first_name,last_name,position,team_id&limit=1500`, []);
+        const nameMap = {};
+        for (const p of nameRows) {
+          nameMap[p.player_id] = {
+            player_name: `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+            first_name: p.first_name, last_name: p.last_name, position: p.position,
+          };
+        }
+        const enrichSkaters = skaters.map(s => ({ ...s, ...nameMap[s.player_id] }));
+        const enrichGoalies = goalies.map(g => ({ ...g, ...nameMap[g.player_id] }));
+        const result = { skaters: enrichSkaters, goalies: enrichGoalies };
+        return result;
+      });
     }
 
     // GET /{league}/shots?teamId=444&season=90
@@ -626,34 +570,24 @@ export function createHockeyTechLeague(cfg) {
     if (url.pathname === `${P}/shots`) {
       const season = await seasonParam(url, env);
       const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
-      if (!teamId) return new Response(JSON.stringify({ error: 'teamId param required' }), { status: 400, headers: corsHeaders() });
-      const kvKey = `${key}:shots:${teamId}:${season}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
-      const PAGE = 1000;
-      const allRows = [];
-      let offset = 0;
-      while (true) {
-        const r = await fetch(
-          `${table('shot_events')}?team_id=eq.${teamId}&season_id=eq.${season}&order=game_id.asc`,
-          {
-            headers: {
-              ...sbH,
-              Range: `${offset}-${offset + PAGE - 1}`,
-              'Range-Unit': 'items',
-              Prefer: 'count=none',
-            },
-          }
-        );
-        if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
-        const rows = await r.json();
-        allRows.push(...rows);
-        if (rows.length < PAGE) break;
-        offset += PAGE;
-      }
-      await kvPut(env, kvKey, allRows, 3600);
-      console.log(`${label} shots: teamId=${teamId} season=${season} total=${allRows.length}`);
-      return json(allRows);
+      if (!teamId) return badRequest('teamId param required');
+      return cachedJson(env, `${key}:shots:${teamId}:${season}`, 3600, async () => {
+        const PAGE = 1000;
+        const allRows = [];
+        let offset = 0;
+        while (true) {
+          const rows = await sbRows(
+            `${table('shot_events')}?team_id=eq.${teamId}&season_id=eq.${season}&order=game_id.asc`,
+            { Range: `${offset}-${offset + PAGE - 1}`, 'Range-Unit': 'items', Prefer: 'count=none' }
+          );
+          if (rows instanceof Response) return rows;
+          allRows.push(...rows);
+          if (rows.length < PAGE) break;
+          offset += PAGE;
+        }
+        console.log(`${label} shots: teamId=${teamId} season=${season} total=${allRows.length}`);
+        return allRows;
+      });
     }
 
     // GET /{league}/team-season-summary?teamId=444&season=90
@@ -664,57 +598,48 @@ export function createHockeyTechLeague(cfg) {
     if (url.pathname === `${P}/team-season-summary`) {
       const season = await seasonParam(url, env);
       const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
-      if (!teamId) return new Response(JSON.stringify({ error: 'teamId param required' }), { status: 400, headers: corsHeaders() });
-      const kvKey = `${key}:team-season-summary:${teamId}:${season}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+      if (!teamId) return badRequest('teamId param required');
+      return cachedJson(env, `${key}:team-season-summary:${teamId}:${season}`, 3600, async () => {
+        const gameRows = await sbRows(
+          `${table('game_log')}?season_id=eq.${season}&game_state=eq.Final&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&select=game_id`
+        );
+        if (gameRows instanceof Response) return gameRows;
+        const gameIds = gameRows.map(g => g.game_id);
 
-      const gameRes = await fetch(
-        `${table('game_log')}?season_id=eq.${season}&game_state=eq.Final&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&select=game_id`,
-        { headers: sbH }
-      );
-      if (!gameRes.ok) return new Response(JSON.stringify({ error: `Supabase ${gameRes.status}` }), { status: 502, headers: corsHeaders() });
-      const gameIds = (await gameRes.json()).map(g => g.game_id);
+        const seasonType = await resolveSeasonType(env, season);
+        const [tsRow] = await sbRowsOr(
+          `${table('team_seasons')}?team_id=eq.${teamId}&season_id=eq.${season}&season_type=eq.${seasonType}&select=pp_pct,pk_pct`,
+          []
+        );
 
-      const seasonType = await resolveSeasonType(env, season);
-      const tsRes = await fetch(
-        `${table('team_seasons')}?team_id=eq.${teamId}&season_id=eq.${season}&season_type=eq.${seasonType}&select=pp_pct,pk_pct`,
-        { headers: sbH }
-      );
-      const tsRow = tsRes.ok ? (await tsRes.json())[0] : null;
+        const empty = { teamId, season, gamesPlayed: gameIds.length, sog: { car: 0, opp: 0 }, ppPct: tsRow?.pp_pct ?? null, pkPct: tsRow?.pk_pct ?? null };
+        if (!gameIds.length) return empty;
 
-      const empty = { teamId, season, gamesPlayed: gameIds.length, sog: { car: 0, opp: 0 }, ppPct: tsRow?.pp_pct ?? null, pkPct: tsRow?.pk_pct ?? null };
-      if (!gameIds.length) {
-        await kvPut(env, kvKey, empty, 3600);
-        return json(empty);
-      }
-
-      let sogCar = 0, sogOpp = 0;
-      const PAGE = 1000;
-      let offset = 0;
-      try {
-        while (true) {
-          const r = await fetch(
-            `${table('shot_events')}?game_id=in.(${gameIds.join(',')})&select=team_id,event_type`,
-            { headers: { ...sbH, Range: `${offset}-${offset + PAGE - 1}`, 'Range-Unit': 'items', Prefer: 'count=none' } }
-          );
-          if (!r.ok) throw new Error(`Supabase ${r.status}`);
-          const rows = await r.json();
-          for (const row of rows) {
-            if (row.event_type !== 'shot' && row.event_type !== 'goal') continue;
-            if (row.team_id === teamId) sogCar++; else sogOpp++;
+        let sogCar = 0, sogOpp = 0;
+        const PAGE = 1000;
+        let offset = 0;
+        try {
+          while (true) {
+            const rows = await sbRows(
+              `${table('shot_events')}?game_id=in.(${gameIds.join(',')})&select=team_id,event_type`,
+              { Range: `${offset}-${offset + PAGE - 1}`, 'Range-Unit': 'items', Prefer: 'count=none' }
+            );
+            if (rows instanceof Response) return rows;
+            for (const row of rows) {
+              if (row.event_type !== 'shot' && row.event_type !== 'goal') continue;
+              if (row.team_id === teamId) sogCar++; else sogOpp++;
+            }
+            if (rows.length < PAGE) break;
+            offset += PAGE;
           }
-          if (rows.length < PAGE) break;
-          offset += PAGE;
+        } catch (e) {
+          return errorJson(502, { error: e.message });
         }
-      } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: corsHeaders() });
-      }
 
-      const data = { teamId, season, gamesPlayed: gameIds.length, sog: { car: sogCar, opp: sogOpp }, ppPct: tsRow?.pp_pct ?? null, pkPct: tsRow?.pk_pct ?? null };
-      await kvPut(env, kvKey, data, 3600);
-      console.log(`${label} team-season-summary: teamId=${teamId} season=${season} games=${gameIds.length}`);
-      return json(data);
+        const data = { teamId, season, gamesPlayed: gameIds.length, sog: { car: sogCar, opp: sogOpp }, ppPct: tsRow?.pp_pct ?? null, pkPct: tsRow?.pk_pct ?? null };
+        console.log(`${label} team-season-summary: teamId=${teamId} season=${season} games=${gameIds.length}`);
+        return data;
+      });
     }
 
     // GET /{league}/player/landing?id=6681&season=90
@@ -723,34 +648,28 @@ export function createHockeyTechLeague(cfg) {
     if (url.pathname === `${P}/player/landing`) {
       const playerId = url.searchParams.get('id');
       const seasonQ = url.searchParams.get('season');
-      if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+      if (!playerId) return badRequest('id required');
 
-      const kvKey = `${key}:player:landing:${playerId}:${seasonQ || 'latest'}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+      return cachedJson(env, `${key}:player:landing:${playerId}:${seasonQ || 'latest'}`, 3600, async () => {
+        const playerRows = await sbRows(`${table('players')}?player_id=eq.${playerId}&select=*`);
+        if (playerRows instanceof Response) return playerRows;
+        if (!playerRows.length) return errorJson(404, { error: 'Player not found' });
 
-      const playerRes = await fetch(`${table('players')}?player_id=eq.${playerId}&select=*`, { headers: sbH });
-      if (!playerRes.ok) return new Response(JSON.stringify({ error: `Supabase ${playerRes.status}` }), { status: 502, headers: corsHeaders() });
-      const playerRows = await playerRes.json();
-      if (!playerRows.length) return new Response(JSON.stringify({ error: 'Player not found' }), { status: 404, headers: corsHeaders() });
+        const player = playerRows[0];
+        const statsTable = player.position === 'G' ? table('goalie_seasons') : table('player_seasons');
+        // A season_id belongs to exactly one season type (90 = 2025-26 regular,
+        // 92 = its playoffs), so ?season= alone picks the row -- also filtering
+        // to regular returned no stats for a playoff season. With no ?season=,
+        // fall back to the most recent regular season.
+        const statsQuery = seasonQ
+          ? `player_id=eq.${playerId}&season_id=eq.${seasonQ}&limit=1&select=*`
+          : `player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc&limit=1&select=*`;
 
-      const player = playerRows[0];
-      const statsTable = player.position === 'G' ? table('goalie_seasons') : table('player_seasons');
-      // A season_id belongs to exactly one season type (90 = 2025-26 regular,
-      // 92 = its playoffs), so ?season= alone picks the row -- also filtering
-      // to regular returned no stats for a playoff season. With no ?season=,
-      // fall back to the most recent regular season.
-      const statsQuery = seasonQ
-        ? `player_id=eq.${playerId}&season_id=eq.${seasonQ}&limit=1&select=*`
-        : `player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc&limit=1&select=*`;
+        const stats = (await sbRowsOr(`${statsTable}?${statsQuery}`, []))[0] || {};
 
-      const statsRes = await fetch(`${statsTable}?${statsQuery}`, { headers: sbH });
-      const statsRows = statsRes.ok ? await statsRes.json() : [];
-      const stats = statsRows[0] || {};
-
-      const data = { ...player, ...stats };
-      await kvPut(env, kvKey, data, 3600);
-      return json(data);
+        const data = { ...player, ...stats };
+        return data;
+      });
     }
 
     // GET /{league}/player/career?id=6681
@@ -761,44 +680,41 @@ export function createHockeyTechLeague(cfg) {
     // the player plays a new game.
     if (url.pathname === `${P}/player/career`) {
       const playerId = url.searchParams.get('id');
-      if (!playerId) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: corsHeaders() });
+      if (!playerId) return badRequest('id required');
 
-      const kvKey = `${key}:player:career:${playerId}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+      return cachedJson(env, `${key}:player:career:${playerId}`, 24 * 3600, async () => {
+        const htRes = await htFetch(
+          `${cfg.ht.base}?feed=statviewfeed&view=player&player_id=${playerId}&site_id=0&key=${cfg.ht.key}&client_code=${key}&lang=en&league_id=&statsType=standard`
+        );
+        if (!htRes.ok) return errorJson(502, { error: `HockeyTech ${htRes.status}` });
 
-      const htRes = await htFetch(
-        `${cfg.ht.base}?feed=statviewfeed&view=player&player_id=${playerId}&site_id=0&key=${cfg.ht.key}&client_code=${key}&lang=en&league_id=&statsType=standard`
-      );
-      if (!htRes.ok) return new Response(JSON.stringify({ error: `HockeyTech ${htRes.status}` }), { status: 502, headers: corsHeaders() });
+        let raw;
+        try {
+          const parsed = unwrapJsonp(await htRes.text());
+          raw = Array.isArray(parsed) ? parsed[0] : parsed;
+        } catch (e) {
+          return errorJson(502, { error: 'player career parse failed', detail: e.message });
+        }
 
-      let raw;
-      try {
-        const parsed = unwrapJsonp(await htRes.text());
-        raw = Array.isArray(parsed) ? parsed[0] : parsed;
-      } catch (e) {
-        return new Response(JSON.stringify({ error: 'player career parse failed', detail: e.message }), { status: 502, headers: corsHeaders() });
-      }
+        const sections = raw?.careerStats?.[0]?.sections || [];
+        const draftRows = extractRows(raw?.draftInfo?.[0]?.sections, '');
+        const draft = (raw?.info?.display_drafts === true && draftRows.length > 0) ? draftRows[0] : null;
 
-      const sections = raw?.careerStats?.[0]?.sections || [];
-      const draftRows = extractRows(raw?.draftInfo?.[0]?.sections, '');
-      const draft = (raw?.info?.display_drafts === true && draftRows.length > 0) ? draftRows[0] : null;
+        const gameRows = extractRows(raw?.gameByGame?.[0]?.sections, '');
+        const recentGames = gameRows.slice(-5).reverse();
 
-      const gameRows = extractRows(raw?.gameByGame?.[0]?.sections, '');
-      const recentGames = gameRows.slice(-5).reverse();
+        const data = {
+          player_id:     parseInt(playerId, 10),
+          regularSeason: extractCareerTotal(sections, 'Regular Season'),
+          playoffs:      extractCareerTotal(sections, 'Playoffs'),
+          bioPoints:     extractBioPoints(raw?.info?.bio),
+          photo:         extractPhoto(raw?.media?.images),
+          draft,
+          recentGames,
+        };
 
-      const data = {
-        player_id:     parseInt(playerId, 10),
-        regularSeason: extractCareerTotal(sections, 'Regular Season'),
-        playoffs:      extractCareerTotal(sections, 'Playoffs'),
-        bioPoints:     extractBioPoints(raw?.info?.bio),
-        photo:         extractPhoto(raw?.media?.images),
-        draft,
-        recentGames,
-      };
-
-      await kvPut(env, kvKey, data, 24 * 3600);
-      return json(data);
+        return data;
+      });
     }
 
     // GET /{league}/player-shots?playerId=6681&season=90
@@ -807,29 +723,25 @@ export function createHockeyTechLeague(cfg) {
     if (url.pathname === `${P}/player-shots`) {
       const playerId = parseInt(url.searchParams.get('playerId') || '0', 10);
       const season = await seasonParam(url, env);
-      if (!playerId) return new Response(JSON.stringify({ error: 'playerId required' }), { status: 400, headers: corsHeaders() });
-      const kvKey = `${key}:pshots:${playerId}:${season}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
-      const r = await fetch(
-        `${table('shot_events')}?shooter_id=eq.${playerId}&season_id=eq.${season}&select=event_type,period_id,time_seconds,x_norm,y_norm&limit=500`,
-        { headers: sbH }
-      );
-      if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
-      const rows = await r.json();
-      const shots = rows.map(row => {
-        let x = parseFloat(row.x_norm), y = parseFloat(row.y_norm);
-        if (x < 0) { x = -x; y = -y; }
-        return {
-          x: Math.min(Math.abs(x), 99),
-          y: Math.max(-42, Math.min(42, y)),
-          t: row.event_type === 'goal' ? 'g' : 's',
-          p: row.period_id,
-        };
-      }).filter(s => !isNaN(s.x) && !isNaN(s.y));
-      const result = { shots, total: shots.length };
-      await kvPut(env, kvKey, result, 3600 * 6);
-      return json(result);
+      if (!playerId) return badRequest('playerId required');
+      return cachedJson(env, `${key}:pshots:${playerId}:${season}`, 3600 * 6, async () => {
+        const rows = await sbRows(
+          `${table('shot_events')}?shooter_id=eq.${playerId}&season_id=eq.${season}&select=event_type,period_id,time_seconds,x_norm,y_norm&limit=500`
+        );
+        if (rows instanceof Response) return rows;
+        const shots = rows.map(row => {
+          let x = parseFloat(row.x_norm), y = parseFloat(row.y_norm);
+          if (x < 0) { x = -x; y = -y; }
+          return {
+            x: Math.min(Math.abs(x), 99),
+            y: Math.max(-42, Math.min(42, y)),
+            t: row.event_type === 'goal' ? 'g' : 's',
+            p: row.period_id,
+          };
+        }).filter(s => !isNaN(s.x) && !isNaN(s.y));
+        const result = { shots, total: shots.length };
+        return result;
+      });
     }
 
     // GET /{league}/lastgame?teamId=335&season=90
@@ -838,34 +750,30 @@ export function createHockeyTechLeague(cfg) {
     if (url.pathname === `${P}/lastgame`) {
       const season = await seasonParam(url, env);
       const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
-      if (!teamId) return new Response(JSON.stringify({ error: 'teamId param required' }), { status: 400, headers: corsHeaders() });
-      const kvKey = `${key}:lastgame:${teamId}:${season}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
-      const r = await fetch(
-        `${table('game_log')}?season_id=eq.${season}&game_state=eq.Final&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&order=game_id.desc&limit=1`,
-        { headers: sbH }
-      );
-      if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
-      const rows = await r.json();
-      if (!rows.length) return json(null);
-      const g = rows[0];
-      const isHome = g.home_team_id === teamId;
-      const oppId = isHome ? g.away_team_id : g.home_team_id;
-      const teamScore = isHome ? g.home_score : g.away_score;
-      const oppScore = isHome ? g.away_score : g.home_score;
-      const result = {
-        gameId: g.game_id,
-        gameDate: g.game_date,
-        opponentId: oppId,
-        opponentAbbr: teamCodes[oppId] || String(oppId),
-        isHome,
-        teamScore,
-        oppScore,
-        won: teamScore > oppScore,
-      };
-      await kvPut(env, kvKey, result, 3600);
-      return json(result);
+      if (!teamId) return badRequest('teamId param required');
+      return cachedJson(env, `${key}:lastgame:${teamId}:${season}`, 3600, async () => {
+        const rows = await sbRows(
+          `${table('game_log')}?season_id=eq.${season}&game_state=eq.Final&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&order=game_id.desc&limit=1`
+        );
+        if (rows instanceof Response) return rows;
+        if (!rows.length) return json(null); // not cached
+        const g = rows[0];
+        const isHome = g.home_team_id === teamId;
+        const oppId = isHome ? g.away_team_id : g.home_team_id;
+        const teamScore = isHome ? g.home_score : g.away_score;
+        const oppScore = isHome ? g.away_score : g.home_score;
+        const result = {
+          gameId: g.game_id,
+          gameDate: g.game_date,
+          opponentId: oppId,
+          opponentAbbr: teamCodes[oppId] || String(oppId),
+          isHome,
+          teamScore,
+          oppScore,
+          won: teamScore > oppScore,
+        };
+        return result;
+      });
     }
 
     // GET /{league}/summary?gameId=1028992
@@ -876,123 +784,120 @@ export function createHockeyTechLeague(cfg) {
     // passing them through would show a fabricated "0 hits" stat line.
     if (url.pathname === `${P}/summary`) {
       const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
-      if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+      if (!gameId) return badRequest('gameId required');
 
-      const kvKey = `${key}:gamesummary:${gameId}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+      return cachedJson(env, `${key}:gamesummary:${gameId}`, 3600, async () => {
+        const htRes = await htFetch(htGameUrl('gameSummary', gameId));
+        if (!htRes.ok) return errorJson(502, { error: `HockeyTech ${htRes.status}` });
 
-      const htRes = await htFetch(htGameUrl('gameSummary', gameId));
-      if (!htRes.ok) return new Response(JSON.stringify({ error: `HockeyTech ${htRes.status}` }), { status: 502, headers: corsHeaders() });
+        let raw;
+        try {
+          raw = unwrapJsonp(await htRes.text());
+        } catch (e) {
+          return errorJson(502, { error: 'gameSummary parse failed', detail: e.message });
+        }
 
-      let raw;
-      try {
-        raw = unwrapJsonp(await htRes.text());
-      } catch (e) {
-        return new Response(JSON.stringify({ error: 'gameSummary parse failed', detail: e.message }), { status: 502, headers: corsHeaders() });
-      }
+        const normAbbr = (abbr) => (abbr || '').replace(/^[a-z]+ - /i, '').trim();
 
-      const normAbbr = (abbr) => (abbr || '').replace(/^[a-z]+ - /i, '').trim();
-
-      const periods = (raw.periods || []).map(p => ({
-        info: {
-          id: parseInt(p.info?.id, 10) || 1,
-          shortName: p.info?.shortName || '',
-          longName: p.info?.longName || '',
-        },
-        stats: {
-          homeGoals: parseInt(p.stats?.homeGoals || 0),
-          homeShots: parseInt(p.stats?.homeShots || 0),
-          visitingGoals: parseInt(p.stats?.visitingGoals || 0),
-          visitingShots: parseInt(p.stats?.visitingShots || 0),
-        },
-        goals: (p.goals || []).map(g => ({
-          game_goal_id: g.game_goal_id || null,
-          time: g.time || '0:00',
-          team: {
-            id: parseInt(g.team?.id, 10) || null,
-            abbreviation: normAbbr(g.team?.abbreviation),
-          },
-          scoredBy: g.scoredBy ? {
-            id: parseInt(g.scoredBy.id, 10) || null,
-            firstName: g.scoredBy.firstName || '',
-            lastName: g.scoredBy.lastName || '',
-            playerImageURL: g.scoredBy.playerImageURL || null,
-          } : null,
-          assists: (g.assists || []).map(a => ({
-            id: parseInt(a.id, 10) || null,
-            firstName: a.firstName || '',
-            lastName: a.lastName || '',
-          })),
-          properties: {
-            isPowerPlay: g.properties?.isPowerPlay || '0',
-            isShortHanded: g.properties?.isShortHanded || '0',
-            isEmptyNet: g.properties?.isEmptyNet || '0',
-            isPenaltyShot: g.properties?.isPenaltyShot || '0',
-            isGameWinningGoal: g.properties?.isGameWinningGoal || '0',
-          },
-        })),
-      }));
-
-      const mvps = (raw.mostValuablePlayers || []).map(mvp => ({
-        team: {
-          id: parseInt(mvp.team?.id, 10) || null,
-          abbreviation: normAbbr(mvp.team?.abbreviation),
-          name: mvp.team?.name || '',
-        },
-        player: {
+        const periods = (raw.periods || []).map(p => ({
           info: {
-            id: parseInt(mvp.player?.info?.id, 10) || null,
-            firstName: mvp.player?.info?.firstName || '',
-            lastName: mvp.player?.info?.lastName || '',
-            jerseyNumber: mvp.player?.info?.jerseyNumber || null,
-            position: mvp.player?.info?.position || '',
-            playerImageURL: mvp.player?.info?.playerImageURL || null,
+            id: parseInt(p.info?.id, 10) || 1,
+            shortName: p.info?.shortName || '',
+            longName: p.info?.longName || '',
           },
-          stats: mvp.player?.stats || {},
-        },
-        isGoalie: !!mvp.isGoalie,
-        playerImage: mvp.playerImage || mvp.player?.info?.playerImageURL?.replace('/120x160/', '/240x240/') || null,
-        homeTeam: mvp.homeTeam === 1 || mvp.homeTeam === true,
-      }));
+          stats: {
+            homeGoals: parseInt(p.stats?.homeGoals || 0),
+            homeShots: parseInt(p.stats?.homeShots || 0),
+            visitingGoals: parseInt(p.stats?.visitingGoals || 0),
+            visitingShots: parseInt(p.stats?.visitingShots || 0),
+          },
+          goals: (p.goals || []).map(g => ({
+            game_goal_id: g.game_goal_id || null,
+            time: g.time || '0:00',
+            team: {
+              id: parseInt(g.team?.id, 10) || null,
+              abbreviation: normAbbr(g.team?.abbreviation),
+            },
+            scoredBy: g.scoredBy ? {
+              id: parseInt(g.scoredBy.id, 10) || null,
+              firstName: g.scoredBy.firstName || '',
+              lastName: g.scoredBy.lastName || '',
+              playerImageURL: g.scoredBy.playerImageURL || null,
+            } : null,
+            assists: (g.assists || []).map(a => ({
+              id: parseInt(a.id, 10) || null,
+              firstName: a.firstName || '',
+              lastName: a.lastName || '',
+            })),
+            properties: {
+              isPowerPlay: g.properties?.isPowerPlay || '0',
+              isShortHanded: g.properties?.isShortHanded || '0',
+              isEmptyNet: g.properties?.isEmptyNet || '0',
+              isPenaltyShot: g.properties?.isPenaltyShot || '0',
+              isGameWinningGoal: g.properties?.isGameWinningGoal || '0',
+            },
+          })),
+        }));
 
-      const official = (o) => ({
-        firstName: o.firstName || '',
-        lastName: o.lastName || '',
-        jerseyNumber: o.jerseyNumber != null ? parseInt(o.jerseyNumber, 10) : null,
+        const mvps = (raw.mostValuablePlayers || []).map(mvp => ({
+          team: {
+            id: parseInt(mvp.team?.id, 10) || null,
+            abbreviation: normAbbr(mvp.team?.abbreviation),
+            name: mvp.team?.name || '',
+          },
+          player: {
+            info: {
+              id: parseInt(mvp.player?.info?.id, 10) || null,
+              firstName: mvp.player?.info?.firstName || '',
+              lastName: mvp.player?.info?.lastName || '',
+              jerseyNumber: mvp.player?.info?.jerseyNumber || null,
+              position: mvp.player?.info?.position || '',
+              playerImageURL: mvp.player?.info?.playerImageURL || null,
+            },
+            stats: mvp.player?.stats || {},
+          },
+          isGoalie: !!mvp.isGoalie,
+          playerImage: mvp.playerImage || mvp.player?.info?.playerImageURL?.replace('/120x160/', '/240x240/') || null,
+          homeTeam: mvp.homeTeam === 1 || mvp.homeTeam === true,
+        }));
+
+        const official = (o) => ({
+          firstName: o.firstName || '',
+          lastName: o.lastName || '',
+          jerseyNumber: o.jerseyNumber != null ? parseInt(o.jerseyNumber, 10) : null,
+        });
+        const headCoach = (coaches) => {
+          const c = (coaches || []).find(c => c.role === 'Head Coach');
+          return c ? { firstName: c.firstName || '', lastName: c.lastName || '' } : null;
+        };
+
+        const stripFakeStats = (stats) => {
+          if (!stats) return {};
+          const rest = { ...stats };
+          delete rest.hits;
+          delete rest.faceoffAttempts;
+          delete rest.faceoffWins;
+          delete rest.faceoffWinPercentage;
+          return rest;
+        };
+
+        const payload = {
+          periods,
+          mvps,
+          venue: raw.details?.venue || null,
+          officials: {
+            referees: (raw.referees || []).map(official),
+            linesmen: (raw.linesmen || []).map(official),
+          },
+          coaches: {
+            home: headCoach(raw.homeTeam?.coaches),
+            away: headCoach(raw.visitingTeam?.coaches),
+          },
+          homeTeamStats: stripFakeStats(raw.homeTeam?.stats),
+          visitingTeamStats: stripFakeStats(raw.visitingTeam?.stats),
+        };
+        return payload;
       });
-      const headCoach = (coaches) => {
-        const c = (coaches || []).find(c => c.role === 'Head Coach');
-        return c ? { firstName: c.firstName || '', lastName: c.lastName || '' } : null;
-      };
-
-      const stripFakeStats = (stats) => {
-        if (!stats) return {};
-        const rest = { ...stats };
-        delete rest.hits;
-        delete rest.faceoffAttempts;
-        delete rest.faceoffWins;
-        delete rest.faceoffWinPercentage;
-        return rest;
-      };
-
-      const payload = {
-        periods,
-        mvps,
-        venue: raw.details?.venue || null,
-        officials: {
-          referees: (raw.referees || []).map(official),
-          linesmen: (raw.linesmen || []).map(official),
-        },
-        coaches: {
-          home: headCoach(raw.homeTeam?.coaches),
-          away: headCoach(raw.visitingTeam?.coaches),
-        },
-        homeTeamStats: stripFakeStats(raw.homeTeam?.stats),
-        visitingTeamStats: stripFakeStats(raw.visitingTeam?.stats),
-      };
-      await kvPut(env, kvKey, payload, 3600);
-      return json(payload);
     }
 
     // GET /{league}/preview?gameId=1028992
@@ -1002,20 +907,18 @@ export function createHockeyTechLeague(cfg) {
     // shifts daily.
     if (url.pathname === `${P}/preview`) {
       const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
-      if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
-      const kvKey = `${key}:gcpreview:${gameId}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
-      const htRes = await htFetch(htGameUrl('gameCenterPreview', gameId));
-      if (!htRes.ok) return new Response(JSON.stringify({ error: `HockeyTech ${htRes.status}` }), { status: 502, headers: corsHeaders() });
-      let raw;
-      try {
-        raw = unwrapJsonp(await htRes.text());
-      } catch (e) {
-        return new Response(JSON.stringify({ error: 'gameCenterPreview parse failed', detail: e.message }), { status: 502, headers: corsHeaders() });
-      }
-      await kvPut(env, kvKey, raw, 1800);
-      return json(raw);
+      if (!gameId) return badRequest('gameId required');
+      return cachedJson(env, `${key}:gcpreview:${gameId}`, 1800, async () => {
+        const htRes = await htFetch(htGameUrl('gameCenterPreview', gameId));
+        if (!htRes.ok) return errorJson(502, { error: `HockeyTech ${htRes.status}` });
+        let raw;
+        try {
+          raw = unwrapJsonp(await htRes.text());
+        } catch (e) {
+          return errorJson(502, { error: 'gameCenterPreview parse failed', detail: e.message });
+        }
+        return raw;
+      });
     }
 
     // GET /{league}/game-box?gameId=1028992
@@ -1024,46 +927,38 @@ export function createHockeyTechLeague(cfg) {
     // No hits/faceoff/blocked-shots/skater-TOI columns -- always 0 in the feed.
     if (url.pathname === `${P}/game-box`) {
       const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
-      if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
-      const kvKey = `${key}:gamebox:${gameId}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+      if (!gameId) return badRequest('gameId required');
+      return cachedJson(env, `${key}:gamebox:${gameId}`, 3600, async () => {
+        const [skaters, goalies, gameRows] = await Promise.all([
+          sbRows(`${table('skater_game_box')}?game_id=eq.${gameId}&order=points.desc`),
+          sbRows(`${table('goalie_game_box')}?game_id=eq.${gameId}`),
+          sbRowsOr(`${table('game_log')}?game_id=eq.${gameId}&select=home_team_id,away_team_id`, []),
+        ]);
+        if (skaters instanceof Response || goalies instanceof Response) return sbError();
+        const gameTeamIds = gameRows[0] ? [gameRows[0].home_team_id, gameRows[0].away_team_id] : [];
 
-      const [skaterRes, goalieRes, gameRes] = await Promise.all([
-        fetch(`${table('skater_game_box')}?game_id=eq.${gameId}&order=points.desc`, { headers: sbH }),
-        fetch(`${table('goalie_game_box')}?game_id=eq.${gameId}`, { headers: sbH }),
-        fetch(`${table('game_log')}?game_id=eq.${gameId}&select=home_team_id,away_team_id`, { headers: sbH }),
-      ]);
-      if (!skaterRes.ok || !goalieRes.ok) {
-        return new Response(JSON.stringify({ error: 'Supabase error' }), { status: 502, headers: corsHeaders() });
-      }
-      const [skaters, goalies, gameRows] = await Promise.all([skaterRes.json(), goalieRes.json(), gameRes.ok ? gameRes.json() : []]);
-      const gameTeamIds = gameRows[0] ? [gameRows[0].home_team_id, gameRows[0].away_team_id] : [];
-
-      const playerIds = [...new Set([...skaters, ...goalies].map(r => r.player_id))];
-      const nameMap = {};
-      if (playerIds.length) {
-        const nameRes = await fetch(
-          `${table('players')}?player_id=in.(${playerIds.join(',')})&select=player_id,first_name,last_name`,
-          { headers: sbH }
-        );
-        if (nameRes.ok) {
-          for (const p of await nameRes.json()) {
+        const playerIds = [...new Set([...skaters, ...goalies].map(r => r.player_id))];
+        const nameMap = {};
+        if (playerIds.length) {
+          const nameRows = await sbRowsOr(
+            `${table('players')}?player_id=in.(${playerIds.join(',')})&select=player_id,first_name,last_name`,
+            []
+          );
+          for (const p of nameRows) {
             nameMap[p.player_id] = `${p.first_name || ''} ${p.last_name || ''}`.trim();
           }
         }
-      }
 
-      const withName = (r) => ({ ...r, player_name: nameMap[r.player_id] || null });
-      const result = {
-        gameId,
-        homeTeamId: gameTeamIds[0] ?? null,
-        awayTeamId: gameTeamIds[1] ?? null,
-        skaters: skaters.map(withName),
-        goalies: goalies.map(withName),
-      };
-      await kvPut(env, kvKey, result, 3600);
-      return json(result);
+        const withName = (r) => ({ ...r, player_name: nameMap[r.player_id] || null });
+        const result = {
+          gameId,
+          homeTeamId: gameTeamIds[0] ?? null,
+          awayTeamId: gameTeamIds[1] ?? null,
+          skaters: skaters.map(withName),
+          goalies: goalies.map(withName),
+        };
+        return result;
+      });
     }
 
     // GET /{league}/player-game-log?playerId=6681&season=90
@@ -1074,21 +969,15 @@ export function createHockeyTechLeague(cfg) {
     if (url.pathname === `${P}/player-game-log`) {
       const playerId = parseInt(url.searchParams.get('playerId') || '0', 10);
       const season = await seasonParam(url, env);
-      if (!playerId) return new Response(JSON.stringify({ error: 'playerId required' }), { status: 400, headers: corsHeaders() });
-      const kvKey = `${key}:pgamelog:${playerId}:${season}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
-
-      const [skRes, glRes] = await Promise.all([
-        fetch(`${table('skater_game_box')}?player_id=eq.${playerId}&season_id=eq.${season}&order=game_id.asc`, { headers: sbH }),
-        fetch(`${table('goalie_game_box')}?player_id=eq.${playerId}&season_id=eq.${season}&order=game_id.asc`, { headers: sbH }),
-      ]);
-      if (!skRes.ok || !glRes.ok) return new Response(JSON.stringify({ error: 'Supabase error' }), { status: 502, headers: corsHeaders() });
-      const skaters = await skRes.json();
-      const goalies = await glRes.json();
-      const result = { skaters, goalies };
-      await kvPut(env, kvKey, result, 3600);
-      return json(result);
+      if (!playerId) return badRequest('playerId required');
+      return cachedJson(env, `${key}:pgamelog:${playerId}:${season}`, 3600, async () => {
+        const [skaters, goalies] = await Promise.all([
+          sbRows(`${table('skater_game_box')}?player_id=eq.${playerId}&season_id=eq.${season}&order=game_id.asc`),
+          sbRows(`${table('goalie_game_box')}?player_id=eq.${playerId}&season_id=eq.${season}&order=game_id.asc`),
+        ]);
+        if (skaters instanceof Response || goalies instanceof Response) return sbError();
+        return { skaters, goalies };
+      });
     }
 
     // GET /{league}/prediction?gameId=1028992
@@ -1100,7 +989,7 @@ export function createHockeyTechLeague(cfg) {
       if (limited) return limited;
 
       const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
-      if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+      if (!gameId) return badRequest('gameId required');
       const forceRegen = url.searchParams.get('force') === '1';
 
       const kvKey = `${key}:prediction:${gameId}`;
@@ -1109,14 +998,11 @@ export function createHockeyTechLeague(cfg) {
         if (cached) return json(cached);
       }
 
-      const gameRes = await fetch(
-        `${table('game_log')}?game_id=eq.${gameId}&select=game_id,season_id,home_team_id,away_team_id`,
-        { headers: sbH }
-      );
-      if (!gameRes.ok) return new Response(JSON.stringify({ error: `Supabase ${gameRes.status}` }), { status: 502, headers: corsHeaders() });
-      const [game] = await gameRes.json();
+      const gameRows = await sbRows(`${table('game_log')}?game_id=eq.${gameId}&select=game_id,season_id,home_team_id,away_team_id`);
+      if (gameRows instanceof Response) return gameRows;
+      const [game] = gameRows;
       if (!game || !game.home_team_id || !game.away_team_id) {
-        return new Response(JSON.stringify({ error: `Game not found in ${key}_game_log` }), { status: 404, headers: corsHeaders() });
+        return errorJson(404, { error: `Game not found in ${key}_game_log` });
       }
 
       const seasonId = game.season_id;
@@ -1126,18 +1012,16 @@ export function createHockeyTechLeague(cfg) {
       const seasonType = await resolveSeasonType(env, seasonId);
       const isPlayoff = seasonType === 'playoffs';
 
-      const [teamsRes, logRes] = await Promise.all([
-        fetch(`${table('team_seasons')}?team_id=in.(${homeId},${awayId})&season_id=eq.${seasonId}&season_type=eq.${seasonType}`, { headers: sbH }),
-        fetch(`${table('game_log')}?season_id=eq.${seasonId}&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score`, { headers: sbH }),
+      const [teamRows, games] = await Promise.all([
+        sbRows(`${table('team_seasons')}?team_id=in.(${homeId},${awayId})&season_id=eq.${seasonId}&season_type=eq.${seasonType}`),
+        sbRowsOr(`${table('game_log')}?season_id=eq.${seasonId}&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score`, []),
       ]);
-      if (!teamsRes.ok) return new Response(JSON.stringify({ error: `Supabase ${teamsRes.status}` }), { status: 502, headers: corsHeaders() });
-      const teamRows = await teamsRes.json();
-      const games = logRes.ok ? await logRes.json() : [];
+      if (teamRows instanceof Response) return teamRows;
 
       const home = teamRows.find(t => t.team_id === homeId);
       const away = teamRows.find(t => t.team_id === awayId);
       if (!home || !away) {
-        return new Response(JSON.stringify({ error: `${key}_team_seasons rows not found for both teams` }), { status: 404, headers: corsHeaders() });
+        return errorJson(404, { error: `${key}_team_seasons rows not found for both teams` });
       }
 
       const streakFor = (teamId) => {
@@ -1234,7 +1118,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       } catch (e) {
         console.error(`${label} prediction AI error:`, e);
       }
-      if (!narrative) return new Response(JSON.stringify({ error: 'Empty AI response' }), { status: 502, headers: corsHeaders() });
+      if (!narrative) return errorJson(502, { error: 'Empty AI response' });
 
       const result = {
         gameId,
@@ -1265,22 +1149,13 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
       const seasons = (url.searchParams.get('seasons') || '').split(',').map(s => s.trim()).filter(Boolean);
       if (!teamId || seasons.length === 0) {
-        return new Response(JSON.stringify({ error: 'teamId and seasons (comma-separated) are required' }), { status: 400, headers: corsHeaders() });
+        return badRequest('teamId and seasons (comma-separated) are required');
       }
       const kvKey = `${key}:team-seasons:compare:${teamId}:${seasons.slice().sort().join(',')}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
-
-      const res = await fetch(
+      return cachedJson(env, kvKey, 3600, () => sbRows(
         `${table('team_seasons')}?team_id=eq.${teamId}&season_id=in.(${seasons.join(',')})` +
-        `&select=season_id,season_type,gp,wins,losses,ot_losses,shootout_losses,points,goals_for,goals_against,pp_pct,pk_pct`,
-        { headers: sbH }
-      );
-      if (!res.ok) return new Response(JSON.stringify({ error: `Supabase ${res.status}` }), { status: 502, headers: corsHeaders() });
-      const rows = await res.json();
-
-      await kvPut(env, kvKey, rows, 3600);
-      return json(rows);
+        `&select=season_id,season_type,gp,wins,losses,ot_losses,shootout_losses,points,goals_for,goals_against,pp_pct,pk_pct`
+      ));
     }
 
     // GET /{league}/team-seasons/compare-teams?teamIds=335,323&season=90
@@ -1289,23 +1164,14 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       const teamIds = (url.searchParams.get('teamIds') || '').split(',').map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10));
       const season = url.searchParams.get('season');
       if (teamIds.length !== 2 || teamIds.some(id => !id) || !season) {
-        return new Response(JSON.stringify({ error: 'teamIds (exactly two, comma-separated) and season are required' }), { status: 400, headers: corsHeaders() });
+        return badRequest('teamIds (exactly two, comma-separated) and season are required');
       }
 
       const kvKey = `${key}:team-seasons:compare-teams:${teamIds.slice().sort((a, b) => a - b).join(',')}:${season}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
-
-      const res = await fetch(
+      return cachedJson(env, kvKey, 3600, () => sbRows(
         `${table('team_seasons')}?team_id=in.(${teamIds.join(',')})&season_id=eq.${season}` +
-        `&select=team_id,season_id,season_type,gp,wins,losses,ot_losses,shootout_losses,points,goals_for,goals_against,pp_pct,pk_pct`,
-        { headers: sbH }
-      );
-      if (!res.ok) return new Response(JSON.stringify({ error: `Supabase ${res.status}` }), { status: 502, headers: corsHeaders() });
-      const rows = await res.json();
-
-      await kvPut(env, kvKey, rows, 3600);
-      return json(rows);
+        `&select=team_id,season_id,season_type,gp,wins,losses,ot_losses,shootout_losses,points,goals_for,goals_against,pp_pct,pk_pct`
+      ));
     }
 
     // GET /{league}/team-seasons/head-to-head?teamIds=335,323
@@ -1314,37 +1180,33 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     if (url.pathname === `${P}/team-seasons/head-to-head`) {
       const teamIds = (url.searchParams.get('teamIds') || '').split(',').map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10));
       if (teamIds.length !== 2 || teamIds.some(id => !id)) {
-        return new Response(JSON.stringify({ error: 'teamIds (exactly two, comma-separated) are required' }), { status: 400, headers: corsHeaders() });
+        return badRequest('teamIds (exactly two, comma-separated) are required');
       }
       const [teamA, teamB] = teamIds;
 
       const kvKey = `${key}:team-seasons:head-to-head:${teamIds.slice().sort((a, b) => a - b).join(',')}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+      return cachedJson(env, kvKey, 3600, async () => {
+        const rows = await sbRows(
+          `${table('game_log')}?game_state=eq.Final` +
+          `&or=(and(home_team_id.eq.${teamA},away_team_id.eq.${teamB}),and(home_team_id.eq.${teamB},away_team_id.eq.${teamA}))` +
+          `&select=game_id,season_id,game_date,home_team_id,away_team_id,home_score,away_score` +
+          `&order=season_id.asc,game_id.asc`
+        );
+        if (rows instanceof Response) return rows;
 
-      const res = await fetch(
-        `${table('game_log')}?game_state=eq.Final` +
-        `&or=(and(home_team_id.eq.${teamA},away_team_id.eq.${teamB}),and(home_team_id.eq.${teamB},away_team_id.eq.${teamA}))` +
-        `&select=game_id,season_id,game_date,home_team_id,away_team_id,home_score,away_score` +
-        `&order=season_id.asc,game_id.asc`,
-        { headers: sbH }
-      );
-      if (!res.ok) return new Response(JSON.stringify({ error: `Supabase ${res.status}` }), { status: 502, headers: corsHeaders() });
-      const rows = await res.json();
+        const payload = buildHeadToHeadPayload(teamA, teamB, rows.map(g => {
+          const aIsHome = g.home_team_id === teamA;
+          const teamAScore = aIsHome ? g.home_score : g.away_score;
+          const teamBScore = aIsHome ? g.away_score : g.home_score;
+          return {
+            gameId: g.game_id, season: g.season_id, gameDate: g.game_date,
+            teamAWon: teamAScore > teamBScore,
+            teamAScore, teamBScore, homeTeam: aIsHome ? teamA : teamB,
+          };
+        }));
 
-      const payload = buildHeadToHeadPayload(teamA, teamB, rows.map(g => {
-        const aIsHome = g.home_team_id === teamA;
-        const teamAScore = aIsHome ? g.home_score : g.away_score;
-        const teamBScore = aIsHome ? g.away_score : g.home_score;
-        return {
-          gameId: g.game_id, season: g.season_id, gameDate: g.game_date,
-          teamAWon: teamAScore > teamBScore,
-          teamAScore, teamBScore, homeTeam: aIsHome ? teamA : teamB,
-        };
-      }));
-
-      await kvPut(env, kvKey, payload, 3600);
-      return json(payload);
+        return payload;
+      });
     }
 
     // POST /{league}/team-seasons/head-to-head/narrative
@@ -1357,7 +1219,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
 
       let body;
       try { body = await request.json(); } catch {
-        return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: corsHeaders() });
+        return badRequest('Invalid JSON');
       }
       const {
         teamA, teamB, teamADisplay, teamBDisplay,
@@ -1368,19 +1230,17 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       }
 
       const kvKey = `${key}:h2h-narrative:${[teamA, teamB].slice().sort((a, b) => a - b).join(',')}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+      return cachedJson(env, kvKey, 24 * 3600, async () => {
+        const aDisplay = teamADisplay || String(teamA);
+        const bDisplay = teamBDisplay || String(teamB);
+        const streakLine = currentStreak
+          ? `Current streak: ${currentStreak.holder === 'A' ? aDisplay : bDisplay} has won ${currentStreak.count} straight.`
+          : 'No active streak.';
+        const thinSampleNote = isThinSample
+          ? `\nIMPORTANT: Only ${totalMeetings} meeting${totalMeetings === 1 ? '' : 's'} exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.`
+          : '';
 
-      const aDisplay = teamADisplay || String(teamA);
-      const bDisplay = teamBDisplay || String(teamB);
-      const streakLine = currentStreak
-        ? `Current streak: ${currentStreak.holder === 'A' ? aDisplay : bDisplay} has won ${currentStreak.count} straight.`
-        : 'No active streak.';
-      const thinSampleNote = isThinSample
-        ? `\nIMPORTANT: Only ${totalMeetings} meeting${totalMeetings === 1 ? '' : 's'} exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.`
-        : '';
-
-      const prompt = `You are Sticks, EyeWall's hockey analyst. Write a punchy 2-3 sentence head-to-head summary for ${aDisplay} vs ${bDisplay}.
+        const prompt = `You are Sticks, EyeWall's hockey analyst. Write a punchy 2-3 sentence head-to-head summary for ${aDisplay} vs ${bDisplay}.
 
 All-time record (since 2025-26): ${aDisplay} ${allTimeRecord.teamAWins}-${allTimeRecord.teamBWins} ${bDisplay}, across ${totalMeetings} meeting${totalMeetings === 1 ? '' : 's'}.
 Last ${recentWindow.size}: ${aDisplay} ${recentWindow.teamAWins}-${recentWindow.teamBWins} ${bDisplay}.
@@ -1388,21 +1248,20 @@ ${streakLine}
 ${thinSampleNote}
 Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.`;
 
-      try {
-        const aiResponse = await generateText(env, {
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: 100,
-        });
-        const narrative = (aiResponse.response || '').trim();
-        if (!narrative) return json({ narrative: null });
+        try {
+          const aiResponse = await generateText(env, {
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: 100,
+          });
+          const narrative = (aiResponse.response || '').trim();
+          if (!narrative) return json({ narrative: null });
 
-        const result = { narrative };
-        await kvPut(env, kvKey, result, 24 * 3600);
-        return json(result);
-      } catch (e) {
-        console.error(`[${label}] head-to-head narrative AI error:`, e);
-        return new Response(JSON.stringify({ error: 'AI generation failed' }), { status: 502, headers: corsHeaders() });
-      }
+          return { narrative };
+        } catch (e) {
+          console.error(`[${label}] head-to-head narrative AI error:`, e);
+          return errorJson(502, { error: 'AI generation failed' });
+        }
+      });
     }
 
     // GET /{league}/news
@@ -1416,7 +1275,7 @@ Only reference the two teams named above and the numbers given -- no player name
     // POST /{league}/news/bust — invalidate the news cache so the next GET refetches
     if (url.pathname === `${P}/news/bust` && request.method === 'POST') {
       const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
-      if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+      if (secret !== env.POLL_SECRET) return unauthorized();
       await env.CACHE.delete(`${key}:news`);
       console.log(`${label} news cache busted`);
       return json({ ok: true, busted: [`${key}:news`] });
@@ -1426,7 +1285,7 @@ Only reference the two teams named above and the numbers given -- no player name
     // (eyewall-pipeline's nightly {league}_news.py).
     if (url.pathname === `${P}/news/ingest` && request.method === 'POST') {
       const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
-      if (secret !== env.POLL_SECRET) return new Response('Unauthorized', { status: 401 });
+      if (secret !== env.POLL_SECRET) return unauthorized();
       let articles;
       try {
         articles = await request.json();
@@ -1450,35 +1309,29 @@ Only reference the two teams named above and the numbers given -- no player name
     // Today's games (Eastern time) with status pre/live/final.
     if (url.pathname === `${P}/today`) {
       const season = await seasonParam(url, env);
-      const kvKey  = `${key}:today:${season}`;
+      return cachedJson(env, `${key}:today:${season}`, 60, async () => {
+        const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const todayStr = nowET.toISOString().slice(0, 10);
 
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+        const rows = await sbRows(
+          `${table('game_log')}?game_date=eq.${todayStr}&season_id=eq.${season}` +
+          `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&limit=10`
+        );
+        if (rows instanceof Response) return rows;
 
-      const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const todayStr = nowET.toISOString().slice(0, 10);
+        const games = rows.map(g => ({
+          gameId:       g.game_id,
+          homeTeamId:   g.home_team_id,
+          awayTeamId:   g.away_team_id,
+          homeTeamCode: teamCodes[g.home_team_id] || String(g.home_team_id),
+          awayTeamCode: teamCodes[g.away_team_id] || String(g.away_team_id),
+          homeScore:    g.home_score,
+          awayScore:    g.away_score,
+          status:       deriveGameStatus(g),
+        }));
 
-      const r = await fetch(
-        `${table('game_log')}?game_date=eq.${todayStr}&season_id=eq.${season}` +
-        `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&limit=10`,
-        { headers: sbH }
-      );
-      if (!r.ok) return new Response(JSON.stringify({ error: `Supabase ${r.status}` }), { status: 502, headers: corsHeaders() });
-
-      const rows  = await r.json();
-      const games = rows.map(g => ({
-        gameId:       g.game_id,
-        homeTeamId:   g.home_team_id,
-        awayTeamId:   g.away_team_id,
-        homeTeamCode: teamCodes[g.home_team_id] || String(g.home_team_id),
-        awayTeamCode: teamCodes[g.away_team_id] || String(g.away_team_id),
-        homeScore:    g.home_score,
-        awayScore:    g.away_score,
-        status:       deriveGameStatus(g),
-      }));
-
-      await kvPut(env, kvKey, games, 60);
-      return json(games);
+        return games;
+      });
     }
 
     // GET /{league}/live/:gameId
@@ -1491,149 +1344,146 @@ Only reference the two teams named above and the numbers given -- no player name
     // 60 is Cloudflare KV's minimum expiration_ttl.
     if (url.pathname.startsWith(`${P}/live/`)) {
       const gameId = parseInt(url.pathname.split(`${P}/live/`)[1], 10);
-      if (!gameId) return new Response(JSON.stringify({ error: 'gameId required' }), { status: 400, headers: corsHeaders() });
+      if (!gameId) return badRequest('gameId required');
 
-      const kvKey  = `${key}:live:${gameId}`;
-      const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+      const ttl = (p) => (p.gameStatus === 'final' ? 3600 : 60);
+      return cachedJson(env, `${key}:live:${gameId}`, ttl, async () => {
+        const pbpRes = await htFetch(htGameUrl('gameCenterPlayByPlay', gameId));
+        if (!pbpRes.ok) return errorJson(502, { error: `HockeyTech PBP ${pbpRes.status}` });
 
-      const pbpRes = await htFetch(htGameUrl('gameCenterPlayByPlay', gameId));
-      if (!pbpRes.ok) return new Response(JSON.stringify({ error: `HockeyTech PBP ${pbpRes.status}` }), { status: 502, headers: corsHeaders() });
-
-      let rawEvents;
-      try {
-        rawEvents = unwrapJsonp(await pbpRes.text());
-      } catch (e) {
-        return new Response(JSON.stringify({ error: 'PBP parse failed', detail: e.message }), { status: 502, headers: corsHeaders() });
-      }
-
-      const normPeriod = (raw) => {
-        const periodMap = { 'OT1': 4, 'OT2': 5, 'OT3': 6, 'SO': 7 };
-        const s = String(raw ?? '1');
-        return periodMap[s] ?? (parseInt(s, 10) || 1);
-      };
-      const normAbbr = (abbr) => (abbr || '').replace(/^[a-z]+ - /i, '').trim();
-      const timeToSeconds = (t) => {
-        const parts = (t || '0:00').split(':');
-        return parseInt(parts[0], 10) * 60 + parseInt(parts[parts.length - 1], 10);
-      };
-      const normPlayer = (p) => p ? {
-        id:           parseInt(p.id, 10) || null,
-        firstName:    p.firstName || '',
-        lastName:     p.lastName  || '',
-        jerseyNumber: p.jerseyNumber || null,
-      } : null;
-
-      const events = rawEvents.map(ev => {
-        if (!ev || typeof ev !== 'object') return null;
-        const type = ev.event;
-        const d    = ev.details || {};
-        const period      = normPeriod(d.period?.id);
-        const time        = d.time || '0:00';
-        const timeSeconds = timeToSeconds(time);
-
-        const base = { eventType: type, period, time, timeSeconds };
-
-        if (type === 'goal') {
-          return {
-            ...base,
-            teamId:        parseInt(d.team?.id, 10) || null,
-            teamAbbrev:    normAbbr(d.team?.abbreviation),
-            scoredBy:      normPlayer(d.scoredBy),
-            assists:       (d.assists || []).map(normPlayer),
-            isPowerPlay:   d.properties?.isPowerPlay      === '1',
-            isShortHanded: d.properties?.isShortHanded    === '1',
-            isEmptyNet:    d.properties?.isEmptyNet       === '1',
-            isPenaltyShot: d.properties?.isPenaltyShot    === '1',
-            isGameWinner:  d.properties?.isGameWinningGoal === '1',
-            plusPlayers:   (d.plus_players  || []).map(normPlayer),
-            minusPlayers:  (d.minus_players || []).map(normPlayer),
-            x: d.xLocation ?? null,
-            y: d.yLocation ?? null,
-          };
+        let rawEvents;
+        try {
+          rawEvents = unwrapJsonp(await pbpRes.text());
+        } catch (e) {
+          return errorJson(502, { error: 'PBP parse failed', detail: e.message });
         }
 
-        if (type === 'shot') {
-          return {
-            ...base,
-            teamId:      parseInt(d.shooterTeamId, 10) || null,
-            shooter:     normPlayer(d.shooter),
-            goalie:      normPlayer(d.goalie),
-            shotType:    d.shotType    || null,
-            shotQuality: d.shotQuality || null,
-            isGoal:      !!d.isGoal,
-            x: d.xLocation ?? null,
-            y: d.yLocation ?? null,
-          };
+        const normPeriod = (raw) => {
+          const periodMap = { 'OT1': 4, 'OT2': 5, 'OT3': 6, 'SO': 7 };
+          const s = String(raw ?? '1');
+          return periodMap[s] ?? (parseInt(s, 10) || 1);
+        };
+        const normAbbr = (abbr) => (abbr || '').replace(/^[a-z]+ - /i, '').trim();
+        const timeToSeconds = (t) => {
+          const parts = (t || '0:00').split(':');
+          return parseInt(parts[0], 10) * 60 + parseInt(parts[parts.length - 1], 10);
+        };
+        const normPlayer = (p) => p ? {
+          id:           parseInt(p.id, 10) || null,
+          firstName:    p.firstName || '',
+          lastName:     p.lastName  || '',
+          jerseyNumber: p.jerseyNumber || null,
+        } : null;
+
+        const events = rawEvents.map(ev => {
+          if (!ev || typeof ev !== 'object') return null;
+          const type = ev.event;
+          const d    = ev.details || {};
+          const period      = normPeriod(d.period?.id);
+          const time        = d.time || '0:00';
+          const timeSeconds = timeToSeconds(time);
+
+          const base = { eventType: type, period, time, timeSeconds };
+
+          if (type === 'goal') {
+            return {
+              ...base,
+              teamId:        parseInt(d.team?.id, 10) || null,
+              teamAbbrev:    normAbbr(d.team?.abbreviation),
+              scoredBy:      normPlayer(d.scoredBy),
+              assists:       (d.assists || []).map(normPlayer),
+              isPowerPlay:   d.properties?.isPowerPlay      === '1',
+              isShortHanded: d.properties?.isShortHanded    === '1',
+              isEmptyNet:    d.properties?.isEmptyNet       === '1',
+              isPenaltyShot: d.properties?.isPenaltyShot    === '1',
+              isGameWinner:  d.properties?.isGameWinningGoal === '1',
+              plusPlayers:   (d.plus_players  || []).map(normPlayer),
+              minusPlayers:  (d.minus_players || []).map(normPlayer),
+              x: d.xLocation ?? null,
+              y: d.yLocation ?? null,
+            };
+          }
+
+          if (type === 'shot') {
+            return {
+              ...base,
+              teamId:      parseInt(d.shooterTeamId, 10) || null,
+              shooter:     normPlayer(d.shooter),
+              goalie:      normPlayer(d.goalie),
+              shotType:    d.shotType    || null,
+              shotQuality: d.shotQuality || null,
+              isGoal:      !!d.isGoal,
+              x: d.xLocation ?? null,
+              y: d.yLocation ?? null,
+            };
+          }
+
+          // No coordinates: breakaway-style attempts aren't location-tracked.
+          if (type === 'penaltyshot' || type === 'shootout') {
+            return {
+              ...base,
+              teamId:  parseInt(d.shooter_team?.id, 10) || null,
+              shooter: normPlayer(d.shooter),
+              goalie:  normPlayer(d.goalie),
+              isGoal:  !!d.isGoal,
+            };
+          }
+
+          if (type === 'penalty') {
+            return {
+              ...base,
+              teamId:      parseInt(d.againstTeam?.id, 10) || null,
+              teamAbbrev:  normAbbr(d.againstTeam?.abbreviation),
+              takenBy:     normPlayer(d.takenBy),
+              servedBy:    normPlayer(d.servedBy),
+              minutes:     parseFloat(d.minutes || '2') || 2,
+              description: d.description || '',
+              isPowerPlay: !!d.isPowerPlay,
+              isBench:     !!d.isBench,
+            };
+          }
+
+          if (type === 'goalie_change') {
+            return {
+              ...base,
+              teamId:    parseInt(d.team_id, 10) || null,
+              goalieIn:  normPlayer(d.goalieComingIn),
+              goalieOut: normPlayer(d.goalieGoingOut),
+            };
+          }
+
+          return null; // unknown/unconfirmed event type — skip
+        }).filter(Boolean);
+
+        const gameRows = await sbRowsOr(
+          `${table('game_log')}?game_id=eq.${gameId}&select=home_team_id,away_team_id,game_state,game_status_code&limit=1`,
+          []
+        ).catch(() => []);
+        const gameRow = gameRows[0] || null;
+
+        let homeScore = 0, awayScore = 0, gameStatus = 'pre';
+        if (gameRow) {
+          for (const g of events.filter(e => e.eventType === 'goal')) {
+            if (g.teamId === gameRow.home_team_id) homeScore++;
+            else awayScore++;
+          }
+          gameStatus = deriveGameStatus(gameRow);
         }
 
-        // No coordinates: breakaway-style attempts aren't location-tracked.
-        if (type === 'penaltyshot' || type === 'shootout') {
-          return {
-            ...base,
-            teamId:  parseInt(d.shooter_team?.id, 10) || null,
-            shooter: normPlayer(d.shooter),
-            goalie:  normPlayer(d.goalie),
-            isGoal:  !!d.isGoal,
-          };
-        }
-
-        if (type === 'penalty') {
-          return {
-            ...base,
-            teamId:      parseInt(d.againstTeam?.id, 10) || null,
-            teamAbbrev:  normAbbr(d.againstTeam?.abbreviation),
-            takenBy:     normPlayer(d.takenBy),
-            servedBy:    normPlayer(d.servedBy),
-            minutes:     parseFloat(d.minutes || '2') || 2,
-            description: d.description || '',
-            isPowerPlay: !!d.isPowerPlay,
-            isBench:     !!d.isBench,
-          };
-        }
-
-        if (type === 'goalie_change') {
-          return {
-            ...base,
-            teamId:    parseInt(d.team_id, 10) || null,
-            goalieIn:  normPlayer(d.goalieComingIn),
-            goalieOut: normPlayer(d.goalieGoingOut),
-          };
-        }
-
-        return null; // unknown/unconfirmed event type — skip
-      }).filter(Boolean);
-
-      const gameRows = await fetch(
-        `${table('game_log')}?game_id=eq.${gameId}&select=home_team_id,away_team_id,game_state,game_status_code&limit=1`,
-        { headers: sbH }
-      ).then(r => r.ok ? r.json() : []).catch(() => []);
-      const gameRow = gameRows[0] || null;
-
-      let homeScore = 0, awayScore = 0, gameStatus = 'pre';
-      if (gameRow) {
-        for (const g of events.filter(e => e.eventType === 'goal')) {
-          if (g.teamId === gameRow.home_team_id) homeScore++;
-          else awayScore++;
-        }
-        gameStatus = deriveGameStatus(gameRow);
-      }
-
-      const ttl     = gameStatus === 'final' ? 3600 : 60;
-      const payload = {
-        gameId,
-        homeTeamId: gameRow?.home_team_id ?? null,
-        awayTeamId: gameRow?.away_team_id ?? null,
-        homeScore,
-        awayScore,
-        gameStatus,
-        events,
-      };
-      await kvPut(env, kvKey, payload, ttl);
-      return json(payload);
+        const payload = {
+          gameId,
+          homeTeamId: gameRow?.home_team_id ?? null,
+          awayTeamId: gameRow?.away_team_id ?? null,
+          homeScore,
+          awayScore,
+          gameStatus,
+          events,
+        };
+        return payload;
+      });
     }
 
-    return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: corsHeaders() });
+    return errorJson(404, { error: 'Not found' });
   }
 
   return { handle, poll, fetchNews };
