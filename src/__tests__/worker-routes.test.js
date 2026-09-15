@@ -18,6 +18,8 @@ vi.mock('../seasons.js', () => ({
   refreshSeasonsCache: vi.fn(),
   getAllPWHLSeasonTypes: vi.fn(),
   getAllPWHLSeasons: vi.fn(),
+  getAllAHLSeasons: vi.fn(),
+  getAllECHLSeasons: vi.fn(),
   resolveNHLSeason: vi.fn().mockResolvedValue(20252026),
   resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
 }))
@@ -42,7 +44,7 @@ vi.mock('../pwhl.js', async () => {
 import worker from '../worker.js'
 import { handleNHL } from '../nhl.js'
 import { handlePWHL } from '../pwhl.js'
-import { getSeasonsConfig, getAllPWHLSeasonTypes, getAllPWHLSeasons } from '../seasons.js'
+import { getSeasonsConfig, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons } from '../seasons.js'
 import { makeEnv, makeCtx, makeRequest } from './route-harness.js'
 
 beforeEach(() => {
@@ -89,6 +91,35 @@ describe('GET /config/seasons/pwhl-types', () => {
 
     expect(res.status).toBe(502)
     expect((await res.json()).error).toMatch(/unavailable/i)
+  })
+})
+
+describe('GET /config/seasons/ahl-seasons and /echl-seasons', () => {
+  const AHL = [
+    { seasonId: 90, seasonName: '2025-26 Regular Season', seasonType: 'regular', startYear: 2025, startDate: '2025-10-10', endDate: '2026-04-19' },
+    { seasonId: 92, seasonName: '2026 Calder Cup Playoffs', seasonType: 'playoffs', startYear: 2026, startDate: '2026-04-22', endDate: '2026-06-20' },
+  ]
+
+  it.each([
+    ['/config/seasons/ahl-seasons', () => getAllAHLSeasons],
+    ['/config/seasons/echl-seasons', () => getAllECHLSeasons],
+  ])('%s returns the league\'s season list as JSON', async (path, fn) => {
+    fn().mockResolvedValue(AHL)
+    const res = await worker.fetch(makeRequest(path), makeEnv(), makeCtx())
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*')
+    expect(await res.json()).toEqual(AHL)
+    expect(fn()).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['/config/seasons/ahl-seasons', () => getAllAHLSeasons, 'AHL'],
+    ['/config/seasons/echl-seasons', () => getAllECHLSeasons, 'ECHL'],
+  ])('%s returns 502 when the seasons feed is unavailable (null, not a guess)', async (path, fn, label) => {
+    fn().mockResolvedValue(null)
+    const res = await worker.fetch(makeRequest(path), makeEnv(), makeCtx())
+    expect(res.status).toBe(502)
+    expect(await res.json()).toEqual({ error: `${label} seasons unavailable` })
   })
 })
 
