@@ -50,7 +50,7 @@ Before opening a PR, check whether the change affects anything `README.md` docum
 
 - `resolveNHLSeason(env)` — calls `api-web.nhle.com/v1/standings/now`, rejects the candidate if `gamesPlayed` is 0, falls back to a hardcoded seed otherwise. Cached in KV (`config:season:nhl`, 6hr TTL).
 - `resolvePWHLSeason(env)` — calls HockeyTech's `bootstrap` view (`feed=statviewfeed`, **not** `feed=modulekit` — that returns a fake-looking 200 OK with no real payload, a real bug that shipped once). Rejects `current_season_id` if `hide_in_standings: true`, and **prefers the most recent regular season over the most recent season of any type** — a first version of this picked the most recent non-hidden season regardless of type, which resolved to a playoffs season_id and silently broke every downstream query filtering `season_type=eq.regular` (empty results, not sparse — total silent failure across standings/players/team/shot-map views). This is now covered by regression tests built from real production payloads.
-- Both exposed via `GET /config/seasons`. Consumed by `eyewall-analytics`'s `seasonClient.js` and `eyewall-pipeline`'s `season_lookup.py`.
+- Both exposed via `GET /config/seasons` (alongside the AHL/ECHL entries, see below). Consumed by `eyewall-analytics`'s `seasonClient.js` and `eyewall-pipeline`'s `season_lookup.py`.
 - Manual override escape hatch: `config:season:nhl:override` / `config:season:pwhl:override` KV keys, for if live resolution ever misjudges the real Sept/Oct season boundary — **that transition has never actually been observed by this logic yet.** Everything validated so far is the offseason case only.
 - `scheduled()` calls both resolvers every ~60s alongside `poll()`/`pollPWHL()` — cheap no-op except right after the 6hr TTL lapses, since both check cache first.
 
@@ -61,6 +61,13 @@ Before opening a PR, check whether the change affects anything `README.md` docum
 Rather than duplicate the bootstrap-fetch logic, `fetchPWHLBootstrap(env)` was extracted as a shared, independently-cached step (`config:season:pwhl:bootstrap` KV key, same 6hr TTL) that both `resolvePWHLSeason()` and the new `getAllPWHLSeasonTypes(env)` call — one HockeyTech fetch answers both questions. `getAllPWHLSeasonTypes()` returns the full `{season_id: season_type}` map (or `null` on failure — never a guess), exposed via `GET /config/seasons/pwhl-types`. Python-pipeline-only; the frontend has no use for this and doesn't consume it, so it's a separate route rather than a new field bolted onto `/config/seasons` (which the frontend does depend on the exact shape of, via `seasonClient.js`).
 
 Consumed by `eyewall-pipeline`'s `season_lookup.get_season_type()`.
+
+### AHL/ECHL: `resolveAHLSeason()`/`resolveECHLSeason()` and `GET /config/seasons/{ahl,echl}-seasons` (2026-08/09)
+
+Both leagues read their HockeyTech `view=seasons` list (`fetchAHLSeasons()`/`fetchECHLSeasons()`, KV-cached, same 6hr TTL) and answer two questions from it:
+
+- **Current season:** `resolveAHLSeason(env)`/`resolveECHLSeason(env)` pick the highest-id `career === '1'` season whose `start_date` has passed, returning `{seasonId, seasonType, resolvedAt, source}` as the `ahl`/`echl` entries of `GET /config/seasons`. Unlike `resolvePWHLSeason()` this does **not** prefer the regular season: during the playoffs it resolves to the playoff season (AHL 92 in 2026), so the pipeline's nightly AHL/ECHL runs follow it, and teams that missed the playoffs have empty rosters there. Falls back to `FALLBACK_AHL`/`FALLBACK_ECHL`; override keys `config:season:ahl:override` / `config:season:echl:override`. Consumed by `eyewall-pipeline`'s `season_lookup.get_hockeytech_season()`.
+- **Every season:** `getAllAHLSeasons(env)`/`getAllECHLSeasons(env)` return `[{seasonId, seasonName, seasonType, startYear, startDate, endDate}]` (or `null`), served whole as `GET /config/seasons/ahl-seasons` / `/echl-seasons` (502 when unavailable, same as `/pwhl-types`) and reused for `/config/seasons/comparison`'s AHL/ECHL entries. Consumed by `season_lookup.get_hockeytech_seasons()`, which `hockeytech_stats.py` uses for any season's type and its game-log date window.
 
 ## NHL multi-team status (2026-07)
 
