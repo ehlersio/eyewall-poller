@@ -1056,10 +1056,11 @@ Only reference the two teams named above and the numbers given -- no player name
   // route, this queries Supabase directly — pwhl_players is already the
   // source of truth, no HockeyTech per-player endpoint needed.
   //
-  // ?season= pins the stat line to that season_id (the frontend's season
-  // picker passes the exact id it's showing, e.g. PWHLPlayersView's Stats
-  // tab); omitted, falls back to the most recent regular-season row so
-  // season-agnostic callers (MilestonesFeed) keep working unchanged.
+  // ?season= pins the stat line to that season_id, regular or playoffs (the
+  // frontend's season picker passes the exact id it's showing, e.g.
+  // PWHLPlayersView's Stats tab); omitted, falls back to the most recent
+  // regular-season row so season-agnostic callers (MilestonesFeed) keep
+  // working unchanged.
   if (url.pathname === '/pwhl/player/landing') {
     const playerId    = url.searchParams.get('id');
     const seasonParam = url.searchParams.get('season');
@@ -1081,8 +1082,11 @@ Only reference the two teams named above and the numbers given -- no player name
 
     const player = playerRows[0];
     const statsTable = player.position === 'G' ? 'pwhl_goalie_seasons' : 'pwhl_player_seasons';
+    // A season_id belongs to exactly one season type (8 = 2025-26 regular,
+    // 9 = its playoffs), so ?season= alone picks the row -- also filtering
+    // to regular returned no stats for a playoff season.
     const statsQuery = seasonParam
-      ? `player_id=eq.${playerId}&season_id=eq.${seasonParam}&season_type=eq.regular&limit=1&select=*`
+      ? `player_id=eq.${playerId}&season_id=eq.${seasonParam}&limit=1&select=*`
       : `player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc&limit=1&select=*`;
 
     const statsRes = await fetch(`${SB_URL}/rest/v1/${statsTable}?${statsQuery}`, { headers: sbH });

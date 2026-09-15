@@ -1202,6 +1202,59 @@ exports[`ahl > player/landing (goalie, latest season) > response, upstream reque
 }
 `;
 
+exports[`ahl > player/landing (playoff season) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > player/landing (playoff season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "assists": 20,
+    "birth_date": "2001-03-04",
+    "birth_place": "Toronto, ON",
+    "first_name": "Alex",
+    "goals": 15,
+    "gp": 40,
+    "height_inches": 72,
+    "jersey_number": 19,
+    "last_name": "Skater",
+    "pim": 12,
+    "player_id": 6681,
+    "plus_minus": 8,
+    "points": 35,
+    "position": "C",
+    "pp_goals": 5,
+    "season_id": 90,
+    "season_type": "regular",
+    "sh_goals": 1,
+    "shoots": "L",
+    "shots": 110,
+    "team_id": 335,
+    "weight_lbs": 190,
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:player:landing:6681:92",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=eq.6681&select=*",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?player_id=eq.6681&season_id=eq.92&limit=1&select=*",
+    },
+  ],
+}
+`;
+
 exports[`ahl > player/landing (skater) > Supabase unavailable 1`] = `
 {
   "body": {
@@ -1259,7 +1312,7 @@ exports[`ahl > player/landing (skater) > response, upstream requests and KV writ
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=eq.6681&select=*",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?player_id=eq.6681&season_id=eq.90&season_type=eq.regular&limit=1&select=*",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?player_id=eq.6681&season_id=eq.90&limit=1&select=*",
     },
   ],
 }
@@ -4211,6 +4264,59 @@ exports[`echl > player/landing (goalie, latest season) > response, upstream requ
 }
 `;
 
+exports[`echl > player/landing (playoff season) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > player/landing (playoff season) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "assists": 20,
+    "birth_date": "2001-03-04",
+    "birth_place": "Toronto, ON",
+    "first_name": "Alex",
+    "goals": 15,
+    "gp": 40,
+    "height_inches": 72,
+    "jersey_number": 19,
+    "last_name": "Skater",
+    "pim": 12,
+    "player_id": 6681,
+    "plus_minus": 8,
+    "points": 35,
+    "position": "C",
+    "pp_goals": 5,
+    "season_id": 73,
+    "season_type": "regular",
+    "sh_goals": 1,
+    "shoots": "L",
+    "shots": 110,
+    "team_id": 8,
+    "weight_lbs": 190,
+  },
+  "kvWrites": [
+    {
+      "key": "echl:player:landing:6681:76",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=eq.6681&select=*",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?player_id=eq.6681&season_id=eq.76&limit=1&select=*",
+    },
+  ],
+}
+`;
+
 exports[`echl > player/landing (skater) > Supabase unavailable 1`] = `
 {
   "body": {
@@ -4268,7 +4374,7 @@ exports[`echl > player/landing (skater) > response, upstream requests and KV wri
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=eq.6681&select=*",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?player_id=eq.6681&season_id=eq.73&season_type=eq.regular&limit=1&select=*",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?player_id=eq.6681&season_id=eq.73&limit=1&select=*",
     },
   ],
 }

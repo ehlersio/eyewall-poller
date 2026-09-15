@@ -1376,6 +1376,23 @@ describe('GET /pwhl/player/landing', () => {
     expect(JSON.parse(cached)).toEqual(body)
   })
 
+  it('returns the stat line for a playoff season_id (no regular-season filter)', async () => {
+    mockPlayerFetch({
+      playerRows: [{ player_id: 198, first_name: 'Marie-Philip', last_name: 'Poulin', position: 'F' }],
+      statsRows: [{ player_id: 198, season_id: 9, season_type: 'playoffs', points: 6 }],
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/player/landing?id=198&season=9'), makeEnv(), makeCtx(),
+      new URL('https://example.com/pwhl/player/landing?id=198&season=9')
+    )
+
+    expect(await res.json()).toMatchObject({ player_id: 198, season_id: 9, points: 6 })
+    const statsCall = globalThis.fetch.mock.calls.find(([u]) => String(u).includes('pwhl_player_seasons'))
+    expect(statsCall[0]).toContain('season_id=eq.9')
+    expect(statsCall[0]).not.toContain('season_type=')
+  })
+
   it('falls back to the most recent regular-season row when season is omitted', async () => {
     mockPlayerFetch({
       playerRows: [{ player_id: 198, first_name: 'Marie-Philip', last_name: 'Poulin', position: 'F' }],

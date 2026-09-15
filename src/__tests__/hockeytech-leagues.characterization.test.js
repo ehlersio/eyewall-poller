@@ -272,6 +272,7 @@ const ROUTES = [
   { name: 'shots',                      path: L => `/shots?teamId=${L.teamA}&season=${L.season}`, missing: () => '/shots' },
   { name: 'team-season-summary',        path: L => `/team-season-summary?teamId=${L.teamA}&season=${L.season}`, missing: () => '/team-season-summary' },
   { name: 'player/landing (skater)',    path: L => `/player/landing?id=${SKATER_ID}&season=${L.season}`, missing: () => '/player/landing' },
+  { name: 'player/landing (playoff season)', path: L => `/player/landing?id=${SKATER_ID}&season=${L.playoffSeason}` },
   { name: 'player/landing (goalie, latest season)', path: () => `/player/landing?id=${GOALIE_ID}` },
   { name: 'player/landing (unknown player)', path: () => '/player/landing?id=1', notCached: true },
   { name: 'player/career',              path: () => `/player/career?id=${SKATER_ID}`, missing: () => '/player/career' },

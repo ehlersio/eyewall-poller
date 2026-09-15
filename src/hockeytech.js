@@ -725,8 +725,12 @@ export function createHockeyTechLeague(cfg) {
 
       const player = playerRows[0];
       const statsTable = player.position === 'G' ? table('goalie_seasons') : table('player_seasons');
+      // A season_id belongs to exactly one season type (90 = 2025-26 regular,
+      // 92 = its playoffs), so ?season= alone picks the row -- also filtering
+      // to regular returned no stats for a playoff season. With no ?season=,
+      // fall back to the most recent regular season.
       const statsQuery = seasonQ
-        ? `player_id=eq.${playerId}&season_id=eq.${seasonQ}&season_type=eq.regular&limit=1&select=*`
+        ? `player_id=eq.${playerId}&season_id=eq.${seasonQ}&limit=1&select=*`
         : `player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc&limit=1&select=*`;
 
       const statsRes = await fetch(`${statsTable}?${statsQuery}`, { headers: sbH });
