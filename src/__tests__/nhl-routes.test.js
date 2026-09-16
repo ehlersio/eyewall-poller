@@ -74,34 +74,88 @@ describe('GET /health', () => {
 })
 
 describe('GET /nhl/today', () => {
-  it('normalizes the score/now scoreboard into the shared pre/live/final shape', async () => {
-    globalThis.fetch = vi.fn().mockImplementation((url) => {
-      const u = String(url)
-      if (u.includes('/score/now')) {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({
-            games: [
-              { id: 2025020100, gameState: 'FUT', homeTeam: { abbrev: 'CAR', score: 0 }, awayTeam: { abbrev: 'BOS', score: 0 } },
-              { id: 2025020101, gameState: 'LIVE', homeTeam: { abbrev: 'TOR', score: 2 }, awayTeam: { abbrev: 'MTL', score: 1 } },
-              { id: 2025020102, gameState: 'FINAL', homeTeam: { abbrev: 'NYR', score: 4 }, awayTeam: { abbrev: 'NJD', score: 3 } },
-            ],
-          }),
-        })
-      }
-      return Promise.resolve({ ok: true, json: async () => ({}) })
-    })
-    const env = makeEnv()
+  // NHL's own /score/now is not "today" -- in the offseason it serves
+  // whatever date it considers current (2026-09-15: Sept 29's opener,
+  // skipping the Sept 19 preseason games). The route asks for a date.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-01-15T23:30:00Z')) })
+  afterEach(() => { vi.useRealTimers() })
 
-    const res = await handleNHL(makeRequest('/nhl/today'), env, makeCtx(), new URL('https://example.com/nhl/today'))
+  const scoreFor = (date, games) => vi.fn().mockImplementation((url) => {
+    const u = String(url)
+    if (u.includes(`/score/${date}`)) return Promise.resolve({ ok: true, json: async () => ({ games }) })
+    return Promise.resolve({ ok: true, json: async () => ({ games: [] }) })
+  })
+  const today = (env = makeEnv()) =>
+    handleNHL(makeRequest('/nhl/today'), env, makeCtx(), new URL('https://example.com/nhl/today'))
+
+  it("asks for today's Eastern date and normalizes into the shared pre/live/final shape", async () => {
+    globalThis.fetch = scoreFor('2026-01-15', [
+      { id: 2025020100, gameDate: '2026-01-15', startTimeUTC: '2026-01-16T00:00:00Z', gameType: 2, gameState: 'FUT', homeTeam: { abbrev: 'CAR', score: 0 }, awayTeam: { abbrev: 'BOS', score: 0 } },
+      { id: 2025020101, gameDate: '2026-01-15', gameType: 2, gameState: 'LIVE', homeTeam: { abbrev: 'TOR', score: 2 }, awayTeam: { abbrev: 'MTL', score: 1 },
+        periodDescriptor: { number: 2, periodType: 'REG' }, clock: { timeRemaining: '12:34', inIntermission: false } },
+      { id: 2025020102, gameDate: '2026-01-15', gameType: 2, gameState: 'FINAL', homeTeam: { abbrev: 'NYR', score: 4 }, awayTeam: { abbrev: 'NJD', score: 3 },
+        gameOutcome: { lastPeriodType: 'OT' } },
+    ])
+
+    const res = await today()
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body).toEqual([
-      { gameId: 2025020100, homeTeamCode: 'CAR', awayTeamCode: 'BOS', homeScore: 0, awayScore: 0, status: 'pre' },
-      { gameId: 2025020101, homeTeamCode: 'TOR', awayTeamCode: 'MTL', homeScore: 2, awayScore: 1, status: 'live' },
-      { gameId: 2025020102, homeTeamCode: 'NYR', awayTeamCode: 'NJD', homeScore: 4, awayScore: 3, status: 'final' },
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('/score/2026-01-15')
+    expect(body.map(g => g.status)).toEqual(['pre', 'live', 'final'])
+    expect(body.every(g => g.gameDate === '2026-01-15')).toBe(true)
+    expect(body[0]).toMatchObject({ gameId: 2025020100, homeTeamCode: 'CAR', awayTeamCode: 'BOS', startTimeUTC: '2026-01-16T00:00:00Z', gameType: 2, period: null, clock: null })
+    expect(body[1]).toMatchObject({ period: 2, periodType: 'REG', clock: '12:34', inIntermission: false })
+    expect(body[2]).toMatchObject({ homeScore: 4, awayScore: 3, endedIn: 'OT' })
+  })
+
+  it('reports an intermission rather than a running clock', async () => {
+    globalThis.fetch = scoreFor('2026-01-15', [
+      { id: 1, gameDate: '2026-01-15', gameState: 'LIVE', homeTeam: { abbrev: 'CAR' }, awayTeam: { abbrev: 'BOS' },
+        periodDescriptor: { number: 1, periodType: 'REG' }, clock: { timeRemaining: '18:00', inIntermission: true } },
     ])
+    const body = await (await today()).json()
+    expect(body[0]).toMatchObject({ status: 'live', period: 1, inIntermission: true })
+  })
+
+  it('a regulation final carries no endedIn marker', async () => {
+    globalThis.fetch = scoreFor('2026-01-15', [
+      { id: 1, gameDate: '2026-01-15', gameState: 'OFF', homeTeam: { abbrev: 'CAR', score: 3 }, awayTeam: { abbrev: 'BOS', score: 1 }, gameOutcome: { lastPeriodType: 'REG' } },
+    ])
+    expect((await (await today()).json())[0].endedIn).toBeNull()
+  })
+
+  it('walks forward to the next date with games when today has none', async () => {
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('/score/2026-01-15')) return Promise.resolve({ ok: true, json: async () => ({ games: [] }) })
+      if (u.includes('/schedule/2026-01-15')) {
+        return Promise.resolve({ ok: true, json: async () => ({ gameWeek: [
+          { date: '2026-01-15', numberOfGames: 0 },
+          { date: '2026-01-17', numberOfGames: 2 },
+        ] }) })
+      }
+      if (u.includes('/score/2026-01-17')) {
+        return Promise.resolve({ ok: true, json: async () => ({ games: [
+          { id: 7, gameDate: '2026-01-17', gameType: 1, gameState: 'FUT', homeTeam: { abbrev: 'CAR' }, awayTeam: { abbrev: 'BOS' } },
+        ] }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    const body = await (await today()).json()
+
+    expect(body).toHaveLength(1)
+    expect(body[0]).toMatchObject({ gameId: 7, gameDate: '2026-01-17', gameType: 1, status: 'pre' })
+  })
+
+  it('returns an empty list rather than erroring when the lookahead itself fails', async () => {
+    globalThis.fetch = vi.fn().mockImplementation((url) => String(url).includes('/schedule/')
+      ? Promise.reject(new Error('schedule down'))
+      : Promise.resolve({ ok: true, json: async () => ({ games: [] }) }))
+    const res = await today()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([])
   })
 
   it('serves from KV on a warm cache without re-fetching upstream', async () => {
@@ -651,6 +705,45 @@ describe('GET /playoff-odds', () => {
     expect(urls.filter(u => u.includes('/playoff_odds?') && u.includes('team=eq.CAR') && !u.includes('season=eq.'))).toHaveLength(2)
     expect(urls.find(u => u.includes('playoff_odds_game_impacts'))).toContain('season=eq.20262027&run_date=eq.2026-10-15&team=eq.CAR')
     expect(putSpy).toHaveBeenCalledWith('nhl:playoff-odds:CAR:latest', JSON.stringify(body), { expirationTtl: 3600 })
+  })
+
+  it('returns the whole division from the same run, ranked, so the number has context', async () => {
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, divisionName: 'Metropolitan' },
+      { teamAbbrev: { default: 'NJD' }, divisionName: 'Metropolitan' },
+      { teamAbbrev: { default: 'BOS' }, divisionName: 'Atlantic' },
+    ]
+    const env = makeEnv({ CACHE: makeFakeCache({ standings }) })
+    globalThis.fetch = vi.fn().mockImplementation(async (u) => ({
+      ok: true,
+      json: async () => {
+        if (u.includes('playoff_odds_game_impacts')) return impacts
+        if (u.includes('team=in.')) {
+          return [
+            { team: 'CAR', division_pct: 0.214, playoff_pct: 0.641, proj_points: 95.3 },
+            { team: 'NJD', division_pct: 0.402, playoff_pct: 0.77, proj_points: 101.1 },
+          ]
+        }
+        return u.endsWith('limit=1') ? [latest] : historyDesc
+      },
+    }))
+
+    const body = await (await get(env, '?team=CAR')).json()
+
+    expect(body.division).toMatchObject({ name: 'Metropolitan', rank: 2, of: 2 })
+    expect(body.division.teams.map(t => t.team)).toEqual(['NJD', 'CAR'])  // ranked by division odds
+    expect(body.division.teams[1]).toMatchObject({ team: 'CAR', divisionPct: 0.214, playoffPct: 0.641, projPoints: 95.3 })
+    const peerUrl = globalThis.fetch.mock.calls.map(c => c[0]).find(u => u.includes('team=in.'))
+    expect(peerUrl).toContain('season=eq.20262027&run_date=eq.2026-10-15')  // same run, not a fresher one
+    expect(peerUrl).not.toContain('BOS')  // other divisions aren't fetched
+  })
+
+  it('renders without division context when standings are unavailable', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({}) })
+    globalThis.fetch = byUrl()
+    const body = await (await get(env, '?team=CAR')).json()
+    expect(body.division).toBeNull()
+    expect(body.latest).toMatchObject({ division_pct: 0.214 })  // the team's own number still shows
   })
 
   it('flags a latest run older than a few days as stale', async () => {

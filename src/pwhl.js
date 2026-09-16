@@ -1630,17 +1630,23 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
       const todayStr = nowET.toISOString().slice(0, 10); // YYYY-MM-DD
 
+      // Today's games, or the next day that has some -- see the AHL/ECHL
+      // route in hockeytech.js for why (an empty "no games today" is the
+      // wrong answer out of season).
       const rows = await sbRows(
-        `${SB_URL}/rest/v1/pwhl_game_log?game_date=eq.${todayStr}&season_id=eq.${season}` +
-        `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&limit=10`
+        `${SB_URL}/rest/v1/pwhl_game_log?game_date=gte.${todayStr}&season_id=eq.${season}` +
+        `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date,period,ot,shootout` +
+        `&order=game_date.asc&limit=40`
       );
       if (rows instanceof Response) return rows;
 
-      const games = rows.map(g => {
+      const gameDate = rows[0]?.game_date || null;
+      const games = rows.filter(g => g.game_date === gameDate).map(g => {
         const status = deriveGameStatus(g);
 
         return {
           gameId:       g.game_id,
+          gameDate:     g.game_date,
           homeTeamId:   g.home_team_id,
           awayTeamId:   g.away_team_id,
           homeTeamCode: PWHL_TEAM_CODES[g.home_team_id] || String(g.home_team_id),
@@ -1648,6 +1654,12 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
           homeScore:    g.home_score,
           awayScore:    g.away_score,
           status,
+          // HockeyTech's status text (a start time before puck drop, its
+          // live wording once under way) plus the period it stores; there
+          // is no clock in this feed.
+          statusDetail: g.game_state || null,
+          period:       status === 'live' ? (g.period ?? null) : null,
+          endedIn:      status === 'final' ? (g.shootout ? 'SO' : g.ot ? 'OT' : null) : null,
         };
       });
 

@@ -181,12 +181,22 @@ function nhlApi(path) {
   if (/^\/roster\/[A-Z]+\/current$/.test(path)) return { forwards: [{ id: PLAYER_ID, firstName: { default: 'Sebastian' } }], defensemen: [], goalies: [{ id: GOALIE_ID }] }
   const landing = path.match(/^\/player\/(\d+)\/landing$/)
   if (landing) return { playerId: Number(landing[1]), firstName: { default: 'Sebastian' }, lastName: { default: 'Aho' }, position: 'C' }
-  if (path === '/score/now') {
+  // /nhl/today asks for an explicit date (and only looks ahead via
+  // /schedule/{date} when that date is empty) -- NHL's own /score/now is
+  // not "today" out of season. The frozen clock is 2026-01-15 ET.
+  const score = path.match(/^\/score\/(\d{4}-\d{2}-\d{2})$/)
+  if (score) {
+    if (score[1] !== '2026-01-15') return { games: [] }
     return { games: [
-      { id: GAME_ID, gameState: 'LIVE', homeTeam: { abbrev: 'CAR', score: 2 }, awayTeam: { abbrev: 'BOS', score: 1 } },
-      { id: GAME_ID + 1, gameState: 'OFF', homeTeam: { abbrev: 'TOR', score: 3 }, awayTeam: { abbrev: 'MTL', score: 4 } },
-      { id: GAME_ID + 2, gameState: 'FUT', homeTeam: { abbrev: 'EDM' }, awayTeam: { abbrev: 'VAN' } },
+      { id: GAME_ID, gameDate: '2026-01-15', gameType: 2, gameState: 'LIVE', homeTeam: { abbrev: 'CAR', score: 2 }, awayTeam: { abbrev: 'BOS', score: 1 },
+        periodDescriptor: { number: 2, periodType: 'REG' }, clock: { timeRemaining: '12:34', inIntermission: false } },
+      { id: GAME_ID + 1, gameDate: '2026-01-15', gameType: 2, gameState: 'OFF', homeTeam: { abbrev: 'TOR', score: 3 }, awayTeam: { abbrev: 'MTL', score: 4 },
+        gameOutcome: { lastPeriodType: 'OT' } },
+      { id: GAME_ID + 2, gameDate: '2026-01-15', gameType: 2, gameState: 'FUT', startTimeUTC: '2026-01-16T03:00:00Z', homeTeam: { abbrev: 'EDM' }, awayTeam: { abbrev: 'VAN' } },
     ] }
+  }
+  if (/^\/schedule\/\d{4}-\d{2}-\d{2}$/.test(path)) {
+    return { gameWeek: [{ date: '2026-01-15', numberOfGames: 3 }], nextStartDate: '2026-01-16' }
   }
   if (path.startsWith('/gamecenter/')) return { plays: [] }
   if (path === '/standings/now') return { standings: [] }

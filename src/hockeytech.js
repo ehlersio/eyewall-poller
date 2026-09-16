@@ -1313,22 +1313,36 @@ Only reference the two teams named above and the numbers given -- no player name
         const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
         const todayStr = nowET.toISOString().slice(0, 10);
 
+        // Today's games, or the next day that has some. One query either
+        // way: ask for everything from today onward in date order and keep
+        // whichever date comes back first. Out of season this is what stops
+        // the scoreboard from being a permanently empty "no games today".
         const rows = await sbRows(
-          `${table('game_log')}?game_date=eq.${todayStr}&season_id=eq.${season}` +
-          `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&limit=10`
+          `${table('game_log')}?game_date=gte.${todayStr}&season_id=eq.${season}` +
+          `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date` +
+          `&order=game_date.asc&limit=40`
         );
         if (rows instanceof Response) return rows;
 
-        const games = rows.map(g => ({
-          gameId:       g.game_id,
-          homeTeamId:   g.home_team_id,
-          awayTeamId:   g.away_team_id,
-          homeTeamCode: teamCodes[g.home_team_id] || String(g.home_team_id),
-          awayTeamCode: teamCodes[g.away_team_id] || String(g.away_team_id),
-          homeScore:    g.home_score,
-          awayScore:    g.away_score,
-          status:       deriveGameStatus(g),
-        }));
+        const gameDate = rows[0]?.game_date || null;
+        const games = rows.filter(g => g.game_date === gameDate).map(g => {
+          const status = deriveGameStatus(g);
+          return {
+            gameId:       g.game_id,
+            gameDate:     g.game_date,
+            homeTeamId:   g.home_team_id,
+            awayTeamId:   g.away_team_id,
+            homeTeamCode: teamCodes[g.home_team_id] || String(g.home_team_id),
+            awayTeamCode: teamCodes[g.away_team_id] || String(g.away_team_id),
+            homeScore:    g.home_score,
+            awayScore:    g.away_score,
+            status,
+            // HockeyTech's own status text: a start time before puck drop
+            // ("7:00 pm EST"), its live wording once under way. This feed
+            // has no period/clock columns, unlike NHL's.
+            statusDetail: g.game_state || null,
+          };
+        });
 
         return games;
       });
