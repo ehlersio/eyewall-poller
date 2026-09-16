@@ -2317,27 +2317,51 @@ describe('poll() — multi-team dual broadcast', () => {
 })
 
 describe('refreshPPUnits()', () => {
-  it('returns a warm pp_units:all without re-reading Supabase', async () => {
+  // Every case passes an explicit season. Omitting it is still supported
+  // and resolves the current one, but that would put resolveNHLSeason's
+  // own upstream call in the middle of these fetch assertions.
+  const PP_SEASON = '20252026'
+
+  it('returns a warm pp_units:{season} without re-reading Supabase', async () => {
     const cached = { CAR: { PP: { 1: [8478402] }, PK: {} } }
-    const env = makeEnv({ CACHE: makeFakeCache({ 'pp_units:all': cached }) })
+    const env = makeEnv({ CACHE: makeFakeCache({ [`pp_units:${PP_SEASON}`]: cached }) })
     globalThis.fetch = vi.fn()
 
-    expect(await refreshPPUnits(env)).toEqual(cached)
+    expect(await refreshPPUnits(env, { season: PP_SEASON })).toEqual(cached)
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
   it('re-reads Supabase when forced, even with a warm cache', async () => {
-    const env = makeEnv({ CACHE: makeFakeCache({ 'pp_units:all': { OLD: { PP: {}, PK: {} } } }) })
+    const env = makeEnv({ CACHE: makeFakeCache({ [`pp_units:${PP_SEASON}`]: { OLD: { PP: {}, PK: {} } } }) })
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ team: 'CAR', unit_type: 'PP', unit_number: 1, player_ids: [8478402] }],
     })
 
-    const map = await refreshPPUnits(env, { force: true })
+    const map = await refreshPPUnits(env, { force: true, season: PP_SEASON })
 
     expect(map).toEqual({ CAR: { PP: { 1: [8478402] }, PK: {} } })
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(await env.CACHE.get('pp_units:all'))).toEqual(map)
+    expect(JSON.parse(await env.CACHE.get(`pp_units:${PP_SEASON}`))).toEqual(map)
+  })
+
+  // The whole reason the key is season-scoped: the shot map can be showing
+  // a past season (its off-season fallback, or a season picked from the
+  // chips), and the flat pp_units:all key this used to write would hand it
+  // the CURRENT season's units to label those games with.
+  it('does not serve one season\'s warm cache to another season', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({ [`pp_units:${PP_SEASON}`]: { CAR: { PP: { 1: [8478402] }, PK: {} } } }) })
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ team: 'BOS', unit_type: 'PK', unit_number: 2, player_ids: [8477956] }],
+    })
+
+    const map = await refreshPPUnits(env, { season: '20242025' })
+
+    expect(map).toEqual({ BOS: { PP: {}, PK: { 2: [8477956] } } })
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(String(globalThis.fetch.mock.calls[0][0])).toContain('season=eq.20242025')
+    expect(JSON.parse(await env.CACHE.get('pp_units:20242025'))).toEqual(map)
   })
 })
 

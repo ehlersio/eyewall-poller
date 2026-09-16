@@ -5930,7 +5930,7 @@ exports[`special-teams (cold cache) > NHL API and AI unavailable 1`] = `
   },
   "kvWrites": [
     {
-      "key": "pp_units:all",
+      "key": "pp_units:20252026",
       "ttl": 14400,
     },
   ],
@@ -5975,7 +5975,7 @@ exports[`special-teams (cold cache) > response, upstream requests and KV writes;
   },
   "kvWrites": [
     {
-      "key": "pp_units:all",
+      "key": "pp_units:20252026",
       "ttl": 14400,
     },
   ],
@@ -5983,6 +5983,176 @@ exports[`special-teams (cold cache) > response, upstream requests and KV writes;
   "upstream": [
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/special_teams_units?season=eq.20252026&select=team,unit_type,unit_number,player_ids&limit=256",
+    },
+  ],
+}
+`;
+
+exports[`special-teams (past season, cold cache) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "BOS": {
+      "PK": {},
+      "PP": {
+        "2": [
+          8477956,
+        ],
+      },
+    },
+    "CAR": {
+      "PK": {
+        "1": [
+          8476882,
+        ],
+      },
+      "PP": {
+        "1": [
+          8478427,
+          8480830,
+        ],
+      },
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "pp_units:20242025",
+      "ttl": 14400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`special-teams (past season, cold cache) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`special-teams (past season, cold cache) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "BOS": {
+      "PK": {},
+      "PP": {
+        "2": [
+          8477956,
+        ],
+      },
+    },
+    "CAR": {
+      "PK": {
+        "1": [
+          8476882,
+        ],
+      },
+      "PP": {
+        "1": [
+          8478427,
+          8480830,
+        ],
+      },
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "pp_units:20242025",
+      "ttl": 14400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/special_teams_units?season=eq.20242025&select=team,unit_type,unit_number,player_ids&limit=256",
+    },
+  ],
+}
+`;
+
+exports[`special-teams (season param ignores ano… > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "BOS": {
+      "PK": {},
+      "PP": {
+        "2": [
+          8477956,
+        ],
+      },
+    },
+    "CAR": {
+      "PK": {
+        "1": [
+          8476882,
+        ],
+      },
+      "PP": {
+        "1": [
+          8478427,
+          8480830,
+        ],
+      },
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "pp_units:20242025",
+      "ttl": 14400,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`special-teams (season param ignores ano… > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "kvWrites": [],
+  "status": 502,
+}
+`;
+
+exports[`special-teams (season param ignores ano… > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "BOS": {
+      "PK": {},
+      "PP": {
+        "2": [
+          8477956,
+        ],
+      },
+    },
+    "CAR": {
+      "PK": {
+        "1": [
+          8476882,
+        ],
+      },
+      "PP": {
+        "1": [
+          8478427,
+          8480830,
+        ],
+      },
+    },
+  },
+  "kvWrites": [
+    {
+      "key": "pp_units:20242025",
+      "ttl": 14400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/special_teams_units?season=eq.20242025&select=team,unit_type,unit_number,player_ids&limit=256",
     },
   ],
 }
