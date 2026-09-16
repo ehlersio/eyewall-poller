@@ -346,6 +346,68 @@ Write the analysis now. Mention the single most decisive factor from last season
   return json(result);
 }
 
+
+// ── Scoreboard (/nhl/today) ───────────────────────────────────
+// Today's date where the league lives, not the viewer's and not UTC: an
+// 8pm PT game is still "today" at 04:00 UTC the next morning.
+function etDateString(now = new Date()) {
+  return new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }))
+    .toISOString().slice(0, 10);
+}
+
+// NHL's /score/now is NOT "today" — in the offseason it jumps to whatever
+// date it considers current (2026-09-15: it served Sept 29's regular-season
+// opener, skipping the Sept 19 preseason games entirely). So ask for a date
+// explicitly, and when that date has no games, walk forward to the next one
+// that does, via /schedule's gameWeek (which does include preseason).
+// Returns the scoreboard payload for whichever date was chosen; its games
+// each carry their own gameDate, so the caller never has to assume "today".
+async function nhlScoreboardForDisplay(dateStr) {
+  const today = await nhlGet(`${NHL_BASE}/score/${dateStr}`);
+  if (today?.games?.length) return today;
+
+  let nextDate;
+  try {
+    const week = await nhlGet(`${NHL_BASE}/schedule/${dateStr}`);
+    const withGames = (week?.gameWeek || []).find(d => (d.numberOfGames ?? d.games?.length ?? 0) > 0);
+    nextDate = withGames?.date || week?.nextStartDate || null;
+  } catch (e) {
+    console.warn(`nhl/today: schedule lookahead failed: ${e.message}`);
+    return today;
+  }
+  if (!nextDate || nextDate === dateStr) return today;
+  return nhlGet(`${NHL_BASE}/score/${nextDate}`);
+}
+
+// One scoreboard card's worth of a game. gameDate is what lets the client
+// say "Today" only when it means it; period/clock are what make a live card
+// readable at a glance (the clock is a snapshot, not a ticking one — this
+// response is KV-cached 60s and the client polls every 30s).
+function normalizeScoreboardGame(g) {
+  const live = g.gameState === 'LIVE' || g.gameState === 'CRIT';
+  const final = isCompleted(g);
+  return {
+    gameId:       g.id,
+    gameDate:     g.gameDate || null,
+    startTimeUTC: g.startTimeUTC || null,
+    gameType:     g.gameType ?? null,   // 1 preseason, 2 regular, 3 playoffs
+    homeTeamCode: g.homeTeam?.abbrev,
+    awayTeamCode: g.awayTeam?.abbrev,
+    homeScore:    g.homeTeam?.score,
+    awayScore:    g.awayTeam?.score,
+    status:       final ? 'final' : live ? 'live' : 'pre',
+    period:         live ? (g.periodDescriptor?.number ?? g.period ?? null) : null,
+    periodType:     live ? (g.periodDescriptor?.periodType || null) : null,
+    clock:          live ? (g.clock?.timeRemaining || null) : null,
+    inIntermission: live ? !!g.clock?.inIntermission : false,
+    // "OT"/"SO" for a game that didn't end in regulation, else null.
+    endedIn: final
+      ? (g.gameOutcome?.lastPeriodType && g.gameOutcome.lastPeriodType !== 'REG'
+          ? g.gameOutcome.lastPeriodType : null)
+      : null,
+  };
+}
+
 function isCompleted(game) {
   return ['OFF','FINAL','F','FINAL_OVERTIME','FINAL_SHOOTOUT'].includes(game.gameState);
 }
@@ -1764,19 +1826,11 @@ export async function handleNHL(request, env, ctx, url) {
     return cachedJson(env, 'nhl:today', 60, async () => {
       let scoreboard;
       try {
-        scoreboard = await nhlGet(`${NHL_BASE}/score/now`);
+        scoreboard = await nhlScoreboardForDisplay(etDateString());
       } catch (e) {
         return errorJson(502, { error: e.message });
       }
-      const todaysGames = scoreboard?.games || [];
-      const games = todaysGames.map(g => ({
-        gameId:       g.id,
-        homeTeamCode: g.homeTeam?.abbrev,
-        awayTeamCode: g.awayTeam?.abbrev,
-        homeScore:    g.homeTeam?.score,
-        awayScore:    g.awayTeam?.score,
-        status:       isCompleted(g) ? 'final' : (g.gameState === 'LIVE' || g.gameState === 'CRIT') ? 'live' : 'pre',
-      }));
+      const games = (scoreboard?.games || []).map(g => normalizeScoreboardGame(g));
 
       return games;
     });
@@ -3432,6 +3486,45 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   //                nightly stopped) -- labeled by the frontend, not hidden
   // 1hr KV. A failed read returns `unavailable: true` and is NOT cached;
   // neither is an empty result, so the season's first run shows up at once.
+// A team's own "win division" number says nothing about who it's behind.
+// This returns the whole division from the same simulation run, so the
+// card can show where the team actually sits rather than a bare percentage.
+// Division membership comes from the cached NHL standings (their
+// divisionName), the same source the standings tab already trusts; if that
+// is missing the card simply renders without this block.
+async function divisionOdds(env, team, latest) {
+  try {
+    const standings = await kvGet(env, 'standings') || [];
+    const abbrOf = r => (r.teamAbbrev?.default || r.teamAbbrev);
+    const own = standings.find(r => abbrOf(r) === team);
+    if (!own?.divisionName) return null;
+
+    const peers = standings.filter(r => r.divisionName === own.divisionName).map(abbrOf).filter(Boolean);
+    if (peers.length < 2) return null;
+
+    const rows = await sbRowsOrThrow(
+      `playoff_odds?select=team,division_pct,playoff_pct,proj_points` +
+      `&season=eq.${latest.season}&run_date=eq.${latest.run_date}&team=in.(${peers.join(',')})`
+    );
+    if (!rows.length) return null;
+
+    const teams = rows
+      .map(r => ({
+        team: r.team,
+        divisionPct: r.division_pct,
+        playoffPct: r.playoff_pct,
+        projPoints: r.proj_points,
+      }))
+      .sort((a, b) => (b.divisionPct ?? -1) - (a.divisionPct ?? -1));
+    const rank = teams.findIndex(r => r.team === team) + 1;
+
+    return { name: own.divisionName, teams, rank: rank || null, of: teams.length };
+  } catch (e) {
+    console.warn(`playoff-odds: division context unavailable: ${e.message}`);
+    return null;
+  }
+}
+
   if (url.pathname === '/playoff-odds') {
     const HISTORY_MAX = 250; // > one regular season of nightly runs
     const team   = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
@@ -3466,9 +3559,11 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
         return json({ ...empty, unavailable: true });
       }
 
+      const division = await divisionOdds(env, team, latest);
+
       const data = {
         team, season: latest.season, runDate: latest.run_date,
-        stale: isPlayoffOddsStale(latest.run_date), latest, history, nextGames,
+        stale: isPlayoffOddsStale(latest.run_date), latest, history, nextGames, division,
       };
       return data;
     });

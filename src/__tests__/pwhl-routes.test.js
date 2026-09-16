@@ -9,7 +9,7 @@
 // routes) and Tier 3 (AI-calling routes) coverage per the corrected
 // Session 48 scope — see SESSION_48_DECISIONS.md.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeEnv, makeCtx, makeRequest, makeFakeCache, makeFakeRateLimiter, mockFetchWithAI, mockFetchWithFailingAI, aiCalls, aiPrompt } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({
@@ -848,6 +848,47 @@ describe('fetchPWHLNews() TTL', () => {
 // ── Tier 3 — AI-calling routes (Session 48, Item 2) ─────────────────────────
 // No secret check (see Session 48 findings/decisions) — guarded instead by
 // the AI_ROUTE_LIMITER binding (Item 3, mocked to always-allow here).
+
+describe('GET /pwhl/today', () => {
+  // Same next-day-with-games rule as the AHL/ECHL route; PWHL's game log
+  // also stores the period and OT/shootout flags, which NHL-style cards use.
+  const rows = (...r) => vi.fn((url) => String(url).includes('pwhl_game_log')
+    ? Promise.resolve({ ok: true, json: async () => r })
+    : Promise.resolve({ ok: true, json: async () => [] }))
+  const today = (env = makeEnv()) => handlePWHL(
+    makeRequest('/pwhl/today?season=8'), env, makeCtx(), new URL('https://example.com/pwhl/today?season=8')
+  )
+
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-01-15T23:30:00Z')) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('falls forward to the next day that has games', async () => {
+    globalThis.fetch = rows(
+      { game_id: 210, game_date: '2026-01-20', home_team_id: 1, away_team_id: 2, home_score: null, away_score: null, game_state: '7:00 pm EST' },
+      { game_id: 211, game_date: '2026-01-21', home_team_id: 3, away_team_id: 4, home_score: null, away_score: null, game_state: '7:00 pm EST' },
+    )
+
+    const body = await (await today()).json()
+
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('game_date=gte.2026-01-15')
+    expect(body.map(g => g.gameId)).toEqual([210])
+    expect(body[0]).toMatchObject({ gameDate: '2026-01-20', status: 'pre', period: null, endedIn: null })
+  })
+
+  it('carries the period while live and how a final ended', async () => {
+    globalThis.fetch = rows(
+      { game_id: 1, game_date: '2026-01-15', home_team_id: 1, away_team_id: 2, home_score: 1, away_score: 1, game_state: 'In Progress', game_status_code: 2, period: 3 },
+      { game_id: 2, game_date: '2026-01-15', home_team_id: 3, away_team_id: 4, home_score: 4, away_score: 3, game_state: 'Final', game_status_code: 4, ot: true },
+      { game_id: 3, game_date: '2026-01-15', home_team_id: 5, away_team_id: 6, home_score: 2, away_score: 1, game_state: 'Final', game_status_code: 4, shootout: true },
+    )
+
+    const body = await (await today()).json()
+
+    expect(body[0]).toMatchObject({ status: 'live', period: 3, endedIn: null })
+    expect(body[1]).toMatchObject({ status: 'final', endedIn: 'OT', period: null })
+    expect(body[2]).toMatchObject({ status: 'final', endedIn: 'SO' })
+  })
+})
 
 describe('POST /pwhl/scout', () => {
   it('400s when name is missing', async () => {

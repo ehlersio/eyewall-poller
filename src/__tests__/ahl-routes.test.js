@@ -6,7 +6,7 @@
 // degradation), adapted to AHL's real shape (see ahl.js's module
 // docstring for the confirmed differences from PWHL this reflects).
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeEnv, makeCtx, makeRequest } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({
@@ -268,6 +268,49 @@ describe('GET /ahl/team-season-summary', () => {
     expect(body.hits).toBeUndefined()
     expect(body.faceoff).toBeUndefined()
     expect(body.penalties).toBeUndefined()
+  })
+})
+
+// The scoreboard's day is whatever day actually has games: today when
+// there are any, else the next day that does. Out of season the old
+// "today only" query left the tab permanently empty.
+describe('GET /ahl/today', () => {
+  const rows = (...r) => vi.fn((url) => String(url).includes('ahl_game_log')
+    ? Promise.resolve({ ok: true, json: async () => r })
+    : Promise.resolve({ ok: true, json: async () => [] }))
+  const today = (env = makeEnv()) => handleAHL(
+    makeRequest('/ahl/today?season=90'), env, makeCtx(), new URL('https://example.com/ahl/today?season=90')
+  )
+
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-01-15T23:30:00Z')) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it("asks for everything from today onward and keeps only the first day's games", async () => {
+    globalThis.fetch = rows(
+      { game_id: 1, game_date: '2026-01-18', home_team_id: 313, away_team_id: 384, home_score: null, away_score: null, game_state: '7:00 pm EST' },
+      { game_id: 2, game_date: '2026-01-18', home_team_id: 402, away_team_id: 373, home_score: null, away_score: null, game_state: '8:00 pm EST' },
+      { game_id: 3, game_date: '2026-01-19', home_team_id: 313, away_team_id: 402, home_score: null, away_score: null, game_state: '5:00 pm EST' },
+    )
+
+    const body = await (await today()).json()
+
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('game_date=gte.2026-01-15')
+    expect(body.map(g => g.gameId)).toEqual([1, 2])          // 2026-01-19 is a different day
+    expect(body.every(g => g.gameDate === '2026-01-18')).toBe(true)
+    expect(body[0]).toMatchObject({ status: 'pre', statusDetail: '7:00 pm EST' })
+  })
+
+  it("passes through HockeyTech's status text for a game under way", async () => {
+    globalThis.fetch = rows(
+      { game_id: 5, game_date: '2026-01-15', home_team_id: 313, away_team_id: 384, home_score: 2, away_score: 1, game_state: 'In Progress', game_status_code: 2 },
+    )
+    const body = await (await today()).json()
+    expect(body[0]).toMatchObject({ status: 'live', statusDetail: 'In Progress', homeScore: 2, awayScore: 1 })
+  })
+
+  it('returns an empty list when the season has no games left at all', async () => {
+    globalThis.fetch = rows()
+    expect(await (await today()).json()).toEqual([])
   })
 })
 

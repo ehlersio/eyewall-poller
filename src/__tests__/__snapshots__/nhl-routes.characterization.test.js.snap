@@ -3476,7 +3476,7 @@ exports[`nhl/shots > response, upstream requests and KV writes; repeat call 1`] 
 exports[`nhl/today > NHL API and AI unavailable 1`] = `
 {
   "body": {
-    "error": "NHL API 503: https://api-web.nhle.com/v1/score/now",
+    "error": "NHL API 503: https://api-web.nhle.com/v1/score/2026-01-15",
   },
   "kvWrites": [],
   "status": 502,
@@ -3489,23 +3489,47 @@ exports[`nhl/today > Supabase unavailable 1`] = `
     {
       "awayScore": 1,
       "awayTeamCode": "BOS",
+      "clock": "12:34",
+      "endedIn": null,
+      "gameDate": "2026-01-15",
       "gameId": 2025020500,
+      "gameType": 2,
       "homeScore": 2,
       "homeTeamCode": "CAR",
+      "inIntermission": false,
+      "period": 2,
+      "periodType": "REG",
+      "startTimeUTC": null,
       "status": "live",
     },
     {
       "awayScore": 4,
       "awayTeamCode": "MTL",
+      "clock": null,
+      "endedIn": "OT",
+      "gameDate": "2026-01-15",
       "gameId": 2025020501,
+      "gameType": 2,
       "homeScore": 3,
       "homeTeamCode": "TOR",
+      "inIntermission": false,
+      "period": null,
+      "periodType": null,
+      "startTimeUTC": null,
       "status": "final",
     },
     {
       "awayTeamCode": "VAN",
+      "clock": null,
+      "endedIn": null,
+      "gameDate": "2026-01-15",
       "gameId": 2025020502,
+      "gameType": 2,
       "homeTeamCode": "EDM",
+      "inIntermission": false,
+      "period": null,
+      "periodType": null,
+      "startTimeUTC": "2026-01-16T03:00:00Z",
       "status": "pre",
     },
   ],
@@ -3525,23 +3549,47 @@ exports[`nhl/today > response, upstream requests and KV writes; repeat call 1`] 
     {
       "awayScore": 1,
       "awayTeamCode": "BOS",
+      "clock": "12:34",
+      "endedIn": null,
+      "gameDate": "2026-01-15",
       "gameId": 2025020500,
+      "gameType": 2,
       "homeScore": 2,
       "homeTeamCode": "CAR",
+      "inIntermission": false,
+      "period": 2,
+      "periodType": "REG",
+      "startTimeUTC": null,
       "status": "live",
     },
     {
       "awayScore": 4,
       "awayTeamCode": "MTL",
+      "clock": null,
+      "endedIn": "OT",
+      "gameDate": "2026-01-15",
       "gameId": 2025020501,
+      "gameType": 2,
       "homeScore": 3,
       "homeTeamCode": "TOR",
+      "inIntermission": false,
+      "period": null,
+      "periodType": null,
+      "startTimeUTC": null,
       "status": "final",
     },
     {
       "awayTeamCode": "VAN",
+      "clock": null,
+      "endedIn": null,
+      "gameDate": "2026-01-15",
       "gameId": 2025020502,
+      "gameType": 2,
       "homeTeamCode": "EDM",
+      "inIntermission": false,
+      "period": null,
+      "periodType": null,
+      "startTimeUTC": "2026-01-16T03:00:00Z",
       "status": "pre",
     },
   ],
@@ -3554,7 +3602,7 @@ exports[`nhl/today > response, upstream requests and KV writes; repeat call 1`] 
   "status": 200,
   "upstream": [
     {
-      "url": "https://api-web.nhle.com/v1/score/now",
+      "url": "https://api-web.nhle.com/v1/score/2026-01-15",
     },
   ],
 }
@@ -4282,6 +4330,7 @@ exports[`playoff-odds (no runs yet) > response, upstream requests and KV writes;
 exports[`playoff-odds > NHL API and AI unavailable 1`] = `
 {
   "body": {
+    "division": null,
     "history": [
       {
         "playoff_pct": 0.91,
@@ -4349,6 +4398,7 @@ exports[`playoff-odds > missing or invalid param 1`] = `
 exports[`playoff-odds > response, upstream requests and KV writes; repeat call 1`] = `
 {
   "body": {
+    "division": null,
     "history": [
       {
         "playoff_pct": 0.91,
