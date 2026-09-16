@@ -1681,18 +1681,27 @@ export async function poll(env, _ctx) {
 // ── PP/PK unit refresh ──────────────────────────────────────
 
 // Cache-first: scheduled() calls this every minute, but special_teams_units
-// only changes when the nightly pipeline runs, so a warm pp_units:all is
-// returned as-is instead of re-reading Supabase and rewriting KV each tick.
-// { force: true } re-reads regardless (/pp-units/refresh, after a pipeline run).
-export async function refreshPPUnits(env, { force = false } = {}) {
+// only changes when the nightly pipeline runs, so a warm pp_units:{season}
+// is returned as-is instead of re-reading Supabase and rewriting KV each
+// tick. { force: true } re-reads regardless (/pp-units/refresh, after a
+// pipeline run).
+//
+// Season-scoped rather than the one flat pp_units:all key this used to
+// write: the shot map can be showing a season other than the current one
+// (its off-season fallback, or anything picked from the season chips), and
+// the units it labels those games with have to be that season's -- one key
+// can only ever hold one season. Callers that just want "now" omit
+// `season` and get the resolved current one, as before.
+export async function refreshPPUnits(env, { force = false, season } = {}) {
+  const seasonId = season || String(await resolveNHLSeason(env));
+  const key = `pp_units:${seasonId}`;
   if (!force) {
-    const cached = await kvGet(env, 'pp_units:all');
+    const cached = await kvGet(env, key);
     if (cached) return cached;
   }
-  const season = await resolveNHLSeason(env);
   const r = await fetch(
     `${SB_URL}/rest/v1/special_teams_units` +
-    `?season=eq.${season}&select=team,unit_type,unit_number,player_ids&limit=256`,
+    `?season=eq.${seasonId}&select=team,unit_type,unit_number,player_ids&limit=256`,
     { headers: sbHeaders() }
   );
   if (!r.ok) throw new Error(`Supabase ${r.status}`);
@@ -1705,7 +1714,7 @@ export async function refreshPPUnits(env, { force = false } = {}) {
     map[row.team][row.unit_type][row.unit_number] = row.player_ids;
   }
 
-  await kvPut(env, 'pp_units:all', map, 4 * 60 * 60); // 4 hour TTL
+  await kvPut(env, key, map, 4 * 60 * 60); // 4 hour TTL
   return map;
 }
 
@@ -2681,15 +2690,18 @@ Only reference the two teams named above and the numbers given -- no player name
     });
   }
 
-  // PP/PK unit compositions — pp_units:all is already kept warm by
-  // refreshPPUnits() on every scheduled() tick, so this is normally a
-  // pure KV read. Falls back to an inline refresh only if that cache is
-  // somehow cold (first deploy, KV namespace wiped, etc).
+  // PP/PK unit compositions — pp_units:{season} is kept warm for the
+  // CURRENT season by refreshPPUnits() on every scheduled() tick, so that
+  // case is normally a pure KV read. The inline refresh below covers a
+  // cold cache (first deploy, KV namespace wiped) and, now that ?season=
+  // is accepted, any past season the ticker never warms — the first
+  // request for one pays a single Supabase read and caches it for 4h.
   if (url.pathname === '/special-teams') {
-    let map = await kvGet(env, 'pp_units:all');
+    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    let map = await kvGet(env, `pp_units:${season}`);
     if (!map) {
       try {
-        map = await refreshPPUnits(env);
+        map = await refreshPPUnits(env, { season });
       } catch (e) {
         return errorJson(502, { error: e.message });
       }
@@ -2947,12 +2959,13 @@ Only reference the two teams named above and the numbers given -- no player name
   if (url.pathname === '/pp-units/refresh') {
     const secret = url.searchParams.get('secret');
     if (secret !== env.POLL_SECRET) return unauthorized();
+    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     ctx.waitUntil(
-      refreshPPUnits(env, { force: true })
-        .then(map => console.log(`PP units done: ${Object.keys(map).length} teams`))
+      refreshPPUnits(env, { force: true, season })
+        .then(map => console.log(`PP units done (${season}): ${Object.keys(map).length} teams`))
         .catch(e => console.error('PP units error:', e.message))
     );
-    return json({ ok: true, status: 'refreshing — check /cache/pp_units:all in ~5s' });
+    return json({ ok: true, status: `refreshing — check /cache/pp_units:${season} in ~5s` });
   }
 
   if (url.pathname === '/summary/generate') {
