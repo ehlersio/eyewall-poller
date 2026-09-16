@@ -183,21 +183,29 @@ export async function handleRequest(request, env, ctx) {
 
     const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
 
-    // NHL players — paginated the same way /players-list is (Supabase caps
-    // responses at 1000 rows; the table has 1300+).
-    const nhlPlayers = [];
-    let offset = 0;
-    while (true) {
-      const r = await fetch(`${SB_URL}/rest/v1/players?select=id,name,position`, {
-        headers: { ...sbH, 'Range-Unit': 'items', 'Range': `${offset}-${offset + 999}` },
-      });
-      if (!r.ok) return sbError(r.status);
-      const rows = await r.json();
-      if (!Array.isArray(rows) || rows.length === 0) break;
-      nhlPlayers.push(...rows);
-      if (rows.length < 1000) break;
-      offset += 1000;
+    // Supabase caps every response at 1000 rows no matter what `limit` asks
+    // for, so every table here that can exceed that has to be paged. This
+    // was NHL-only until 2026-09: the AHL/ECHL reads below asked for
+    // limit=1500 and silently got 1000, leaving 369 AHL and 261 ECHL
+    // players out of search entirely (found via a Cypress spec that looks
+    // up a real AHL player by name).
+    let pageError = null;
+    async function fetchAllRows(select) {
+      const out = [];
+      for (let offset = 0; ; offset += 1000) {
+        const r = await fetch(`${SB_URL}/rest/v1/${select}`, {
+          headers: { ...sbH, 'Range-Unit': 'items', 'Range': `${offset}-${offset + 999}` },
+        });
+        if (!r.ok) { pageError = r.status; return out; }
+        const rows = await r.json();
+        if (!Array.isArray(rows) || rows.length === 0) return out;
+        out.push(...rows);
+        if (rows.length < 1000) return out;
+      }
     }
+
+    const nhlPlayers = await fetchAllRows('players?select=id,name,position');
+    if (pageError) return sbError(pageError);
 
     const nhlSeason = String(await resolveNHLSeason(env));
 
@@ -243,12 +251,8 @@ export async function handleRequest(request, env, ctx) {
 
     // PWHL players — pwhl_players has no season dimension (one row per
     // player, reflecting current team assignment only).
-    const pwhlRes = await fetch(
-      `${SB_URL}/rest/v1/pwhl_players?select=player_id,first_name,last_name,position,team_id&limit=500`,
-      { headers: sbH }
-    );
-    if (!pwhlRes.ok) return sbError(pwhlRes.status);
-    const pwhlRows = await pwhlRes.json();
+    const pwhlRows = await fetchAllRows('pwhl_players?select=player_id,first_name,last_name,position,team_id');
+    if (pageError) return sbError(pageError);
     const pwhlIndex = pwhlRows
       .filter(p => p.first_name || p.last_name)
       .map(p => ({
@@ -260,16 +264,10 @@ export async function handleRequest(request, env, ctx) {
       }));
 
     // AHL/ECHL players — same shape as pwhl_players (no season dimension,
-    // one row per player reflecting current team assignment). limit=1500,
-    // not 500 like PWHL above -- both tables have 1250+ rows today
-    // (confirmed live), comfortably past PWHL's much smaller current roster
-    // count.
-    const ahlRes = await fetch(
-      `${SB_URL}/rest/v1/ahl_players?select=player_id,first_name,last_name,position,team_id&limit=1500`,
-      { headers: sbH }
-    );
-    if (!ahlRes.ok) return sbError(ahlRes.status);
-    const ahlRows = await ahlRes.json();
+    // one row per player reflecting current team assignment). Both tables
+    // are past 1000 rows (1369 and 1258 as of 2026-09), so both are paged.
+    const ahlRows = await fetchAllRows('ahl_players?select=player_id,first_name,last_name,position,team_id');
+    if (pageError) return sbError(pageError);
     const ahlIndex = ahlRows
       .filter(p => p.first_name || p.last_name)
       .map(p => ({
@@ -280,12 +278,8 @@ export async function handleRequest(request, env, ctx) {
         sport: 'ahl',
       }));
 
-    const echlRes = await fetch(
-      `${SB_URL}/rest/v1/echl_players?select=player_id,first_name,last_name,position,team_id&limit=1500`,
-      { headers: sbH }
-    );
-    if (!echlRes.ok) return sbError(echlRes.status);
-    const echlRows = await echlRes.json();
+    const echlRows = await fetchAllRows('echl_players?select=player_id,first_name,last_name,position,team_id');
+    if (pageError) return sbError(pageError);
     const echlIndex = echlRows
       .filter(p => p.first_name || p.last_name)
       .map(p => ({

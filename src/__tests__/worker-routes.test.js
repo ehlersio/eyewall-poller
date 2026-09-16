@@ -386,6 +386,57 @@ describe('GET /players-search-index', () => {
     expect(JSON.parse(cached)).toEqual(body)
   })
 
+  // Supabase returns at most 1000 rows per request whatever `limit` says.
+  // The AHL/ECHL reads asked for limit=1500 and silently got 1000, so 369
+  // AHL and 261 ECHL players were missing from search entirely (found by a
+  // Cypress spec looking up a real AHL player by name).
+  it('pages past the 1000-row cap for every league, not just the NHL', async () => {
+    const page = (prefix, sport, total) => Array.from({ length: total }, (_, i) => ({
+      player_id: i + 1, first_name: prefix, last_name: `${sport}${i + 1}`, position: 'C', team_id: null,
+    }))
+    const ahlAll = page('AHL', 'ahl', 1369)
+    const echlAll = page('ECHL', 'echl', 1258)
+    const rangeOf = (opts) => {
+      const [start, end] = (opts?.headers?.Range || '0-999').split('-').map(Number)
+      return [start, end + 1]
+    }
+    globalThis.fetch = vi.fn((url, opts) => {
+      const u = String(url)
+      const [start, end] = rangeOf(opts)
+      if (u.includes('/rest/v1/players?')) return Promise.resolve({ ok: true, json: async () => [] })
+      if (u.includes('/rest/v1/player_seasons?')) return Promise.resolve({ ok: true, json: async () => [] })
+      if (u.includes('/rest/v1/pwhl_players?')) return Promise.resolve({ ok: true, json: async () => [] })
+      if (u.includes('/rest/v1/ahl_players?')) return Promise.resolve({ ok: true, json: async () => ahlAll.slice(start, end) })
+      if (u.includes('/rest/v1/echl_players?')) return Promise.resolve({ ok: true, json: async () => echlAll.slice(start, end) })
+      throw new Error(`unexpected fetch: ${u}`)
+    })
+
+    const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+    const body = await res.json()
+
+    expect(body.filter(p => p.sport === 'ahl')).toHaveLength(1369)
+    expect(body.filter(p => p.sport === 'echl')).toHaveLength(1258)
+    // The last player of each table is reachable, not just the first page.
+    expect(body.some(p => p.name === 'AHL ahl1369')).toBe(true)
+    expect(body.some(p => p.name === 'ECHL echl1258')).toBe(true)
+    const ahlRanges = globalThis.fetch.mock.calls
+      .filter(([u]) => String(u).includes('ahl_players'))
+      .map(([, o]) => o.headers.Range)
+    expect(ahlRanges).toEqual(['0-999', '1000-1999'])
+  })
+
+  it('returns 502 when a league fetch fails, not a partial index', async () => {
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      if (u.includes('/rest/v1/ahl_players?')) return Promise.resolve({ ok: false, status: 500 })
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+
+    expect(res.status).toBe(502)
+  })
+
   it('returns 502 when the NHL players fetch fails', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
 
