@@ -45,7 +45,7 @@ import worker from '../worker.js'
 import { handleNHL } from '../nhl.js'
 import { handlePWHL } from '../pwhl.js'
 import { getSeasonsConfig, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons } from '../seasons.js'
-import { makeEnv, makeCtx, makeRequest } from './route-harness.js'
+import { makeEnv, makeCtx, makeRequest, makeFakeCache } from './route-harness.js'
 
 beforeEach(() => {
   globalThis.fetch = vi.fn()
@@ -307,6 +307,81 @@ describe('GET /milestones/latest', () => {
     const pwhlCall = seen.find((u) => u.includes('is_pwhl=eq.true'))
     expect(nhlCall).toContain('season=eq.20252026')
     expect(pwhlCall).toContain('season=eq.8')
+  })
+})
+
+describe('POST /cache/bust', () => {
+  // A deployed fix to a cached route stays invisible until its KV entry
+  // expires -- 6 hours for /players-search-index, which is how a corrected
+  // search index sat unused in production while wrangler was the only way
+  // to clear it.
+  const bust = (env, qs) => worker.fetch(
+    makeRequest(`/cache/bust${qs}`, { method: 'POST' }), env, makeCtx()
+  )
+
+  it('deletes the entry so the next request rebuilds it', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({ 'players-search-index': [{ id: 1 }] }) })
+
+    const res = await bust(env, '?key=players-search-index&secret=test-poll-secret')
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ key: 'players-search-index', busted: true })
+    expect(await env.CACHE.get('players-search-index')).toBeNull()
+  })
+
+  it('reports an uncached key rather than pretending it did something', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({}) })
+    const body = await (await bust(env, '?key=nhl:today&secret=test-poll-secret')).json()
+    expect(body).toMatchObject({ key: 'nhl:today', busted: false })
+  })
+
+  it('401s without the secret, and leaves the entry alone', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({ 'nhl:today': [1] }) })
+
+    expect((await bust(env, '?key=nhl:today')).status).toBe(401)
+    expect((await bust(env, '?key=nhl:today&secret=wrong')).status).toBe(401)
+    expect(await env.CACHE.get('nhl:today')).not.toBeNull()
+  })
+
+  it('400s without a key', async () => {
+    expect((await bust(makeEnv(), '?secret=test-poll-secret')).status).toBe(400)
+  })
+
+  it('405s on GET, so a stray link or prefetch cannot delete anything', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({ 'nhl:today': [1] }) })
+
+    const res = await worker.fetch(
+      makeRequest('/cache/bust?key=nhl:today&secret=test-poll-secret'), env, makeCtx()
+    )
+
+    expect(res.status).toBe(405)
+    expect(await env.CACHE.get('nhl:today')).not.toBeNull()
+  })
+
+  it('refuses keys that hold real data rather than a cache', async () => {
+    // push:subs is every push subscription; an override is a season someone
+    // pinned deliberately. Busting either destroys data, not staleness.
+    const env = makeEnv({ CACHE: makeFakeCache({
+      'push:subs': [{ endpoint: 'https://push.example/1' }],
+      'config:season:nhl:override': { seasonId: 20262027 },
+    }) })
+
+    for (const key of ['push:subs', 'config:season:nhl:override']) {
+      const res = await bust(env, `?key=${encodeURIComponent(key)}&secret=test-poll-secret`)
+      expect(res.status).toBe(403)
+      expect(await env.CACHE.get(key)).not.toBeNull()
+    }
+  })
+
+  it('does not shadow the read-only /cache/:key route', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({ standings: [{ team: 'CAR' }] }) })
+
+    const res = await worker.fetch(makeRequest('/cache/standings'), env, makeCtx())
+
+    // Dispatched to handleNHL (mocked at the module boundary), not treated
+    // as a bust of a key named "standings".
+    expect(await res.text()).toBe('nhl-handler-called')
+    expect(await env.CACHE.get('standings')).not.toBeNull()
   })
 })
 
