@@ -9,7 +9,7 @@
 // routes) and Tier 3 (AI-calling routes) coverage per the corrected
 // Session 48 scope — see SESSION_48_DECISIONS.md.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeEnv, makeCtx, makeRequest, makeFakeCache, makeFakeRateLimiter, mockFetchWithAI, mockFetchWithFailingAI, aiCalls, aiPrompt } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({

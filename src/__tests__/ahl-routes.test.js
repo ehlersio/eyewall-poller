@@ -6,7 +6,7 @@
 // degradation), adapted to AHL's real shape (see ahl.js's module
 // docstring for the confirmed differences from PWHL this reflects).
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeEnv, makeCtx, makeRequest } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({
