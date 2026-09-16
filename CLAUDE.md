@@ -87,7 +87,7 @@ HockeyTech IDs, including 2026-27 expansion teams: DET=10, HAM=11, LV=12, SJS=13
 
 ## Hard-won lessons (don't relearn these)
 - **`wrangler kv` needs `--remote`** to operate on the namespace the deployed Worker actually reads. Without it, commands silently hit the local/preview namespace.
-- **Cache-busting order matters.** Bust KV cache only *after* confirming the underlying data fix has actually landed — busting first just repopulates the same stale/empty entry.
+- **Cache-busting order matters.** Bust KV cache only *after* confirming the underlying data fix has actually landed — busting first just repopulates the same stale/empty entry. Use `POST /cache/bust?key=<key>&secret=<POLL_SECRET>` (2026-09) rather than `wrangler kv key delete`. This is not hypothetical: the `/players-search-index` paging fix (PR #127) deployed correctly and still served a truncated index — 630 AHL/ECHL players missing from search — until its 6-hour entry was cleared, which at the time was only possible from a terminal.
 - **Don't reconstruct HockeyTech URLs from written notes/descriptions.** Pull the real request from DevTools. Both real production bugs in the season-resolution work traced back to a URL built from memory/notes rather than a captured request.
 - If touching roster/season logic: `fetch_roster()`-style calls need the **literal current/preseason season ID**, not the "most recent regular season" that `resolvePWHLSeason()` deliberately prefers. These two concepts intentionally disagree — don't conflate them.
 

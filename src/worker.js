@@ -21,7 +21,7 @@ import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES } from './ahl.js';
 import { handleECHL, ECHL_TEAM_CODES, fetchECHLNews, pollECHL } from './echl.js';
-import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, sbHeaders, SB_URL, SB_ANON, verifyAdminUser } from './shared.js';
+import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser } from './shared.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
 // GET /config/seasons/comparison, one entry per league. NHL's team_seasons is
@@ -79,6 +79,44 @@ export async function handleRequest(request, env, ctx) {
   // CORS preflight
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders() });
+  }
+
+  // POST /cache/bust?key=<kv key>&secret=<POLL_SECRET>
+  // Drops one KV entry so the next request for it rebuilds from live code.
+  //
+  // Added after a real incident (2026-09): the /players-search-index paging
+  // fix deployed correctly, but that route caches for 6 hours, so production
+  // kept serving the stale, truncated index -- 630 AHL/ECHL players still
+  // missing from search -- until the entry was deleted by hand with
+  // wrangler. There was no way to do that over HTTP.
+  //
+  // Deliberately NOT a general "delete any key" endpoint. Nearly every entry
+  // here is a regenerable cache, but a few are the only copy of real data:
+  // `push:subs` holds every push subscription, and `config:season:*:override`
+  // holds a season override someone set on purpose. Deleting those would
+  // destroy data rather than refresh it, so they're refused outright --
+  // the secret protects against strangers, this protects against a typo.
+  //
+  // Must be matched here, before the fall-through to handleNHL, which owns
+  // the read-only `/cache/:key` route and would otherwise treat "bust" as
+  // the name of a key to look up.
+  if (url.pathname === '/cache/bust') {
+    if (request.method !== 'POST') return errorJson(405, { error: 'POST required' });
+    if (url.searchParams.get('secret') !== env.POLL_SECRET) return unauthorized();
+
+    const key = url.searchParams.get('key');
+    if (!key) return badRequest('key is required');
+    if (key.startsWith('push:') || key.includes(':override')) {
+      return errorJson(403, { error: `${key} holds real data, not a cache -- refusing to delete it` });
+    }
+
+    const existed = (await env.CACHE.get(key)) !== null;
+    if (existed) await env.CACHE.delete(key);
+    return json({
+      key,
+      busted: existed,
+      note: existed ? 'next request for this key rebuilds it' : 'key was not cached',
+    });
   }
 
   // Live-resolved current season for both leagues. Frontend and the
