@@ -936,6 +936,63 @@ describe('GET /probable-starters', () => {
   })
 })
 
+// ── /projected-lines (added alongside eyewall-pipeline's projected_lines.py) ──
+// One read of projected_lines for the team, shaped by summarizeProjectedLines().
+describe('GET /projected-lines', () => {
+  const rows = [
+    { unit_type: 'D', rank: 1, player_ids: [8476958, 8479402], names: ['Jaccob Slavin', 'Jalen Chatfield'], positions: ['D', 'D'], filled_ids: [8479402], basis: 'preseason', basis_game_id: 2026010042, basis_games: 5, generated_at: '2026-09-28T08:00:00Z' },
+    { unit_type: 'F', rank: 1, player_ids: [8478427, 8480039, 8481708], names: ['Sebastian Aho', 'Andrei Svechnikov', 'Seth Jarvis'], positions: ['C', 'L', 'R'], filled_ids: [], basis: 'preseason', basis_game_id: 2026010042, basis_games: 5, generated_at: '2026-09-28T08:00:00Z' },
+  ]
+  const get = (env, qs) => handleNHL(makeRequest(`/projected-lines${qs}`), env, makeCtx(), new URL(`https://example.com/projected-lines${qs}`))
+
+  it('returns the shaped projection for the team; caches 1hr', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => rows })
+
+    const body = await (await get(env, '?team=car')).json()
+
+    expect(body).toMatchObject({ team: 'CAR', basis: 'preseason', basisGameId: 2026010042, basisGames: 5, generatedAt: '2026-09-28T08:00:00Z' })
+    expect(body.lines[0].players.map(p => p.name)).toEqual(['Andrei Svechnikov', 'Sebastian Aho', 'Seth Jarvis'])
+    expect(body.pairs[0].players.find(p => p.id === 8479402).filled).toBe(true)
+    const urls = globalThis.fetch.mock.calls.map(c => c[0])
+    expect(urls).toHaveLength(1)
+    expect(urls[0]).toContain('projected_lines?')
+    expect(urls[0]).toContain('team=eq.CAR')
+    expect(putSpy).toHaveBeenCalledWith('nhl:projected-lines:CAR', JSON.stringify(body), { expirationTtl: 3600 })
+  })
+
+  it('no projection yet: basis null, empty lists, not cached', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+
+    expect(await (await get(env, '?team=CAR')).json()).toEqual({ team: 'CAR', basis: null, basisGameId: null, basisGames: null, generatedAt: null, lines: [], pairs: [] })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+
+  it('rejects a malformed team', async () => {
+    const env = makeEnv({ CACHE: { async get() { return null }, async put() {} } })
+    globalThis.fetch = vi.fn()
+    for (const qs of ['?team=CAROLINA', '?team=C1R', '?team=CAR),team.neq.x']) {
+      expect((await get(env, qs)).status).toBe(400)
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('degrades to unavailable on a Supabase failure and does not cache it', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+
+    const res = await get(env, '?team=CAR')
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ team: 'CAR', basis: null, lines: [], unavailable: true })
+    expect(putSpy).not.toHaveBeenCalled()
+  })
+})
+
 // ── /scorecard (added alongside eyewall-pipeline's prediction_scorecard.py) ──
 describe('GET /scorecard', () => {
   const rows = [

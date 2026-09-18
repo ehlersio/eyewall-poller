@@ -5066,6 +5066,218 @@ exports[`probable-starters > response, upstream requests and KV writes; repeat c
 }
 `;
 
+exports[`projected-lines (no projection yet) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "basis": null,
+    "basisGameId": null,
+    "basisGames": null,
+    "generatedAt": null,
+    "lines": [],
+    "pairs": [],
+    "team": "CAR",
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`projected-lines (no projection yet) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "basis": null,
+    "basisGameId": null,
+    "basisGames": null,
+    "generatedAt": null,
+    "lines": [],
+    "pairs": [],
+    "team": "CAR",
+    "unavailable": true,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`projected-lines (no projection yet) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "basis": null,
+    "basisGameId": null,
+    "basisGames": null,
+    "generatedAt": null,
+    "lines": [],
+    "pairs": [],
+    "team": "CAR",
+  },
+  "kvWrites": [],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/projected_lines?select=unit_type,rank,player_ids,names,positions,filled_ids,basis,basis_game_id,basis_games,generated_at&team=eq.CAR&order=unit_type.asc,rank.asc",
+    },
+  ],
+}
+`;
+
+exports[`projected-lines > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "basis": "last_game",
+    "basisGameId": 2025020499,
+    "basisGames": 1,
+    "generatedAt": "2026-01-15T08:00:00Z",
+    "lines": [
+      {
+        "players": [
+          {
+            "filled": false,
+            "id": 8480039,
+            "name": "Andrei Svechnikov",
+            "pos": "L",
+          },
+          {
+            "filled": false,
+            "id": 8478427,
+            "name": "Sebastian Aho",
+            "pos": "C",
+          },
+          {
+            "filled": false,
+            "id": 8481708,
+            "name": "Seth Jarvis",
+            "pos": "R",
+          },
+        ],
+        "rank": 1,
+      },
+    ],
+    "pairs": [
+      {
+        "players": [
+          {
+            "filled": false,
+            "id": 8476958,
+            "name": "Jaccob Slavin",
+            "pos": "D",
+          },
+          {
+            "filled": true,
+            "id": 8479402,
+            "name": "Jalen Chatfield",
+            "pos": "D",
+          },
+        ],
+        "rank": 1,
+      },
+    ],
+    "team": "CAR",
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:projected-lines:CAR",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`projected-lines > Supabase unavailable 1`] = `
+{
+  "body": {
+    "basis": null,
+    "basisGameId": null,
+    "basisGames": null,
+    "generatedAt": null,
+    "lines": [],
+    "pairs": [],
+    "team": "CAR",
+    "unavailable": true,
+  },
+  "kvWrites": [],
+  "status": 200,
+}
+`;
+
+exports[`projected-lines > missing or invalid param 1`] = `
+{
+  "body": {
+    "error": "invalid team",
+  },
+  "status": 400,
+  "upstream": [],
+}
+`;
+
+exports[`projected-lines > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "basis": "last_game",
+    "basisGameId": 2025020499,
+    "basisGames": 1,
+    "generatedAt": "2026-01-15T08:00:00Z",
+    "lines": [
+      {
+        "players": [
+          {
+            "filled": false,
+            "id": 8480039,
+            "name": "Andrei Svechnikov",
+            "pos": "L",
+          },
+          {
+            "filled": false,
+            "id": 8478427,
+            "name": "Sebastian Aho",
+            "pos": "C",
+          },
+          {
+            "filled": false,
+            "id": 8481708,
+            "name": "Seth Jarvis",
+            "pos": "R",
+          },
+        ],
+        "rank": 1,
+      },
+    ],
+    "pairs": [
+      {
+        "players": [
+          {
+            "filled": false,
+            "id": 8476958,
+            "name": "Jaccob Slavin",
+            "pos": "D",
+          },
+          {
+            "filled": true,
+            "id": 8479402,
+            "name": "Jalen Chatfield",
+            "pos": "D",
+          },
+        ],
+        "rank": 1,
+      },
+    ],
+    "team": "CAR",
+  },
+  "kvWrites": [
+    {
+      "key": "nhl:projected-lines:CAR",
+      "ttl": 3600,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/projected_lines?select=unit_type,rank,player_ids,names,positions,filled_ids,basis,basis_game_id,basis_games,generated_at&team=eq.CAR&order=unit_type.asc,rank.asc",
+    },
+  ],
+}
+`;
+
 exports[`push subscriptions > subscribe upserts Web Push and iOS subscribers; unsubscribe removes them 1`] = `
 {
   "afterSubscribe": [
