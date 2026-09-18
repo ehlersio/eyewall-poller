@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix } from './shared.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { fetchTradeTree } from './trades.js';
@@ -238,7 +238,7 @@ function eloWinProb(carRating, oppRating, isHome, neutral = false) {
 // team_elo_ratings (see above); everything else here is descriptive
 // context for the AI narrative and the Pythagorean expected-score display
 // — last season's box-score rates, since this season's don't exist yet.
-async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey, neutral = false) {
+async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey, neutral = false, locale = 'en') {
   const prior = priorSeason(tc.season);
 
   let teamSeasonRows, eloRatings;
@@ -311,7 +311,7 @@ Write the analysis now. Mention the single most decisive factor from last season
   let aiResponse;
   try {
     aiResponse = await generateText(env, {
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: 'user', content: localizePrompt(prompt, locale) }],
     });
   } catch (e) {
     console.error('buildPreseasonFallback AI error:', e);
@@ -2554,12 +2554,16 @@ Only reference the two teams named above and the numbers given -- no player name
   if (url.pathname === '/game-predictions') {
     const gameId = url.searchParams.get('gameId');
     if (!gameId) return badRequest('gameId required');
+    // One row per (game_id, locale) since eyewall-pipeline's
+    // docs/session_locale_predictions.sql -- without the filter, limit=1
+    // would hand back whichever language Postgres returned first.
+    const locale = requestLocale(url);
 
-    return cachedJson(env, `nhl:game-predictions:${gameId}`, 1800, async () => {
+    return cachedJson(env, `nhl:game-predictions:${gameId}${localeKeySuffix(locale)}`, 1800, async () => {
       let rows;
       try {
         rows = await sbRowsOrThrow(
-          `game_predictions?game_id=eq.${gameId}` +
+          `game_predictions?game_id=eq.${gameId}&locale=eq.${locale}` +
           `&select=matchup_text,prediction_text,generated_at&limit=1`
         );
       } catch {
@@ -3015,7 +3019,9 @@ Only reference the two teams named above and the numbers given -- no player name
     // sees for that same game. Same fix /summary/narrative already has
     // (`narrative:${period}:${gameId}:${carAbbrKey}`) -- this route just
     // hadn't been updated to match when this app went multi-team.
-    const kvKey = `prediction:${gameId}:${tc.abbr}`;
+    // French gets its own key (':fr'); English keeps the original one.
+    const locale = requestLocale(url);
+    const kvKey = `prediction:${gameId}:${tc.abbr}${localeKeySuffix(locale)}`;
 
     // Serve from cache if available and not forced
     if (!forceRegen) {
@@ -3050,7 +3056,7 @@ Only reference the two teams named above and the numbers given -- no player name
       // here. Route to the preseason fallback instead of blocking the
       // user -- it needs no current-season data at all now (Elo's own
       // rating, carried and regressed pipeline-side, works from game 1).
-      return buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey, neutral);
+      return buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey, neutral, locale);
     }
 
     // Find standings for both teams
@@ -3207,7 +3213,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     let aiResponse;
     try {
       aiResponse = await generateText(env, {
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: localizePrompt(prompt, locale) }],
       });
     } catch (e) {
       console.error('prediction/analyze AI error:', e);

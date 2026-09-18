@@ -32,7 +32,7 @@
  *     shots on goal. /prediction drops the Corsi term entirely.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, subId, deriveGameStatus, normalizeLink, recordHealth } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, subId, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix } from './shared.js';
 
 // Both leagues' regular season starts early October and playoffs run
 // through June.
@@ -992,7 +992,9 @@ export function createHockeyTechLeague(cfg) {
       if (!gameId) return badRequest('gameId required');
       const forceRegen = url.searchParams.get('force') === '1';
 
-      const kvKey = `${key}:prediction:${gameId}`;
+      // French gets its own key (':fr'); English keeps the original one.
+      const locale = requestLocale(url);
+      const kvKey = `${key}:prediction:${gameId}${localeKeySuffix(locale)}`;
       if (!forceRegen) {
         const cached = await kvGet(env, kvKey);
         if (cached) return json(cached);
@@ -1112,7 +1114,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       let narrative = '';
       try {
         const aiResponse = await generateText(env, {
-          messages: [{ role: 'user', content: prompt }],
+          messages: [{ role: 'user', content: localizePrompt(prompt, locale) }],
         });
         narrative = aiResponse.response?.trim() || '';
       } catch (e) {

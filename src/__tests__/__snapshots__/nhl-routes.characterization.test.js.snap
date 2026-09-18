@@ -2458,6 +2458,62 @@ exports[`game-log > response, upstream requests and KV writes; repeat call 1`] =
 }
 `;
 
+exports[`game-predictions (French) > NHL API and AI unavailable 1`] = `
+{
+  "body": [
+    {
+      "generated_at": "2026-01-15T12:00:00Z",
+      "matchup_text": "Matchup text.",
+      "prediction_text": "Prediction text.",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:game-predictions:2025020500:fr",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`game-predictions (French) > Supabase unavailable 1`] = `
+{
+  "body": [],
+  "kvWrites": [
+    {
+      "key": "nhl:game-predictions:2025020500:fr",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+}
+`;
+
+exports[`game-predictions (French) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": [
+    {
+      "generated_at": "2026-01-15T12:00:00Z",
+      "matchup_text": "Matchup text.",
+      "prediction_text": "Prediction text.",
+    },
+  ],
+  "kvWrites": [
+    {
+      "key": "nhl:game-predictions:2025020500:fr",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_predictions?game_id=eq.2025020500&locale=eq.fr&select=matchup_text,prediction_text,generated_at&limit=1",
+    },
+  ],
+}
+`;
+
 exports[`game-predictions > NHL API and AI unavailable 1`] = `
 {
   "body": [
@@ -2518,7 +2574,7 @@ exports[`game-predictions > response, upstream requests and KV writes; repeat ca
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_predictions?game_id=eq.2025020500&select=matchup_text,prediction_text,generated_at&limit=1",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_predictions?game_id=eq.2025020500&locale=eq.en&select=matchup_text,prediction_text,generated_at&limit=1",
     },
   ],
 }
@@ -4814,6 +4870,133 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
 }
 `;
 
+exports[`prediction/analyze (in season, French) > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "Game not found in schedule",
+  },
+  "kvWrites": [],
+  "status": 404,
+}
+`;
+
+exports[`prediction/analyze (in season, French) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: team_elo_ratings?team=in.(CAR,BOS)&select=team,rating",
+  },
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+  ],
+  "status": 502,
+}
+`;
+
+exports[`prediction/analyze (in season, French) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "carCF": "54.0",
+    "carStreak": "W3",
+    "carWinPct": 62,
+    "correction": "elo",
+    "corsiCaveat": "All-situations shot-attempt share (goals+shots+blocked+missed), not 5-on-5 filtered.",
+    "corsiForPct": {
+      "car": 54,
+      "opp": 49,
+    },
+    "expCar": 3.2,
+    "expOpp": 2.6,
+    "gameId": "2025020500",
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "h2hRecord": "1-1",
+    "isHome": true,
+    "isPlayoff": false,
+    "narrative": "Fixture NHL narrative.",
+    "oppAbbr": "BOS",
+    "oppStreak": "L1",
+    "regime": "in-season",
+  },
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+    {
+      "key": "prediction:2025020500:CAR:fr",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/club-schedule-season/CAR/20252026",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_seasons?team=in.(CAR,BOS)&season=eq.20252026&game_type=eq.2&select=team,corsi_for_pct,corsi_for_pct_5v5",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_elo_ratings?team=in.(CAR,BOS)&select=team,rating",
+    },
+    {
+      "aiPrompt": "You are EyeWall Analytics, a Carolina Hurricanes hockey analytics assistant. Write a sharp, data-driven pre-game analysis for Carolina Hurricanes fans. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener.
+
+Game: CAR (HOME) vs BOS
+Context: Regular Season
+
+CAR stats:
+- Record: 25-10-5 (55 pts)
+- GF/GA per game: 3.25 / 2.50
+- PP%: 24.1% · PK%: 82.3%
+- SOG/GP: 31.2 for / 27.5 against
+- Corsi (real shot-attempt share): 54.0%
+- Current streak: W3
+
+BOS stats:
+- Record: 20-15-5 (45 pts)
+- GF/GA per game: 2.88 / 2.95
+- PP%: 22.0% · PK%: 82.3%
+- SOG/GP: 31.2 for / 27.5 against
+- Corsi (real shot-attempt share): 49.0%
+- Current streak: L1
+
+Head-to-head this season: CAR 1-1
+Expected score (Pythagorean): CAR 3.2 - BOS 2.6
+Model win probability: CAR 62%
+
+Note: the Corsi figure above is All-situations shot-attempt share (goals+shots+blocked+missed), not 5-on-5 filtered. Describe it as "shot-attempt share" or "Corsi," accurately reflecting that scope.
+
+Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.
+
+Réponds ENTIÈREMENT en français canadien (québécois) — le français utilisé par les
+commentateurs francophones de la LNH et de la LPHF. N'utilise aucun mot anglais, sauf
+les noms propres (joueurs, équipes, villes) et les abréviations statistiques avancées
+(xG, RAPM, WAR, GSAX, Corsi, Fenwick, CF%, FF%), qui doivent rester exactement comme
+fournies dans les données.
+
+Vocabulaire de hockey à utiliser (ne traduis pas ces termes autrement) :
+- avantage numérique = power play · désavantage numérique = penalty kill
+- échec avant = forecheck · échec arrière = backcheck
+- tir au but = shot on goal · tir raté = missed shot · tir bloqué = blocked shot
+- mise en échec = hit/check · mise au jeu = faceoff
+- prolongation = overtime · fusillade = shootout
+- gardien de but = goalie · défenseur = defenseman · attaquant = forward
+- ailier = winger · centre = center (position) · recrue = rookie
+- but = goal · aide / mention d'aide = assist · trio = forward line · paire = defense pair
+- but en avantage numérique = power-play goal · but en désavantage numérique = shorthanded goal
+- séries (éliminatoires) = playoffs · saison régulière = regular season
+
+Les noms de joueurs, d'équipes et de villes ne doivent jamais être traduits ou modifiés.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
 exports[`prediction/analyze (no gameId) > NHL API and AI unavailable 1`] = `
 {
   "body": {
@@ -4930,6 +5113,119 @@ Expected score (Pythagorean, from last season's rates): CAR 3.2 - BOS 2.6
 Model win probability (Elo): CAR 62%
 
 Write the analysis now. Mention the single most decisive factor from last season and a concrete expected-score range.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
+exports[`prediction/analyze (preseason fallback,… > NHL API and AI unavailable 1`] = `
+{
+  "body": {
+    "error": "Game not found in schedule",
+  },
+  "kvWrites": [],
+  "status": 404,
+}
+`;
+
+exports[`prediction/analyze (preseason fallback,… > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503: team_seasons?team=in.(CAR,BOS)&season=eq.20242025&game_type=eq.2&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,corsi_for_pct,corsi_for_pct_5v5",
+  },
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+  ],
+  "status": 502,
+}
+`;
+
+exports[`prediction/analyze (preseason fallback,… > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "carCF": "54.0",
+    "carStreak": "N/A (preseason)",
+    "carWinPct": 62,
+    "correction": "elo",
+    "corsiCaveat": "All-situations shot-attempt share from 20242025, Carolina Hurricanes's last completed season — not this season's form.",
+    "corsiForPct": {
+      "car": 54,
+      "opp": 49,
+    },
+    "dataSeason": 20242025,
+    "expCar": 3.2,
+    "expOpp": 2.6,
+    "gameId": "2025020500",
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "h2hRecord": "no games played yet this season",
+    "isFallback": true,
+    "isHome": true,
+    "isPlayoff": false,
+    "narrative": "Fixture NHL narrative.",
+    "oppAbbr": "BOS",
+    "oppStreak": "N/A (preseason)",
+    "regime": "preseason",
+  },
+  "kvWrites": [
+    {
+      "key": "schedule:CAR:20252026",
+      "ttl": 600,
+    },
+    {
+      "key": "prediction:2025020500:CAR:fr",
+      "ttl": 86400,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://api-web.nhle.com/v1/club-schedule-season/CAR/20252026",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_seasons?team=in.(CAR,BOS)&season=eq.20242025&game_type=eq.2&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,corsi_for_pct,corsi_for_pct_5v5",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/team_elo_ratings?team=in.(CAR,BOS)&select=team,rating",
+    },
+    {
+      "aiPrompt": "You are EyeWall Analytics, a Carolina Hurricanes hockey analytics assistant. Write a sharp, data-driven PRESEASON analysis for Carolina Hurricanes fans — no games have been played yet this season. The win probability below is from a live-updated Elo rating (carries over from last season, so it already reflects each team's recent trajectory); everything else is last season's (20242025) final numbers for context. 2-3 sentences only. Be specific about the numbers and be clear this is a preseason estimate, not current form. No filler. No "In this matchup" opener.
+
+Game: CAR (HOME) vs BOS
+Context: Preseason estimate
+
+CAR last season (20242025): 55 pts, GF/GA per game: 3.25 / 2.50, PP%: 24.1%
+BOS last season (20242025): 45 pts, GF/GA per game: 2.90 / 2.95, PP%: 22.0%
+
+Expected score (Pythagorean, from last season's rates): CAR 3.2 - BOS 2.6
+Model win probability (Elo): CAR 62%
+
+Write the analysis now. Mention the single most decisive factor from last season and a concrete expected-score range.
+
+Réponds ENTIÈREMENT en français canadien (québécois) — le français utilisé par les
+commentateurs francophones de la LNH et de la LPHF. N'utilise aucun mot anglais, sauf
+les noms propres (joueurs, équipes, villes) et les abréviations statistiques avancées
+(xG, RAPM, WAR, GSAX, Corsi, Fenwick, CF%, FF%), qui doivent rester exactement comme
+fournies dans les données.
+
+Vocabulaire de hockey à utiliser (ne traduis pas ces termes autrement) :
+- avantage numérique = power play · désavantage numérique = penalty kill
+- échec avant = forecheck · échec arrière = backcheck
+- tir au but = shot on goal · tir raté = missed shot · tir bloqué = blocked shot
+- mise en échec = hit/check · mise au jeu = faceoff
+- prolongation = overtime · fusillade = shootout
+- gardien de but = goalie · défenseur = defenseman · attaquant = forward
+- ailier = winger · centre = center (position) · recrue = rookie
+- but = goal · aide / mention d'aide = assist · trio = forward line · paire = defense pair
+- but en avantage numérique = power-play goal · but en désavantage numérique = shorthanded goal
+- séries (éliminatoires) = playoffs · saison régulière = regular season
+
+Les noms de joueurs, d'équipes et de villes ne doivent jamais être traduits ou modifiés.",
       "maxTokens": 1024,
       "method": "POST",
       "url": "https://openrouter.ai/api/v1/chat/completions",

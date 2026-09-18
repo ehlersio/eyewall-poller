@@ -34,6 +34,7 @@ vi.mock('../seasons.js', async (importOriginal) => {
 })
 
 import { handleNHL } from '../nhl.js'
+import { FRENCH_INSTRUCTION } from '../shared.js'
 
 const SEASON    = 20252026
 const PRIOR     = 20242025
@@ -346,6 +347,7 @@ const ROUTES = [
   { name: 'team-seasons/head-to-head/narrative (incomplete body)', method: 'POST', path: '/team-seasons/head-to-head/narrative', body: { teamA: 'CAR' } },
   { name: 'power-rankings',                  path: '/power-rankings?team=CAR&limit=1' },
   { name: 'game-predictions',                path: `/game-predictions?gameId=${GAME_ID}`, missing: '/game-predictions' },
+  { name: 'game-predictions (French)',       path: `/game-predictions?gameId=${GAME_ID}&locale=fr` },
   { name: 'game-summary',                    path: `/game-summary?gameId=${GAME_ID - 1}&team=car&locale=fr`, missing: `/game-summary?gameId=${GAME_ID - 1}` },
   { name: 'player-scouting',                 path: `/player-scouting?playerId=${PLAYER_ID}`, missing: '/player-scouting' },
   { name: 'player-results-vs-process',       path: `/player-results-vs-process?playerId=${PLAYER_ID}&locale=fr`, missing: '/player-results-vs-process' },
@@ -373,6 +375,8 @@ const ROUTES = [
   { name: 'prediction/analyze (force regenerate)', path: `/prediction/analyze?gameId=${GAME_ID}&team=CAR&force=1`, kv: { standings: STANDINGS_NOW }, notCached: true },
   { name: 'prediction/analyze (game not in schedule)', path: '/prediction/analyze?gameId=1&team=CAR', kv: { standings: STANDINGS_NOW } },
   { name: 'prediction/analyze (no gameId)',  path: '/prediction/analyze' },
+  { name: 'prediction/analyze (in season, French)', path: `/prediction/analyze?gameId=${GAME_ID}&team=CAR&locale=fr`, kv: { standings: STANDINGS_NOW } },
+  { name: 'prediction/analyze (preseason fallback, French)', path: `/prediction/analyze?gameId=${GAME_ID}&team=CAR&locale=fr`, kv: { standings: STANDINGS_LAST_SEASON } },
   { name: 'push/test (no secret)',           path: '/push/test' },
   { name: 'summary/narrative (game)', method: 'POST', path: `/summary/narrative?gameId=${GAME_ID}&period=game&carAbbr=car`, body: NARRATIVE_BODY },
   { name: 'summary/narrative (period)', method: 'POST', path: `/summary/narrative?gameId=${GAME_ID}&period=2&carAbbr=CAR`, body: NARRATIVE_BODY },
@@ -472,6 +476,32 @@ describe('AI unavailable on its own', () => {
     installUpstream({ failHosts: ['openrouter'] })
     const { env, kvWrites } = makeRecordingEnv({ standings })
     expect({ ...(await callRoute(env, `/prediction/analyze?gameId=${GAME_ID}&team=CAR`)), kvWrites }).toMatchSnapshot()
+  })
+})
+
+// ?locale=fr: the AI is told to answer in French, and the result is cached
+// under its own ':fr' key so it never replaces (or is served as) English.
+describe('prediction/analyze locale', () => {
+  it.each([
+    ['in season', STANDINGS_NOW],
+    ['preseason fallback', STANDINGS_LAST_SEASON],
+  ])('%s: French prompt and cache key; English unchanged', async (_name, standings) => {
+    installUpstream()
+    const { env, kvWrites } = makeRecordingEnv({ standings })
+    const aiPrompts = () => upstreamCalls().filter(c => c.aiPrompt).map(c => c.aiPrompt)
+
+    const fr = await callRoute(env, `/prediction/analyze?gameId=${GAME_ID}&team=CAR&locale=fr`)
+    expect(fr.status).toBe(200)
+    expect(aiPrompts()).toHaveLength(1)
+    expect(aiPrompts()[0]).toContain(FRENCH_INSTRUCTION)
+    expect(kvWrites.map(w => w.key)).toContain(`prediction:${GAME_ID}:CAR:fr`)
+
+    globalThis.fetch.mockClear()
+    const en = await callRoute(env, `/prediction/analyze?gameId=${GAME_ID}&team=CAR`)
+    expect(en.status).toBe(200)
+    expect(aiPrompts()).toHaveLength(1) // not served the cached French one
+    expect(aiPrompts()[0]).not.toContain(FRENCH_INSTRUCTION)
+    expect(kvWrites.map(w => w.key)).toContain(`prediction:${GAME_ID}:CAR`)
   })
 })
 

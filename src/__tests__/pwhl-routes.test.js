@@ -20,6 +20,7 @@ vi.mock('../seasons.js', () => ({
 import { getAllPWHLSeasonTypes } from '../seasons.js'
 
 import { handlePWHL, fetchPWHLNews } from '../pwhl.js'
+import { FRENCH_INSTRUCTION } from '../shared.js'
 
 beforeEach(() => {
   globalThis.fetch = vi.fn()
@@ -1314,6 +1315,37 @@ describe('GET /pwhl/prediction', () => {
     expect(body.corsiForPct).toEqual({ home: 58.9, away: 44.3 })
     expect(body.corsiCaveat).toMatch(/5-on-5 shot-attempt share/i)
     expect(body.corsiCaveat).not.toMatch(/not 5-on-5/i)
+  })
+
+  it('locale=fr asks for French and caches under its own key', async () => {
+    const env = makeEnv()
+    mockSupabaseFlow({
+      game: { game_id: 210, season_id: 8, home_team_id: 3, away_team_id: 5 },
+      teams: [homeTeamRow, awayTeamRow],
+      seasonGames: [],
+      aiText: 'Montréal devrait l\'emporter.',
+    })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/prediction?gameId=210&locale=fr'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210&locale=fr')
+    )
+    expect(res.status).toBe(200)
+    expect((await res.json()).narrative).toBe('Montréal devrait l\'emporter.')
+    expect(aiPrompt(globalThis.fetch)[0].content).toContain(FRENCH_INSTRUCTION)
+    expect(await env.CACHE.get('pwhl:prediction:210:fr')).not.toBeNull()
+    expect(await env.CACHE.get('pwhl:prediction:210')).toBeNull()
+  })
+
+  it('English requests never get the French instruction', async () => {
+    const env = makeEnv()
+    mockSupabaseFlow({
+      game: { game_id: 210, season_id: 8, home_team_id: 3, away_team_id: 5 },
+      teams: [homeTeamRow, awayTeamRow],
+      seasonGames: [],
+    })
+    await handlePWHL(
+      makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
+    )
+    expect(aiPrompt(globalThis.fetch)[0].content).not.toContain(FRENCH_INSTRUCTION)
   })
 
   it('resolves playoff status via getAllPWHLSeasonTypes and skips the points term', async () => {
