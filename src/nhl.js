@@ -13,6 +13,7 @@ import { summarizeScratches } from './scratches.js';
 import { summarizeNextGames, isPlayoffOddsStale } from './playoffOdds.js';
 import { summarizeInjuryLeague } from './injuryImpact.js';
 import { summarizeStarters } from './probableStarters.js';
+import { summarizeProjectedLines } from './projectedLines.js';
 import { summarizeScorecard } from './scorecard.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
@@ -3651,6 +3652,40 @@ async function divisionOdds(env, team, latest) {
 
       const data = { gameId: Number(gameId), ...summarizeStarters(rows) };
       return Object.keys(data.teams).length ? data : json(data); // an empty result isn't cached
+    });
+  }
+
+  // ── Projected lines — who plays with whom in a team's next game ──────────────
+  // GET /projected-lines?team=CAR
+  // From eyewall-pipeline's projected_lines.py (nightly: each team's projected
+  // forward lines and D pairs for its next game -- last game's pairings
+  // in-season, pooled preseason pairings before a team's first game; see that
+  // module and its docs/projected_lines_backtest_results.md). Response:
+  // { team, basis: 'last_game' | 'preseason' | null, basisGameId, basisGames,
+  // generatedAt, lines, pairs } -- see summarizeProjectedLines(),
+  // src/projectedLines.js. Different from /team-lines (the season's most-used
+  // units, with xGF%). 1hr KV; neither a failed read (`unavailable: true`) nor
+  // an empty result (no projection yet) is cached, so the first nightly write
+  // shows up at once. `team` is validated before it's interpolated into the
+  // PostgREST filter.
+  if (url.pathname === '/projected-lines') {
+    const team = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
+    if (!/^[A-Z]{2,3}$/.test(team)) {
+      return badRequest('invalid team');
+    }
+    return cachedJson(env, `nhl:projected-lines:${team}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `projected_lines?select=unit_type,rank,player_ids,names,positions,filled_ids,basis,basis_game_id,basis_games,generated_at` +
+          `&team=eq.${team}&order=unit_type.asc,rank.asc`
+        );
+      } catch {
+        return json({ team, ...summarizeProjectedLines([]), unavailable: true });
+      }
+
+      const data = { team, ...summarizeProjectedLines(rows) };
+      return data.basis ? data : json(data); // an empty result isn't cached
     });
   }
 

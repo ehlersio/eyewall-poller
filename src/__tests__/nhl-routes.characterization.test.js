@@ -154,6 +154,11 @@ function supabaseRows(table, params) {
       return [{ season: SEASON, team: 'CAR', games_played: 40, man_games_lost: 12, war_lost: 0.8, players_injured: 2, rank_man_games: 20, rank_war_lost: 18, players: [], updated_at: '2026-01-15T08:00:00Z' }]
     case 'goalie_start_probs':
       return [{ team: 'CAR', goalie_id: GOALIE_ID, goalie_name: 'Pyotr Kochetkov', start_prob: 0.7, factors: {}, game_date: '2026-01-16', run_date: '2026-01-15' }]
+    case 'projected_lines':
+      return [
+        { unit_type: 'F', rank: 1, player_ids: [8478427, 8480039, 8481708], names: ['Sebastian Aho', 'Andrei Svechnikov', 'Seth Jarvis'], positions: ['C', 'L', 'R'], filled_ids: [], basis: 'last_game', basis_game_id: GAME_ID - 1, basis_games: 1, generated_at: '2026-01-15T08:00:00Z' },
+        { unit_type: 'D', rank: 1, player_ids: [8476958, 8479402], names: ['Jaccob Slavin', 'Jalen Chatfield'], positions: ['D', 'D'], filled_ids: [8479402], basis: 'last_game', basis_game_id: GAME_ID - 1, basis_games: 1, generated_at: '2026-01-15T08:00:00Z' },
+      ]
     case 'prediction_scorecard':
       return [{ model: 'game_winner', kind: 'live', period: '2025-26', status: 'ok', n: 500, accuracy: 0.58, brier: 0.24, log_loss: 0.67, baseline: 0.5, calibration: [], recent: [], note: null, updated_at: '2026-01-15T08:00:00Z' }]
     case 'team_elo_ratings':
@@ -385,6 +390,8 @@ const ROUTES = [
   { name: 'injury-impact (no rows yet)',     path: '/injury-impact?team=CAR', overrides: { team_injury_impact: [] }, notCached: true },
   { name: 'probable-starters',               path: `/probable-starters?game=${GAME_ID}`, missing: '/probable-starters?game=123' },
   { name: 'probable-starters (not in the window yet)', path: `/probable-starters?game=${GAME_ID}`, overrides: { goalie_start_probs: [] }, notCached: true },
+  { name: 'projected-lines',                 path: '/projected-lines?team=car', missing: '/projected-lines?team=CAROLINA' },
+  { name: 'projected-lines (no projection yet)', path: '/projected-lines?team=CAR', overrides: { projected_lines: [] }, notCached: true },
   { name: 'scorecard',                       path: '/scorecard' },
   { name: 'scorecard (empty table)',         path: '/scorecard', overrides: { prediction_scorecard: [] }, notCached: true },
   { name: 'elo/ratings',                     path: '/elo/ratings' },
