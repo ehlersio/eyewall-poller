@@ -177,6 +177,52 @@ export async function checkAiRateLimit(env, request, routeName) {
 // reason: it's the literal field OpenRouter's API expects, and keeping it
 // unchanged from the original env.AI.run() call sites is what makes the
 // swap a true one-liner per site.
+// ── French/English for on-demand AI text ──────────────────────
+// The Worker's AI routes (/prediction/analyze, /pwhl/prediction) generate on
+// demand, so they localize here rather than reading pipeline-written rows.
+// FRENCH_INSTRUCTION mirrors eyewall-pipeline's ai_persona.py
+// STICKS_SYSTEM_PROMPT_FR_ADDENDUM -- same Québécois hockey glossary, same
+// rule that names and advanced-stat abbreviations stay untouched -- so a
+// Worker-generated prediction reads like the pipeline's French rows.
+// Keep the two in step.
+export const FRENCH_INSTRUCTION = `Réponds ENTIÈREMENT en français canadien (québécois) — le français utilisé par les
+commentateurs francophones de la LNH et de la LPHF. N'utilise aucun mot anglais, sauf
+les noms propres (joueurs, équipes, villes) et les abréviations statistiques avancées
+(xG, RAPM, WAR, GSAX, Corsi, Fenwick, CF%, FF%), qui doivent rester exactement comme
+fournies dans les données.
+
+Vocabulaire de hockey à utiliser (ne traduis pas ces termes autrement) :
+- avantage numérique = power play · désavantage numérique = penalty kill
+- échec avant = forecheck · échec arrière = backcheck
+- tir au but = shot on goal · tir raté = missed shot · tir bloqué = blocked shot
+- mise en échec = hit/check · mise au jeu = faceoff
+- prolongation = overtime · fusillade = shootout
+- gardien de but = goalie · défenseur = defenseman · attaquant = forward
+- ailier = winger · centre = center (position) · recrue = rookie
+- but = goal · aide / mention d'aide = assist · trio = forward line · paire = defense pair
+- but en avantage numérique = power-play goal · but en désavantage numérique = shorthanded goal
+- séries (éliminatoires) = playoffs · saison régulière = regular season
+
+Les noms de joueurs, d'équipes et de villes ne doivent jamais être traduits ou modifiés.`;
+
+// ?locale= -> 'fr' | 'en'. Anything missing or unrecognized is 'en', same
+// posture as the pipeline-backed routes' inline locale handling.
+export function requestLocale(url) {
+  return url.searchParams.get('locale') === 'fr' ? 'fr' : 'en';
+}
+
+// Appends the French instruction for locale 'fr'; English prompts are
+// returned unchanged.
+export function localizePrompt(prompt, locale) {
+  return locale === 'fr' ? `${prompt}\n\n${FRENCH_INSTRUCTION}` : prompt;
+}
+
+// Cache-key suffix: '' for English, so every English KV key (and the
+// frontend's /cache/ lookups of them) stays exactly as it was.
+export function localeKeySuffix(locale) {
+  return locale === 'fr' ? ':fr' : '';
+}
+
 export async function generateText(env, { messages, max_tokens = 1024 } = {}) {
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',

@@ -1850,6 +1850,102 @@ exports[`ahl > poll > prunes subscriptions whose push endpoint has expired 1`] =
 ]
 `;
 
+exports[`ahl > prediction (French) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`ahl > prediction (French) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "awayAbbr": "ROC",
+    "awayStreak": "L1",
+    "awayTeamId": 323,
+    "awayWinPct": 0,
+    "expAway": 2.6,
+    "expHome": 3.2,
+    "gameId": 1028992,
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "h2hRecord": "2-1",
+    "homeAbbr": "TOR",
+    "homeStreak": "W1",
+    "homeTeamId": 335,
+    "homeWinPct": 100,
+    "isPlayoff": false,
+    "narrative": "Fixture AHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "ahl:prediction:1028992:fr",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_id=eq.1028992&select=game_id,season_id,home_team_id,away_team_id",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?team_id=in.(335,323)&season_id=eq.90&season_type=eq.regular",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+    },
+    {
+      "aiPrompt": "You are EyeWall Analytics, an AHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. Shot-attempt/possession data is not available for AHL -- do not reference Corsi, possession, or shot-attempt share.
+
+Game: TOR (HOME) vs ROC (AWAY)
+Context: Regular Season
+
+TOR stats:
+- Record: 24-12-3-1 (52 pts)
+- GF/GA per game: 3.25 / 2.63
+- PP%: 21.0% · PK%: 83.0%
+- Current streak: W1
+
+ROC stats:
+- Record: 18-17-4-1 (41 pts)
+- GF/GA per game: 2.80 / 2.95
+- PP%: 17.0% · PK%: 80.0%
+- Current streak: L1
+
+Head-to-head this season: TOR 2-1
+Expected score (Pythagorean): TOR 3.2 - ROC 2.6
+Model win probability: TOR 100%
+
+Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.
+
+Réponds ENTIÈREMENT en français canadien (québécois) — le français utilisé par les
+commentateurs francophones de la LNH et de la LPHF. N'utilise aucun mot anglais, sauf
+les noms propres (joueurs, équipes, villes) et les abréviations statistiques avancées
+(xG, RAPM, WAR, GSAX, Corsi, Fenwick, CF%, FF%), qui doivent rester exactement comme
+fournies dans les données.
+
+Vocabulaire de hockey à utiliser (ne traduis pas ces termes autrement) :
+- avantage numérique = power play · désavantage numérique = penalty kill
+- échec avant = forecheck · échec arrière = backcheck
+- tir au but = shot on goal · tir raté = missed shot · tir bloqué = blocked shot
+- mise en échec = hit/check · mise au jeu = faceoff
+- prolongation = overtime · fusillade = shootout
+- gardien de but = goalie · défenseur = defenseman · attaquant = forward
+- ailier = winger · centre = center (position) · recrue = rookie
+- but = goal · aide / mention d'aide = assist · trio = forward line · paire = defense pair
+- but en avantage numérique = power-play goal · but en désavantage numérique = shorthanded goal
+- séries (éliminatoires) = playoffs · saison régulière = regular season
+
+Les noms de joueurs, d'équipes et de villes ne doivent jamais être traduits ou modifiés.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
+`;
+
 exports[`ahl > prediction > Supabase unavailable 1`] = `
 {
   "body": {
@@ -4939,6 +5035,102 @@ exports[`echl > poll > prunes subscriptions whose push endpoint has expired 1`] 
   "https://push.example/away-no-opp-goals",
   "https://push.example/nhl",
 ]
+`;
+
+exports[`echl > prediction (French) > Supabase unavailable 1`] = `
+{
+  "body": {
+    "error": "Supabase 503",
+  },
+  "status": 502,
+}
+`;
+
+exports[`echl > prediction (French) > response, upstream requests and KV writes; repeat call 1`] = `
+{
+  "body": {
+    "awayAbbr": "TR",
+    "awayStreak": "L1",
+    "awayTeamId": 99,
+    "awayWinPct": 0,
+    "expAway": 2.6,
+    "expHome": 3.2,
+    "gameId": 1028992,
+    "generatedAt": "2026-01-15T23:30:00.000Z",
+    "h2hRecord": "2-1",
+    "homeAbbr": "FLA",
+    "homeStreak": "W1",
+    "homeTeamId": 8,
+    "homeWinPct": 100,
+    "isPlayoff": false,
+    "narrative": "Fixture ECHL narrative.",
+  },
+  "kvWrites": [
+    {
+      "key": "echl:prediction:1028992:fr",
+      "ttl": 1800,
+    },
+  ],
+  "status": 200,
+  "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_id=eq.1028992&select=game_id,season_id,home_team_id,away_team_id",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?team_id=in.(8,99)&season_id=eq.73&season_type=eq.regular",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+    },
+    {
+      "aiPrompt": "You are EyeWall Analytics, an ECHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. Shot-attempt/possession data is not available for ECHL -- do not reference Corsi, possession, or shot-attempt share.
+
+Game: FLA (HOME) vs TR (AWAY)
+Context: Regular Season
+
+FLA stats:
+- Record: 24-12-3-1 (52 pts)
+- GF/GA per game: 3.25 / 2.63
+- PP%: 21.0% · PK%: 83.0%
+- Current streak: W1
+
+TR stats:
+- Record: 18-17-4-1 (41 pts)
+- GF/GA per game: 2.80 / 2.95
+- PP%: 17.0% · PK%: 80.0%
+- Current streak: L1
+
+Head-to-head this season: FLA 2-1
+Expected score (Pythagorean): FLA 3.2 - TR 2.6
+Model win probability: FLA 100%
+
+Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.
+
+Réponds ENTIÈREMENT en français canadien (québécois) — le français utilisé par les
+commentateurs francophones de la LNH et de la LPHF. N'utilise aucun mot anglais, sauf
+les noms propres (joueurs, équipes, villes) et les abréviations statistiques avancées
+(xG, RAPM, WAR, GSAX, Corsi, Fenwick, CF%, FF%), qui doivent rester exactement comme
+fournies dans les données.
+
+Vocabulaire de hockey à utiliser (ne traduis pas ces termes autrement) :
+- avantage numérique = power play · désavantage numérique = penalty kill
+- échec avant = forecheck · échec arrière = backcheck
+- tir au but = shot on goal · tir raté = missed shot · tir bloqué = blocked shot
+- mise en échec = hit/check · mise au jeu = faceoff
+- prolongation = overtime · fusillade = shootout
+- gardien de but = goalie · défenseur = defenseman · attaquant = forward
+- ailier = winger · centre = center (position) · recrue = rookie
+- but = goal · aide / mention d'aide = assist · trio = forward line · paire = defense pair
+- but en avantage numérique = power-play goal · but en désavantage numérique = shorthanded goal
+- séries (éliminatoires) = playoffs · saison régulière = regular season
+
+Les noms de joueurs, d'équipes et de villes ne doivent jamais être traduits ou modifiés.",
+      "maxTokens": 1024,
+      "method": "POST",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+  ],
+}
 `;
 
 exports[`echl > prediction > Supabase unavailable 1`] = `

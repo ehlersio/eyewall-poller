@@ -283,6 +283,7 @@ const ROUTES = [
   { name: 'preview',                    path: () => `/preview?gameId=${GAME_ID}`, missing: () => '/preview' },
   { name: 'game-box',                   path: () => `/game-box?gameId=${GAME_ID}`, missing: () => '/game-box' },
   { name: 'prediction',                 path: () => `/prediction?gameId=${GAME_ID}`, missing: () => '/prediction' },
+  { name: 'prediction (French)',        path: () => `/prediction?gameId=${GAME_ID}&locale=fr` },
   { name: 'team-seasons/compare',       path: L => `/team-seasons/compare?teamId=${L.teamA}&seasons=${L.season},${L.playoffSeason}`, missing: L => `/team-seasons/compare?teamId=${L.teamA}` },
   { name: 'team-seasons/compare-teams', path: L => `/team-seasons/compare-teams?teamIds=${L.teamA},${L.teamB}&season=${L.season}`, missing: L => `/team-seasons/compare-teams?teamIds=${L.teamA}&season=${L.season}` },
   { name: 'team-seasons/head-to-head',  path: L => `/team-seasons/head-to-head?teamIds=${L.teamA},${L.teamB}`, missing: L => `/team-seasons/head-to-head?teamIds=${L.teamA}` },

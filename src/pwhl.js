@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink, recordHealth } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes } from './seasons.js';
 
 // Resolve the ?season= query param, live-resolving the current season
@@ -2196,7 +2196,9 @@ Write in plain text, no markdown. 1-2 sentences max.`;
     if (!gameId) return badRequest('gameId required');
     const forceRegen = url.searchParams.get('force') === '1';
 
-    const kvKey = `pwhl:prediction:${gameId}`;
+    // French gets its own key (':fr'); English keeps the original one.
+    const locale = requestLocale(url);
+    const kvKey = `pwhl:prediction:${gameId}${localeKeySuffix(locale)}`;
     if (!forceRegen) {
       const cached = await kvGet(env, kvKey);
       if (cached) return json(cached);
@@ -2353,7 +2355,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     let narrative = '';
     try {
       const aiResponse = await generateText(env, {
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: localizePrompt(prompt, locale) }],
       });
       narrative = aiResponse.response?.trim() || '';
     } catch (e) {
