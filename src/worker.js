@@ -19,8 +19,8 @@
 
 import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.js';
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
-import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES } from './ahl.js';
-import { handleECHL, ECHL_TEAM_CODES, fetchECHLNews, pollECHL } from './echl.js';
+import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_IDS } from './ahl.js';
+import { handleECHL, ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS, fetchECHLNews, pollECHL } from './echl.js';
 import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser } from './shared.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
@@ -33,15 +33,17 @@ import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWH
 const COMPARISON_LEAGUES = [
   { key: 'nhl',  label: 'NHL',  teams: TEAM_CONFIGS,    table: 'team_seasons?select=season,team&game_type=eq.2&limit=1000', seasonCol: 'season',    teamCol: 'team' },
   { key: 'pwhl', label: 'PWHL', teams: PWHL_TEAM_CODES, table: 'pwhl_team_seasons?select=season_id,team_id&limit=2000',     seasonCol: 'season_id', teamCol: 'team_id', meta: env => getAllPWHLSeasons(env) },
-  { key: 'ahl',  label: 'AHL',  teams: AHL_TEAM_CODES,  table: 'ahl_team_seasons?select=season_id,team_id&limit=2000',      seasonCol: 'season_id', teamCol: 'team_id', meta: env => getAllAHLSeasons(env) },
-  { key: 'echl', label: 'ECHL', teams: ECHL_TEAM_CODES, table: 'echl_team_seasons?select=season_id,team_id&limit=2000',     seasonCol: 'season_id', teamCol: 'team_id', meta: env => getAllECHLSeasons(env) },
+  { key: 'ahl',  label: 'AHL',  teams: AHL_TEAM_CODES,  historical: AHL_HISTORICAL_TEAM_IDS,  table: 'ahl_team_seasons?select=season_id,team_id&limit=2000',      seasonCol: 'season_id', teamCol: 'team_id', meta: env => getAllAHLSeasons(env) },
+  { key: 'echl', label: 'ECHL', teams: ECHL_TEAM_CODES, historical: ECHL_HISTORICAL_TEAM_IDS, table: 'echl_team_seasons?select=season_id,team_id&limit=2000',     seasonCol: 'season_id', teamCol: 'team_id', meta: env => getAllECHLSeasons(env) },
 ];
 
 // One league's { activeTeamCount, seasons }. A failed read (or metadata
 // lookup) degrades that league to an empty season list without failing
 // the others.
 async function comparisonSeasons(env, lg) {
-  const activeTeamCount = Object.keys(lg.teams).length;
+  // Historical ids (relocated/departed franchises kept for old-season
+  // labels) aren't active teams.
+  const activeTeamCount = Object.keys(lg.teams).length - (lg.historical?.length ?? 0);
   let seasons = [];
   try {
     const [r, meta] = await Promise.all([

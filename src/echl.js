@@ -51,7 +51,16 @@ export const ECHL_TEAM_CODES = {
   50: 'KAL', 68: 'KC', 82: 'MNE', 114: 'NM', 76: 'NOR', 61: 'ORL',
   70: 'RC', 17: 'REA', 102: 'SAV', 18: 'SC', 106: 'TAH', 21: 'TOL',
   113: 'TRE', 99: 'TR', 71: 'TUL', 25: 'WHL', 72: 'WIC', 77: 'WOR',
+  // Historical, not current teams -- 2025-26 (seasons 73/76) teams that
+  // aren't in 2026-27. Needed so historical-season routes label them, same
+  // as AHL_TEAM_CODES' 317: 'BRI'. See eyewall-pipeline's
+  // hockeytech_leagues.py ECHL team_id_map for the same entries.
+  98: 'IA',  // Iowa Heartlanders
+  23: 'UTA', // Utah Grizzlies
 };
+// Ids in ECHL_TEAM_CODES that aren't current teams -- labels only, left out
+// of worker.js's activeTeamCount.
+export const ECHL_HISTORICAL_TEAM_IDS = [98, 23];
 
 const echl = createHockeyTechLeague({
   key:          'echl',

@@ -63,6 +63,9 @@ export const AHL_TEAM_CODES = {
   // the same entry.
   317: 'BRI',
 };
+// Ids in AHL_TEAM_CODES that aren't current teams -- labels only, left out
+// of worker.js's activeTeamCount.
+export const AHL_HISTORICAL_TEAM_IDS = [317];
 
 const ahl = createHockeyTechLeague({
   key:          'ahl',
