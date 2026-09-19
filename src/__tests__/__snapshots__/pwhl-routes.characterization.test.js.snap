@@ -3573,7 +3573,7 @@ exports[`prediction (force regenerate) > response, upstream requests and KV writ
     "awayAbbr": "MIN",
     "awayStreak": "L1",
     "awayTeamId": 2,
-    "awayWinPct": 0,
+    "awayWinPct": 45,
     "corsiCaveat": "All-situations shot-attempt share (goals+shots+blocked), not 5-on-5 filtered.",
     "corsiForPct": {
       "away": 47.1,
@@ -3587,13 +3587,14 @@ exports[`prediction (force regenerate) > response, upstream requests and KV writ
     "homeAbbr": "BOS",
     "homeStreak": "W1",
     "homeTeamId": 1,
-    "homeWinPct": 100,
+    "homeWinPct": 55,
     "isPlayoff": false,
     "narrative": "Fixture PWHL narrative.",
+    "winModel": "elo",
   },
   "kvWrites": [
     {
-      "key": "pwhl:prediction:210",
+      "key": "pwhl:prediction:elo:210",
       "ttl": 1800,
     },
   ],
@@ -3607,6 +3608,9 @@ exports[`prediction (force regenerate) > response, upstream requests and KV writ
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?season_id=eq.8&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ot,shootout",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_team_elo_ratings?team_id=in.(1,2)&select=team_id,rating",
     },
     {
       "aiPrompt": "You are EyeWall Analytics, a PWHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. The shot-attempt numbers below are ALL-SITUATIONS (not 5-on-5 only) — describe it as "shot-attempt share," not as a 5v5/possession-only stat.
@@ -3630,7 +3634,7 @@ MIN stats:
 
 Head-to-head this season: BOS 1-2
 Expected score (Pythagorean): BOS 3.0 - MIN 2.2
-Model win probability: BOS 100%
+Model win probability: BOS 55%
 
 Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.",
       "maxTokens": 1024,
@@ -3677,7 +3681,7 @@ exports[`prediction > response, upstream requests and KV writes; repeat call 1`]
     "awayAbbr": "MIN",
     "awayStreak": "L1",
     "awayTeamId": 2,
-    "awayWinPct": 0,
+    "awayWinPct": 45,
     "corsiCaveat": "All-situations shot-attempt share (goals+shots+blocked), not 5-on-5 filtered.",
     "corsiForPct": {
       "away": 47.1,
@@ -3691,13 +3695,14 @@ exports[`prediction > response, upstream requests and KV writes; repeat call 1`]
     "homeAbbr": "BOS",
     "homeStreak": "W1",
     "homeTeamId": 1,
-    "homeWinPct": 100,
+    "homeWinPct": 55,
     "isPlayoff": false,
     "narrative": "Fixture PWHL narrative.",
+    "winModel": "elo",
   },
   "kvWrites": [
     {
-      "key": "pwhl:prediction:210",
+      "key": "pwhl:prediction:elo:210",
       "ttl": 1800,
     },
   ],
@@ -3711,6 +3716,9 @@ exports[`prediction > response, upstream requests and KV writes; repeat call 1`]
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?season_id=eq.8&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ot,shootout",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_team_elo_ratings?team_id=in.(1,2)&select=team_id,rating",
     },
     {
       "aiPrompt": "You are EyeWall Analytics, a PWHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. The shot-attempt numbers below are ALL-SITUATIONS (not 5-on-5 only) — describe it as "shot-attempt share," not as a 5v5/possession-only stat.
@@ -3734,7 +3742,7 @@ MIN stats:
 
 Head-to-head this season: BOS 1-2
 Expected score (Pythagorean): BOS 3.0 - MIN 2.2
-Model win probability: BOS 100%
+Model win probability: BOS 55%
 
 Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.",
       "maxTokens": 1024,

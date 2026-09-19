@@ -1203,10 +1203,11 @@ describe('GET /pwhl/preview', () => {
 })
 
 describe('GET /pwhl/prediction', () => {
-  // Mocks the 3 Supabase REST calls the route makes, keyed by URL substring:
-  // the single-game lookup, the 2-team pwhl_team_seasons pull, and the
-  // season-wide Final game log (for streak + this-season H2H).
-  function mockSupabaseFlow({ game, teams, seasonGames, aiText = 'mock AI response', aiReject = false }) {
+  // Mocks the 4 Supabase REST calls the route makes, keyed by URL substring:
+  // the single-game lookup, the 2-team pwhl_team_seasons pull, the
+  // season-wide Final game log (for streak + this-season H2H), and the two
+  // teams' Elo ratings (win probability).
+  function mockSupabaseFlow({ game, teams, seasonGames, eloRows = [], aiText = 'mock AI response', aiReject = false }) {
     globalThis.fetch = vi.fn((url) => {
       const u = String(url)
       if (u.includes('openrouter.ai')) {
@@ -1221,6 +1222,9 @@ describe('GET /pwhl/prediction', () => {
       }
       if (u.includes('pwhl_game_log?season_id=eq.')) {
         return Promise.resolve({ ok: true, json: async () => seasonGames })
+      }
+      if (u.includes('pwhl_team_elo_ratings')) {
+        return Promise.resolve({ ok: true, json: async () => eloRows })
       }
       throw new Error(`unexpected fetch: ${u}`)
     })
@@ -1247,7 +1251,7 @@ describe('GET /pwhl/prediction', () => {
 
   it('serves from KV cache without calling the AI model', async () => {
     const cached = { gameId: 210, homeWinPct: 60 }
-    const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:prediction:210': cached }) })
+    const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:prediction:elo:210': cached }) })
     mockFetchWithAI('should not be called')
     const res = await handlePWHL(
       makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
@@ -1274,6 +1278,7 @@ describe('GET /pwhl/prediction', () => {
         { game_id: 201, home_team_id: 3, away_team_id: 5, home_score: 4, away_score: 2, ot: false, shootout: false },
         { game_id: 205, home_team_id: 3, away_team_id: 8, home_score: 3, away_score: 1, ot: false, shootout: false },
       ],
+      eloRows: [{ team_id: 3, rating: 1540 }, { team_id: 5, rating: 1470 }],
       aiText: 'Montreal should win behind their possession edge.',
     })
 
@@ -1285,13 +1290,31 @@ describe('GET /pwhl/prediction', () => {
     expect(body.homeAbbr).toBe('MTL')
     expect(body.awayAbbr).toBe('OTT')
     expect(body.isPlayoff).toBe(false)
-    expect(body.homeWinPct).toBeGreaterThan(body.awayWinPct) // MTL is better on every input
+    // Elo: 1 / (1 + 10^((1470 - 1540 - 35) / 400)) = 0.646
+    expect(body.homeWinPct).toBe(65)
+    expect(body.awayWinPct).toBe(35)
+    expect(body.winModel).toBe('elo')
     expect(body.homeStreak).toBe('W2')
     expect(body.h2hRecord).toBe('1-0')
     expect(body.corsiForPct).toEqual({ home: 54.2, away: 46.1 })
     expect(body.corsiCaveat).toMatch(/not 5-on-5/i)
     expect(body.narrative).toBe('Montreal should win behind their possession edge.')
-    expect(JSON.parse(await env.CACHE.get('pwhl:prediction:210')).homeWinPct).toBe(body.homeWinPct)
+    expect(JSON.parse(await env.CACHE.get('pwhl:prediction:elo:210')).homeWinPct).toBe(body.homeWinPct)
+  })
+
+  it('an opener (tied stats, expansion teams with no rating yet) is a home-ice edge, not 0%', async () => {
+    const env = makeEnv()
+    const blank = { gp: 0, wins: 0, losses: 0, ot_losses: 0, points: 0, goals_for: 0, goals_against: 0, pp_pct: 0, pk_pct: 0 }
+    mockSupabaseFlow({
+      game: { game_id: 210, season_id: 8, home_team_id: 10, away_team_id: 11 },
+      teams: [{ team_id: 10, ...blank }, { team_id: 11, ...blank }],
+      seasonGames: [],
+    })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
+    )
+    expect(res.status).toBe(200)
+    expect((await res.json()).homeWinPct).toBe(55)
   })
 
   it('uses real 5v5 Corsi from pwhl_team_seasons when both teams have it, instead of the all-situations column', async () => {
@@ -1331,8 +1354,8 @@ describe('GET /pwhl/prediction', () => {
     expect(res.status).toBe(200)
     expect((await res.json()).narrative).toBe('Montréal devrait l\'emporter.')
     expect(aiPrompt(globalThis.fetch)[0].content).toContain(FRENCH_INSTRUCTION)
-    expect(await env.CACHE.get('pwhl:prediction:210:fr')).not.toBeNull()
-    expect(await env.CACHE.get('pwhl:prediction:210')).toBeNull()
+    expect(await env.CACHE.get('pwhl:prediction:elo:210:fr')).not.toBeNull()
+    expect(await env.CACHE.get('pwhl:prediction:elo:210')).toBeNull()
   })
 
   it('English requests never get the French instruction', async () => {

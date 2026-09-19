@@ -8,6 +8,10 @@
 import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes } from './seasons.js';
 
+// Elo constants for /pwhl/prediction -- match eyewall-pipeline/elo.py.
+const PWHL_ELO_INITIAL_RATING = 1500;
+const PWHL_ELO_HOME_ADVANTAGE = 35;
+
 // Resolve the ?season= query param, live-resolving the current season
 // (see seasons.js) when the param is omitted instead of a hardcoded '8'.
 // The frontend normally passes ?season= explicitly (from pwhlConfig.js),
@@ -2171,7 +2175,7 @@ Write in plain text, no markdown. 1-2 sentences max.`;
   }
 
   // GET /pwhl/prediction?gameId=210
-  // Team-level win prediction (heuristic + AI narrative) — PWHL analog of
+  // Team-level win prediction (Elo win % + AI narrative) — PWHL analog of
   // NHL's /prediction/analyze FALLBACK tier (nhl.js:2228-2382), not NHL's
   // preferred DB-first Tier-1 system (ai_predictions.py, RAPM/WAR/zone-start
   // driven) — that one needs shift-level data PWHL doesn't have until the
@@ -2198,7 +2202,9 @@ Write in plain text, no markdown. 1-2 sentences max.`;
 
     // French gets its own key (':fr'); English keeps the original one.
     const locale = requestLocale(url);
-    const kvKey = `pwhl:prediction:${gameId}${localeKeySuffix(locale)}`;
+    // ':elo' so predictions cached under the old point-split win % aren't
+    // served for the rest of their TTL after this deploys.
+    const kvKey = `pwhl:prediction:elo:${gameId}${localeKeySuffix(locale)}`;
     if (!forceRegen) {
       const cached = await kvGet(env, kvKey);
       if (cached) return json(cached);
@@ -2219,9 +2225,11 @@ Write in plain text, no markdown. 1-2 sentences max.`;
     const seasonType    = seasonTypeMap?.[seasonId] || 'regular';
     const isPlayoff      = seasonType === 'playoffs';
 
-    const [teamRows, games] = await Promise.all([
+    const [teamRows, games, eloRows] = await Promise.all([
       sbRows(`${SB_URL}/rest/v1/pwhl_team_seasons?team_id=in.(${homeId},${awayId})&season_id=eq.${seasonId}&season_type=eq.${seasonType}`),
       sbRowsOr(`${SB_URL}/rest/v1/pwhl_game_log?season_id=eq.${seasonId}&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ot,shootout`, []),
+      // Optional: without ratings both teams are rated at the mean (see below).
+      sbRowsOr(`${SB_URL}/rest/v1/pwhl_team_elo_ratings?team_id=in.(${homeId},${awayId})&select=team_id,rating`, []).catch(() => []),
     ]);
     if (teamRows instanceof Response) return teamRows;
 
@@ -2307,25 +2315,16 @@ Write in plain text, no markdown. 1-2 sentences max.`;
     const expHome  = clamp(Math.sqrt(Math.max(hGpg, 0.5) * Math.max(aGag, 0.5)) + 0.12, 1.5, 5.0).toFixed(1);
     const expAway  = clamp(Math.sqrt(Math.max(aGpg, 0.5) * Math.max(hGag, 0.5)) - 0.12, 1.5, 5.0).toFixed(1);
 
-    // Win probability — additive heuristic ported from NHL's
-    // /prediction/analyze (nhl.js:2312-2327), with real Corsi-for% swapped
-    // in for NHL's SOG-for-only "possession" term.
-    let homeScore = 0, awayScore = 0;
-    if (!isPlayoff) {
-      const ptsDiff = (home.points ?? 0) - (away.points ?? 0);
-      homeScore += ptsDiff > 0 ? Math.min(ptsDiff / 20, 1) : 0;
-      awayScore += ptsDiff < 0 ? Math.min(-ptsDiff / 20, 1) : 0;
-    }
-    if (hGpg > aGpg) homeScore += 0.6; else awayScore += 0.6;
-    if (hGag < aGag) homeScore += 0.6; else awayScore += 0.6;
-    if (hPP  > aPP)  homeScore += 0.4; else awayScore += 0.4;
-    if (hCF != null && aCF != null) {
-      if (hCF > aCF) homeScore += 0.5; else awayScore += 0.5;
-    }
-    if (homeStreak.startsWith('W')) homeScore += 0.3;
-    if (awayStreak.startsWith('W')) awayScore += 0.3;
-    const totalScore = homeScore + awayScore || 1;
-    const homeWinPct = Math.round((homeScore / totalScore) * 100);
+    // Win probability — Elo (eyewall-pipeline's hockeytech_elo.py writes
+    // pwhl_team_elo_ratings), same model as NHL and AHL/ECHL: expected score
+    // with the home team's rating + ELO_HOME_ADVANTAGE. Replaced an additive
+    // point split that backtested worse than a coin flip and gave the home
+    // team 0% whenever the two teams' stats tied, e.g. every season opener
+    // (docs/hockeytech_elo_backtest_results.md in eyewall-pipeline). A team
+    // with no row (expansion team, or ratings unreachable) is rated at the
+    // mean. Corsi/PP% still feed the AI prompt below, just not the number.
+    const ratingOf = (teamId) => eloRows.find(r => r.team_id === teamId)?.rating ?? PWHL_ELO_INITIAL_RATING;
+    const homeWinPct = Math.round(100 / (1 + 10 ** ((ratingOf(awayId) - ratingOf(homeId) - PWHL_ELO_HOME_ADVANTAGE) / 400)));
 
     const prompt = `You are EyeWall Analytics, a PWHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. ${corsiSource === '5v5' ? 'The shot-attempt numbers below are 5-ON-5 filtered — describe it as "5v5 shot-attempt share" or "possession," accurately reflecting that scope.' : corsiSource === 'all_situations' ? 'The shot-attempt numbers below are ALL-SITUATIONS (not 5-on-5 only) — describe it as "shot-attempt share," not as a 5v5/possession-only stat.' : 'Shot-attempt data is unavailable for one or both teams — do not reference Corsi or possession.'}
 
@@ -2372,6 +2371,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       isPlayoff,
       homeWinPct,
       awayWinPct: 100 - homeWinPct,
+      winModel: 'elo',
       expHome: parseFloat(expHome),
       expAway: parseFloat(expAway),
       narrative,
