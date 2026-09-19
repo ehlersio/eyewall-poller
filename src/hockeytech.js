@@ -29,10 +29,19 @@
  *   - PBP goal events carry goalie_id: null, so there's no /goalie-shots
  *     route -- a goalie heat map would silently under-count goals.
  *   - No Corsi/Fenwick/PDO: there's no shot-attempts source beyond
- *     shots on goal. /prediction drops the Corsi term entirely.
+ *     shots on goal.
+ *   - /prediction's win probability is Elo from {league}_team_elo_ratings
+ *     (eyewall-pipeline's hockeytech_elo.py), not the additive point split
+ *     /pwhl/prediction uses -- that split backtested worse than a coin flip
+ *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
 import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, subId, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix } from './shared.js';
+
+// Elo constants -- match eyewall-pipeline/elo.py (and nhl.js's
+// ELO_HOME_ADVANTAGE). hockeytech_elo.py writes the ratings these apply to.
+const ELO_INITIAL_RATING = 1500;
+const ELO_HOME_ADVANTAGE = 35;
 
 // Both leagues' regular season starts early October and playoffs run
 // through June.
@@ -981,9 +990,9 @@ export function createHockeyTechLeague(cfg) {
     }
 
     // GET /{league}/prediction?gameId=1028992
-    // Heuristic win probability + AI narrative, ported from /pwhl/prediction
-    // with the Corsi term dropped (no shot-attempts data). Streaks count
-    // every non-win as a loss, same as /standings.
+    // Elo win probability + AI narrative. The context fed to the AI
+    // (record, GF/GA, PP/PK, streaks, head-to-head) is the same as before;
+    // streaks count every non-win as a loss, same as /standings.
     if (url.pathname === `${P}/prediction`) {
       const limited = await checkAiRateLimit(env, request, `${key}-prediction`);
       if (limited) return limited;
@@ -993,8 +1002,10 @@ export function createHockeyTechLeague(cfg) {
       const forceRegen = url.searchParams.get('force') === '1';
 
       // French gets its own key (':fr'); English keeps the original one.
+      // ':elo' so predictions cached under the old point-split win % aren't
+      // served for the rest of their TTL after this deploys.
       const locale = requestLocale(url);
-      const kvKey = `${key}:prediction:${gameId}${localeKeySuffix(locale)}`;
+      const kvKey = `${key}:prediction:elo:${gameId}${localeKeySuffix(locale)}`;
       if (!forceRegen) {
         const cached = await kvGet(env, kvKey);
         if (cached) return json(cached);
@@ -1014,9 +1025,11 @@ export function createHockeyTechLeague(cfg) {
       const seasonType = await resolveSeasonType(env, seasonId);
       const isPlayoff = seasonType === 'playoffs';
 
-      const [teamRows, games] = await Promise.all([
+      const [teamRows, games, eloRows] = await Promise.all([
         sbRows(`${table('team_seasons')}?team_id=in.(${homeId},${awayId})&season_id=eq.${seasonId}&season_type=eq.${seasonType}`),
         sbRowsOr(`${table('game_log')}?season_id=eq.${seasonId}&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score`, []),
+        // Optional: without ratings both teams are rated at the mean (see below).
+        sbRowsOr(`${table('team_elo_ratings')}?team_id=in.(${homeId},${awayId})&select=team_id,rating`, []).catch(() => []),
       ]);
       if (teamRows instanceof Response) return teamRows;
 
@@ -1073,20 +1086,13 @@ export function createHockeyTechLeague(cfg) {
       const expHome = clamp(Math.sqrt(Math.max(hGpg, 0.5) * Math.max(aGag, 0.5)) + 0.12, 1.5, 5.0).toFixed(1);
       const expAway = clamp(Math.sqrt(Math.max(aGpg, 0.5) * Math.max(hGag, 0.5)) - 0.12, 1.5, 5.0).toFixed(1);
 
-      // Same additive heuristic as /pwhl/prediction, minus the Corsi term.
-      let homeScore = 0, awayScore = 0;
-      if (!isPlayoff) {
-        const ptsDiff = (home.points ?? 0) - (away.points ?? 0);
-        homeScore += ptsDiff > 0 ? Math.min(ptsDiff / 20, 1) : 0;
-        awayScore += ptsDiff < 0 ? Math.min(-ptsDiff / 20, 1) : 0;
-      }
-      if (hGpg > aGpg) homeScore += 0.6; else awayScore += 0.6;
-      if (hGag < aGag) homeScore += 0.6; else awayScore += 0.6;
-      if (hPP > aPP) homeScore += 0.4; else awayScore += 0.4;
-      if (homeStreak.startsWith('W')) homeScore += 0.3;
-      if (awayStreak.startsWith('W')) awayScore += 0.3;
-      const totalScore = homeScore + awayScore || 1;
-      const homeWinPct = Math.round((homeScore / totalScore) * 100);
+      // Elo, same model as NHL (eyewall-pipeline elo.py): expected score
+      // with the home team's rating + ELO_HOME_ADVANTAGE. A team with no
+      // row yet (new franchise, or the ratings table unreachable) is rated
+      // at the mean, so the worst case is a plain home-ice edge (~55%) --
+      // never the 0%-home the old point split gave every season opener.
+      const ratingOf = (teamId) => eloRows.find(r => r.team_id === teamId)?.rating ?? ELO_INITIAL_RATING;
+      const homeWinPct = Math.round(100 / (1 + 10 ** ((ratingOf(awayId) - ratingOf(homeId) - ELO_HOME_ADVANTAGE) / 400)));
 
       const prompt = `You are EyeWall Analytics, an ${label} hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. Shot-attempt/possession data is not available for ${label} -- do not reference Corsi, possession, or shot-attempt share.
 
@@ -1131,6 +1137,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
         isPlayoff,
         homeWinPct,
         awayWinPct: 100 - homeWinPct,
+        winModel: 'elo',
         expHome: parseFloat(expHome),
         expAway: parseFloat(expAway),
         narrative,

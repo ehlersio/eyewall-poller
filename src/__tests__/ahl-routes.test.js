@@ -7,7 +7,7 @@
 // docstring for the confirmed differences from PWHL this reflects).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { makeEnv, makeCtx, makeRequest } from './route-harness.js'
+import { makeEnv, makeCtx, makeRequest, mockFetchWithAI } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({
   resolveAHLSeason: vi.fn().mockResolvedValue({ seasonId: 90, seasonType: 'regular' }),
@@ -322,5 +322,61 @@ describe('unknown /ahl/* route', () => {
       new URL('https://example.com/ahl/nonexistent')
     )
     expect(res.status).toBe(404)
+  })
+})
+
+describe('GET /ahl/prediction -- Elo win probability', () => {
+  // game 1028992: TOR (335) hosts ROC (323). team_seasons stats are identical
+  // for both teams -- the point split this replaced gave the home side 0%
+  // whenever stats tied, e.g. every season opener.
+  const tied = { gp: 10, goals_for: 30, goals_against: 30, pp_pct: 0.2, pk_pct: 0.8, points: 10, wins: 5, losses: 5, ot_losses: 0 }
+  function handler(eloRows) {
+    return (url) => {
+      const u = String(url)
+      if (u.includes('ahl_game_log?game_id=')) {
+        return Promise.resolve({ ok: true, json: async () => [{ game_id: 1028992, season_id: 90, home_team_id: 335, away_team_id: 323 }] })
+      }
+      if (u.includes('ahl_team_seasons')) {
+        return Promise.resolve({ ok: true, json: async () => [{ team_id: 335, ...tied }, { team_id: 323, ...tied }] })
+      }
+      if (u.includes('ahl_team_elo_ratings')) {
+        return eloRows instanceof Error ? Promise.reject(eloRows) : Promise.resolve({ ok: true, json: async () => eloRows })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    }
+  }
+  async function predict(eloRows) {
+    const env = makeEnv()
+    mockFetchWithAI('Analysis.', handler(eloRows))
+    const res = await handleAHL(
+      makeRequest('/ahl/prediction?gameId=1028992'), env, makeCtx(),
+      new URL('https://example.com/ahl/prediction?gameId=1028992')
+    )
+    expect(res.status).toBe(200)
+    return res.json()
+  }
+
+  it('uses both teams\' Elo ratings plus home advantage', async () => {
+    const body = await predict([{ team_id: 335, rating: 1560 }, { team_id: 323, rating: 1480 }])
+    // 1 / (1 + 10^((1480 - 1560 - 35) / 400)) = 0.659
+    expect(body.homeWinPct).toBe(66)
+    expect(body.awayWinPct).toBe(34)
+    expect(body.winModel).toBe('elo')
+  })
+
+  it('an opener with tied stats and equal ratings is a plain home-ice edge, not 0%', async () => {
+    const body = await predict([{ team_id: 335, rating: 1500 }, { team_id: 323, rating: 1500 }])
+    expect(body.homeWinPct).toBe(55)
+  })
+
+  it('falls back to the mean for both teams if the ratings table is unreachable', async () => {
+    const body = await predict(new Error('ahl_team_elo_ratings unavailable'))
+    expect(body.homeWinPct).toBe(55)
+  })
+
+  it('rates a team with no Elo row (new franchise) at the mean', async () => {
+    const body = await predict([{ team_id: 323, rating: 1580 }])
+    // 1 / (1 + 10^((1580 - 1500 - 35) / 400)) = 0.436
+    expect(body.homeWinPct).toBe(44)
   })
 })
