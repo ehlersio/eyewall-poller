@@ -6068,6 +6068,7 @@ exports[`echl > team code map 1`] = `
   "17": "REA",
   "18": "SC",
   "21": "TOL",
+  "23": "UTA",
   "25": "WHL",
   "5": "CIN",
   "50": "KAL",
@@ -6086,6 +6087,7 @@ exports[`echl > team code map 1`] = `
   "79": "JAX",
   "8": "FLA",
   "82": "MNE",
+  "98": "IA",
   "99": "TR",
 }
 `;

@@ -13,7 +13,7 @@ exports[`GET /config/seasons/comparison > all four leagues: response, upstream r
 {
   "body": {
     "ahl": {
-      "activeTeamCount": 33,
+      "activeTeamCount": 32,
       "seasons": [
         {
           "comparable": false,
@@ -111,7 +111,7 @@ exports[`GET /config/seasons/comparison > all four leagues: response, upstream r
 exports[`GET /config/seasons/comparison > missing season metadata leaves seasonType/startYear null 1`] = `
 {
   "ahl": {
-    "activeTeamCount": 33,
+    "activeTeamCount": 32,
     "seasons": [
       {
         "comparable": false,
