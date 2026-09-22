@@ -36,7 +36,7 @@ vi.mock('../shared.js', async (importOriginal) => {
   return { ...actual, sendPush: sendPushMock }
 })
 
-import { handleNHL, poll, refreshPPUnits } from '../nhl.js'
+import { handleNHL, poll, refreshPPUnits, oppGoalBody, periodIsOver, scoreboardBroadcasts } from '../nhl.js'
 import { resolveNHLSeason } from '../seasons.js'
 
 beforeEach(() => {
@@ -2306,6 +2306,59 @@ describe('poll() — multi-team dual broadcast', () => {
     expect(carOppGoalCall?.[1].title).toContain('BOS scores')
   })
 
+  it('sends End of P1 when the intermission starts, not when P2 does', async () => {
+    const env = makeEnv({
+      VAPID_PRIVATE_KEY: 'fake-key-for-test',
+      CACHE: makeFakeCache({
+        'push:subs': [subFor('CAR', 'https://push.example/car-fan')],
+        'push:gamestate:2025020556': { homeScore: 1, awayScore: 0, playCount: 1, started: true, period: 1, goalScorers: {} },
+      }),
+    })
+    const liveGame = {
+      id: 2025020556, gameState: 'LIVE', gameType: 2,
+      homeTeam: { id: 12, abbrev: 'CAR', score: 1 },
+      awayTeam: { id: 6, abbrev: 'BOS', score: 0 },
+    }
+    mockScoreboardAndPbp({
+      liveGames: [liveGame],
+      pbpByGameId: {
+        '2025020556': {
+          periodDescriptor: { number: 1 },
+          clock: { inIntermission: true },
+          plays: [
+            { typeDescKey: 'goal', periodDescriptor: { number: 1 }, details: { eventOwnerTeamId: 12 } },
+            { typeDescKey: 'period-end', periodDescriptor: { number: 1 } },
+          ],
+        },
+      },
+    })
+
+    await poll(env, makeCtx())
+    const ends = sendPushMock.mock.calls.filter(([, payload]) => payload.tag === 'period-end-2025020556-1')
+    expect(ends).toHaveLength(1)
+    expect(ends[0][1].title).toBe('🔔 End of P1')
+
+    // P2 starting afterwards doesn't send it a second time.
+    sendPushMock.mockClear()
+    mockScoreboardAndPbp({
+      liveGames: [liveGame],
+      pbpByGameId: {
+        '2025020556': {
+          periodDescriptor: { number: 2 },
+          plays: [
+            { typeDescKey: 'goal', periodDescriptor: { number: 1 }, details: { eventOwnerTeamId: 12 } },
+            { typeDescKey: 'period-end', periodDescriptor: { number: 1 } },
+            { typeDescKey: 'period-start', periodDescriptor: { number: 2 } },
+          ],
+        },
+      },
+    })
+    await poll(env, makeCtx())
+    const tags = sendPushMock.mock.calls.map(([, payload]) => payload.tag)
+    expect(tags).toContain('period-start-2025020556-2')
+    expect(tags).not.toContain('period-end-2025020556-1')
+  })
+
   it('dual-broadcasts game-over win/loss for a game involving neither team as this app\'s own default team', async () => {
     const env = makeEnv({
       VAPID_PRIVATE_KEY: 'fake-key-for-test',
@@ -3007,5 +3060,61 @@ describe('POST /summary/narrative', () => {
     const promptSent = aiPrompt(globalThis.fetch)[0].content
     expect(promptSent).toMatch(/CAR goal by Sebastian Aho at 6:12 \(EV\)/)
     expect(promptSent).not.toMatch(/P2 6:12/)
+  })
+})
+
+describe('oppGoalBody()', () => {
+  it('says a team extends a lead it already had', () => {
+    expect(oppGoalBody('FLA', 3, 1, 2)).toBe('FLA extends their lead. Time to push back!')
+  })
+  it('says a team is pulling away at a 3+ goal lead it already had', () => {
+    expect(oppGoalBody('FLA', 4, 1, 3)).toBe('FLA is pulling away. Time to push back!')
+  })
+  it('says a team takes the lead from a tie or from behind', () => {
+    expect(oppGoalBody('FLA', 2, 1, 1)).toBe('FLA takes the lead. Time to push back!')
+    expect(oppGoalBody('FLA', 3, 2, 1)).toBe('FLA takes the lead. Time to push back!') // two goals in one poll
+  })
+  it('keeps the tie and still-leading copy', () => {
+    expect(oppGoalBody('FLA', 2, 2, 1)).toBe('FLA ties it up — stay sharp!')
+    expect(oppGoalBody('FLA', 1, 3, 0)).toBe('Still leading — hold the line!')
+  })
+})
+
+describe('periodIsOver()', () => {
+  const pbpWith = (...plays) => ({ plays })
+  const end = n => ({ typeDescKey: 'period-end', periodDescriptor: { number: n } })
+
+  it('is true once the period-end play for that period is in the feed', () => {
+    expect(periodIsOver(pbpWith(end(1)), 1, { gameType: 2 }, 1, 0)).toBe(true)
+    expect(periodIsOver(pbpWith(end(1)), 2, { gameType: 2 }, 1, 0)).toBe(false)
+    expect(periodIsOver(pbpWith(), 1, { gameType: 2 }, 1, 0)).toBe(false)
+  })
+  it('leaves a period that ends the game to the win/loss push', () => {
+    expect(periodIsOver(pbpWith(end(3)), 3, { gameType: 2 }, 3, 2)).toBe(false)
+    expect(periodIsOver(pbpWith(end(3), { typeDescKey: 'game-end' }), 3, { gameType: 2 }, 3, 3)).toBe(false)
+    expect(periodIsOver(pbpWith(end(4)), 4, { gameType: 2 }, 2, 2)).toBe(true) // OT tied -> shootout
+    expect(periodIsOver(pbpWith(end(5)), 5, { gameType: 2 }, 2, 2)).toBe(false) // shootout
+  })
+  it('sends a tied end of regulation', () => {
+    expect(periodIsOver(pbpWith(end(3)), 3, { gameType: 3 }, 2, 2)).toBe(true)
+  })
+})
+
+describe('scoreboardBroadcasts()', () => {
+  it('orders national, away, home and drops duplicate networks', () => {
+    expect(scoreboardBroadcasts([
+      { network: 'SN-PIT+', market: 'H', countryCode: 'US', sequenceNumber: 374 },
+      { network: 'DSN', market: 'A', countryCode: 'US', sequenceNumber: 1 },
+      { network: 'NHLN', market: 'N', countryCode: 'US', sequenceNumber: 35 },
+      { network: 'NHLN', market: 'N', countryCode: 'US', sequenceNumber: 36 },
+    ])).toEqual([
+      { network: 'NHLN', market: 'N', countryCode: 'US' },
+      { network: 'DSN', market: 'A', countryCode: 'US' },
+      { network: 'SN-PIT+', market: 'H', countryCode: 'US' },
+    ])
+  })
+  it('is empty when the feed lists none', () => {
+    expect(scoreboardBroadcasts(undefined)).toEqual([])
+    expect(scoreboardBroadcasts([])).toEqual([])
   })
 })
