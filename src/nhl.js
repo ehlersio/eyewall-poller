@@ -6,6 +6,7 @@
  */
 
 import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix } from './shared.js';
+import { handleGoalReplay } from './goalReplay.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { fetchTradeTree } from './trades.js';
@@ -1900,6 +1901,12 @@ export async function refreshPPUnits(env, { force = false, season } = {}) {
 
 
 export async function handleNHL(request, env, ctx, url) {
+
+  // One goal's player and puck tracking for the app's goal replay
+  // (Video | Tracking) -- see goalReplay.js.
+  if (url.pathname.startsWith('/nhl/goal-replay/') && request.method === 'GET') {
+    return handleGoalReplay(request, env, url);
+  }
 
   // Manual news refresh (protected)
   if (url.pathname === '/news/refresh') {
