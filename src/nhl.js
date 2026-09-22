@@ -406,7 +406,24 @@ function normalizeScoreboardGame(g) {
       ? (g.gameOutcome?.lastPeriodType && g.gameOutcome.lastPeriodType !== 'REG'
           ? g.gameOutcome.lastPeriodType : null)
       : null,
+    broadcasts: scoreboardBroadcasts(g.tvBroadcasts),
   };
+}
+
+// TV networks for a scoreboard card, national first, then away, then home
+// (the order a viewer outside either market would care about them), one
+// entry per network name. `market` is NHL's own N/A/H code; countryCode
+// lets the card tell a US national (NHLN) from a Canadian one (SN).
+const BROADCAST_MARKET_ORDER = { N: 0, A: 1, H: 2 };
+export function scoreboardBroadcasts(tvBroadcasts) {
+  const seen = new Set();
+  return (tvBroadcasts || [])
+    .filter(b => b?.network)
+    .sort((a, b) =>
+      (BROADCAST_MARKET_ORDER[a.market] ?? 3) - (BROADCAST_MARKET_ORDER[b.market] ?? 3)
+      || (a.sequenceNumber ?? 0) - (b.sequenceNumber ?? 0))
+    .filter(b => !seen.has(b.network) && seen.add(b.network))
+    .map(b => ({ network: b.network, market: b.market || null, countryCode: b.countryCode || null }));
 }
 
 function isCompleted(game) {
@@ -448,6 +465,21 @@ async function broadcast(env, payload, teamAbbr, eventType) {
     console.log(`broadcast: removed ${expiredIds.size} expired subscription(s)`);
   }
   console.log(`broadcast results: ${results.join(', ')}`);
+}
+
+// Body of the goal-against push, for the team that conceded. Framed by what
+// the goal did to the game, which needs the score before it too: a goal that
+// puts a team up 3-1 used to read "FLA takes the lead" whatever the score was
+// going in, even when FLA had led all along.
+export function oppGoalBody(scoringAbbr, scoringScore, otherScore, scoringScoreBefore) {
+  if (scoringScore === otherScore) return `${scoringAbbr} ties it up — stay sharp!`;
+  if (scoringScore < otherScore) return 'Still leading — hold the line!';
+  if (scoringScoreBefore > otherScore) {
+    return scoringScore - otherScore >= 3
+      ? `${scoringAbbr} is pulling away. Time to push back!`
+      : `${scoringAbbr} extends their lead. Time to push back!`;
+  }
+  return `${scoringAbbr} takes the lead. Time to push back!`;
 }
 
 // ── Event detection ───────────────────────────────────────────
@@ -509,15 +541,26 @@ async function detectAndNotify(env, game, pbp) {
   }
 
   // ── Period end ────────────────────────────────────────────
-  if (lastState.period > 0 && period > lastState.period && lastState.started) {
+  // Sent when the intermission starts. It used to wait for the NEXT period
+  // to begin (the first moment periodDescriptor moved on), so "End of P1"
+  // landed ~18 minutes late, alongside "P2 Starting". Still sent then as a
+  // fallback, if no poll happened to catch the intermission itself.
+  const periodEndSent = lastState.periodEndSent ?? 0;
+  let endedPeriod = null;
+  if (lastState.started && periodEndSent < period && periodIsOver(pbp, period, game, homeScore, awayScore)) {
+    endedPeriod = period;
+  } else if (lastState.started && lastState.period > periodEndSent && period > lastState.period) {
+    endedPeriod = lastState.period;
+  }
+  if (endedPeriod) {
     for (const [abbr, myScore, oppScore, oppAbbr] of [
       [homeAbbr, homeScore, awayScore, awayAbbr],
       [awayAbbr, awayScore, homeScore, homeAbbr],
     ]) {
       await notify(abbr, {
-        title: `🔔 End of ${periodLabel(lastState.period)}`,
-        body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr} after ${periodLabel(lastState.period)}`,
-        tag:   `period-end-${liveId}-${lastState.period}`,
+        title: `🔔 End of ${periodLabel(endedPeriod)}`,
+        body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr} after ${periodLabel(endedPeriod)}`,
+        tag:   `period-end-${liveId}-${endedPeriod}`,
         url:   '/',
       }, 'periodEnd');
     }
@@ -553,9 +596,7 @@ async function detectAndNotify(env, game, pbp) {
 
     await notify(otherAbbr, {
       title: `${scoringAbbr} scores. ${otherAbbr} ${otherScore}–${scoringScore} ${scoringAbbr}`,
-      body:  otherScore === scoringScore ? `${scoringAbbr} ties it up — stay sharp!`
-          : otherScore > scoringScore    ? `Still leading — hold the line!`
-          :                                `${scoringAbbr} takes the lead. Time to push back!`,
+      body:  oppGoalBody(scoringAbbr, scoringScore, otherScore, lastScoringScore),
       tag:   `opp-goal-${liveId}-${scoringAbbr}-${scoringScore}`,
       url:   '/',
     }, 'oppGoal');
@@ -614,7 +655,23 @@ async function detectAndNotify(env, game, pbp) {
     homeScore, awayScore, playCount, period,
     started: true,
     goalScorers,
+    periodEndSent: Math.max(periodEndSent, endedPeriod || 0),
   }, 24 * 3600);
+}
+
+// Is `period` over, with play still to come (i.e. an intermission, not the
+// end of the game)? Read off the feed's own period-end play for that period
+// rather than clock.inIntermission, which doesn't say WHICH period ended. A
+// period that ends the game is left to the win/loss push: regulation or OT
+// ending with a leader, or a regular-season shootout.
+export function periodIsOver(pbp, period, game, homeScore, awayScore) {
+  const ended = (pbp?.plays || [])
+    .some(p => p.typeDescKey === 'period-end' && p.periodDescriptor?.number === period);
+  if (!ended) return false;
+  if ((pbp?.plays || []).some(p => p.typeDescKey === 'game-end')) return false;
+  if (period >= 3 && homeScore !== awayScore) return false;
+  if (period >= 5 && game?.gameType !== 3) return false;
+  return true;
 }
 
 async function notifyGameOver(env, game) {
@@ -1588,7 +1645,12 @@ export async function poll(env, _ctx) {
   const ownLiveGame = liveGames.find(g => g.homeTeam?.abbrev === TEAM_ABBR || g.awayTeam?.abbrev === TEAM_ABBR);
   await kvPut(env, 'live:gameId', ownLiveGame?.id || null, 60);
 
-  // 3. Live PBP + boxscore + push notifications, once per live game
+  // 3. Live PBP + boxscore + push notifications, once per live game.
+  // TTL is three cron ticks, not one: at 60s (the cron's own interval) a
+  // key could lapse just before the next tick rewrote it, and every open
+  // app then fell back to fetching that game from the NHL directly. The
+  // cron still overwrites it every minute, so it's never staler than that.
+  const LIVE_GAME_TTL = 180;
   for (const liveGame of liveGames) {
     const liveId = liveGame.id;
     const [pbpRes, bsRes] = await Promise.allSettled([
@@ -1597,7 +1659,7 @@ export async function poll(env, _ctx) {
     ]);
     if (pbpRes.status === 'fulfilled') {
       const pbpData = pbpRes.value;
-      await kvPut(env, `pbp:${liveId}`, pbpData, 60);
+      await kvPut(env, `pbp:${liveId}`, pbpData, LIVE_GAME_TTL);
       // Detect goals + events and send push notifications
       if (env.VAPID_PRIVATE_KEY) {
         await detectAndNotify(env, liveGame, pbpData).catch(e =>
@@ -1606,8 +1668,25 @@ export async function poll(env, _ctx) {
       }
     }
     if (bsRes.status === 'fulfilled') {
-      await kvPut(env, `boxscore:${liveId}`, bsRes.value, 60);
+      await kvPut(env, `boxscore:${liveId}`, bsRes.value, LIVE_GAME_TTL);
     }
+  }
+
+  // Final PBP + boxscore for every game that finished today, once each.
+  // Replaces the last live snapshot (which, at LIVE_GAME_TTL, would
+  // otherwise be what the app read for up to three minutes after the
+  // final), and keeps the finished game in KV for the post-game crowd
+  // instead of every open app fetching it from the NHL.
+  for (const game of completedToday) {
+    const doneKey = `pbp:final:${game.id}`;
+    if (await env.CACHE.get(doneKey)) continue;
+    const [p, b] = await Promise.allSettled([
+      nhlGet(`${NHL_BASE}/gamecenter/${game.id}/play-by-play`),
+      nhlGet(`${NHL_BASE}/gamecenter/${game.id}/boxscore`),
+    ]);
+    if (p.status === 'fulfilled') await kvPut(env, `pbp:${game.id}`, p.value, 3600);
+    if (b.status === 'fulfilled') await kvPut(env, `boxscore:${game.id}`, b.value, 3600);
+    if (p.status === 'fulfilled' && b.status === 'fulfilled') await kvPut(env, doneKey, true, 24 * 3600);
   }
 
   // Game-over notifications — every game that finished today, any team.

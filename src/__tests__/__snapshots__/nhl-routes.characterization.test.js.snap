@@ -3545,6 +3545,7 @@ exports[`nhl/today > Supabase unavailable 1`] = `
     {
       "awayScore": 1,
       "awayTeamCode": "BOS",
+      "broadcasts": [],
       "clock": "12:34",
       "endedIn": null,
       "gameDate": "2026-01-15",
@@ -3561,6 +3562,7 @@ exports[`nhl/today > Supabase unavailable 1`] = `
     {
       "awayScore": 4,
       "awayTeamCode": "MTL",
+      "broadcasts": [],
       "clock": null,
       "endedIn": "OT",
       "gameDate": "2026-01-15",
@@ -3576,6 +3578,7 @@ exports[`nhl/today > Supabase unavailable 1`] = `
     },
     {
       "awayTeamCode": "VAN",
+      "broadcasts": [],
       "clock": null,
       "endedIn": null,
       "gameDate": "2026-01-15",
@@ -3605,6 +3608,7 @@ exports[`nhl/today > response, upstream requests and KV writes; repeat call 1`] 
     {
       "awayScore": 1,
       "awayTeamCode": "BOS",
+      "broadcasts": [],
       "clock": "12:34",
       "endedIn": null,
       "gameDate": "2026-01-15",
@@ -3621,6 +3625,7 @@ exports[`nhl/today > response, upstream requests and KV writes; repeat call 1`] 
     {
       "awayScore": 4,
       "awayTeamCode": "MTL",
+      "broadcasts": [],
       "clock": null,
       "endedIn": "OT",
       "gameDate": "2026-01-15",
@@ -3636,6 +3641,7 @@ exports[`nhl/today > response, upstream requests and KV writes; repeat call 1`] 
     },
     {
       "awayTeamCode": "VAN",
+      "broadcasts": [],
       "clock": null,
       "endedIn": null,
       "gameDate": "2026-01-15",
