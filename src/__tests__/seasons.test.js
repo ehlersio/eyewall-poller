@@ -29,6 +29,7 @@ import {
   getAllAHLSeasons,
   getAllECHLSeasons,
   deriveSeasonType,
+  seasonNameKey,
   deriveStartYear,
 } from '../seasons.js'
 
@@ -68,6 +69,24 @@ describe('deriveSeasonType', () => {
 
   it('defaults to regular for missing/undefined name rather than throwing', () => {
     expect(deriveSeasonType(undefined)).toBe('regular')
+  })
+
+  // HockeyTech named the PWHL's 2026-27 season "2026-27 Pre-Season" where
+  // every prior year was one word. Matched on letters only, punctuation
+  // can't change the answer -- before this it fell through to 'regular',
+  // so from that season's start date the live path would have called the
+  // preseason the current regular season.
+  it.each([
+    '2026-27 Pre-Season',
+    '2026-27 Pre Season',
+    '2026-27 PRE-SEASON',
+  ])('reads %s as preseason whatever its punctuation', (name) => {
+    expect(deriveSeasonType(name)).toBe('preseason')
+  })
+
+  it('keeps letters only in the key it matches on', () => {
+    expect(seasonNameKey('2026-27 Pre-Season')).toBe('preseason')
+    expect(seasonNameKey(null)).toBe('')
   })
 })
 
@@ -544,6 +563,15 @@ describe.each([
     ])
     expect(String(globalThis.fetch.mock.calls[0][0])).toContain(clientParam)
     expect(kvPut).toHaveBeenCalledWith(env, kvKey, FEED, expect.any(Number))
+  })
+
+  it('reads a hyphenated Pre-Season and All-Star name by their letters', async () => {
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockResolvedValue({ ok: true, text: async () => JSON.stringify({ SiteKit: { Seasons: [
+      { season_id: '93', season_name: '2026-27 Pre-Season', career: '1', playoff: '0', start_date: '2026-09-24', end_date: '2026-10-05' },
+      { season_id: '6', season_name: '2026 All Star Classic', career: '0', playoff: '0', start_date: '2026-02-01', end_date: '2026-02-02' },
+    ] } }) })
+    expect((await getAll(env)).map(s2 => s2.seasonType)).toEqual(['preseason', 'allstar'])
   })
 
   it('reads the cached feed instead of refetching', async () => {

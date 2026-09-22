@@ -181,8 +181,20 @@ export async function resolveNHLSeason(env) {
 // needing a new hand-added entry every time HockeyTech assigns a new
 // season_id, at least for whichever season is currently "live".
 
+// HockeyTech's three feeds don't punctuate season names consistently: the
+// PWHL's 2026-27 season is "2026-27 Pre-Season" where every prior year was
+// "Preseason", and the AHL/ECHL write "All-Star" and "All Star". Matching
+// on letters alone makes these checks independent of hyphens, spaces and
+// case -- before this, "Pre-Season" fell through to "regular", so from its
+// start date the live path would have called the PWHL preseason the
+// current regular season (the pipeline's SEASON_TYPE_MAP hardcodes id 10
+// to sidestep exactly that; see pwhl_stats.py).
+export function seasonNameKey(name) {
+  return (name || '').toLowerCase().replace(/[^a-z]/g, '');
+}
+
 export function deriveSeasonType(name) {
-  const n = (name || '').toLowerCase();
+  const n = seasonNameKey(name);
   if (n.includes('playoff')) return 'playoffs';
   if (n.includes('preseason')) return 'preseason';
   if (n.includes('showcase')) return 'showcase';
@@ -369,10 +381,10 @@ export const AHL_HT_KEY = 'ccb91f29d6744675';
 export const AHL_HT_HDR = { 'User-Agent': 'Mozilla/5.0', Referer: 'https://theahl.com/' };
 
 function ahlSeasonTypeFromName(name, playoff, career) {
-  const n = (name || '').toLowerCase();
+  const n = seasonNameKey(name);
   if (playoff === '1' || n.includes('playoffs')) return 'playoffs';
   if (n.includes('preseason')) return 'preseason';
-  if (n.includes('all-star')) return 'allstar';
+  if (n.includes('allstar')) return 'allstar';
   if (career === '1') return 'regular';
   return 'other';
 }
@@ -492,10 +504,10 @@ export const ECHL_HT_HDR = { 'User-Agent': 'Mozilla/5.0', Referer: 'https://echl
 const FALLBACK_ECHL = { seasonId: 73, seasonType: 'regular' };
 
 function echlSeasonTypeFromName(name, playoff, career) {
-  const n = (name || '').toLowerCase();
+  const n = seasonNameKey(name);
   if (playoff === '1' || n.includes('playoffs')) return 'playoffs';
   if (n.includes('preseason')) return 'preseason';
-  if (n.includes('all-star')) return 'allstar';
+  if (n.includes('allstar')) return 'allstar';
   if (career === '1') return 'regular';
   return 'other';
 }
