@@ -324,6 +324,7 @@ Key patterns:
 | `GET` | `/health` | Worker health check |
 | `POST` | `/poll?secret=` | Manual poll trigger |
 | `POST` | `/push/subscribe` | Register a push subscription — Web Push body `{endpoint, keys, teamAbbr, prefs}`, or native iOS (2026-09) `{platform: 'ios', token, teamAbbr, prefs}`. Dedupes by `token` for iOS, `endpoint` otherwise |
+| `POST` | `/live-activity/register` | The iOS app's lock-screen Live Activity push token for one game, `{gameId, token}` (hex), kept per game in `la:tokens:{gameId}` (8h). `poll()` then pushes the game's state to every registered activity whenever it changes (APNs `liveactivity` push type: score, period and last goal/penalty at priority 10, clock-only changes at 5) and ends them with the final score. Uses the same `APNS_*` secrets as native push; the state's keys match `GameActivityAttributes.swift` in eyewall-analytics |
 | `POST` | `/push/unsubscribe` | Remove a push subscription — body `{endpoint}` (Web Push) or `{token}` (native iOS) |
 | `POST` | `/atom/ingest` | Ingest team-blog RSS/Atom articles from GH Actions (auto-detects real Atom vs. plain RSS 2.0 per source) |
 | `POST` | `/moneypuck/ingest` | Ingest MoneyPuck data from GH Actions |

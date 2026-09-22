@@ -30,13 +30,16 @@ vi.mock('../seasons.js', () => ({
 // else in shared.js (kvGet/kvPut against the test env's CACHE mock, etc.)
 // stays real. vi.mock factories are hoisted above regular declarations, so
 // the mock fn itself must be created via vi.hoisted() to be visible here.
-const { sendPushMock } = vi.hoisted(() => ({ sendPushMock: vi.fn().mockResolvedValue('ok') }))
+const { sendPushMock, sendLiveActivityPushMock } = vi.hoisted(() => ({
+  sendPushMock: vi.fn().mockResolvedValue('ok'),
+  sendLiveActivityPushMock: vi.fn().mockResolvedValue('ok'),
+}))
 vi.mock('../shared.js', async (importOriginal) => {
   const actual = await importOriginal()
-  return { ...actual, sendPush: sendPushMock }
+  return { ...actual, sendPush: sendPushMock, sendLiveActivityPush: sendLiveActivityPushMock }
 })
 
-import { handleNHL, poll, refreshPPUnits, oppGoalBody, periodIsOver, scoreboardBroadcasts } from '../nhl.js'
+import { handleNHL, poll, refreshPPUnits, oppGoalBody, periodIsOver, scoreboardBroadcasts, liveActivityState } from '../nhl.js'
 import { resolveNHLSeason } from '../seasons.js'
 
 beforeEach(() => {
@@ -2306,6 +2309,46 @@ describe('poll() — multi-team dual broadcast', () => {
     expect(carOppGoalCall?.[1].title).toContain('BOS scores')
   })
 
+  it('pushes a Live Activity update only when the state changed, at priority 5 for a clock-only change', async () => {
+    sendLiveActivityPushMock.mockClear()
+    const env = makeEnv({ CACHE: makeFakeCache({ 'la:tokens:2025020600': ['ab'.repeat(32)] }) })
+    const liveGame = {
+      id: 2025020600, gameState: 'LIVE', gameType: 2,
+      homeTeam: { id: 12, abbrev: 'CAR', score: 1 },
+      awayTeam: { id: 13, abbrev: 'FLA', score: 0 },
+    }
+    const pbpAt = clock => ({ periodDescriptor: { number: 1, periodType: 'REG' }, clock: { timeRemaining: clock }, plays: [] })
+    mockScoreboardAndPbp({ liveGames: [liveGame], pbpByGameId: { '2025020600': pbpAt('12:00') } })
+    await poll(env, makeCtx())
+    await poll(env, makeCtx()) // unchanged -> no second push
+    expect(sendLiveActivityPushMock).toHaveBeenCalledTimes(1)
+    expect(sendLiveActivityPushMock.mock.calls[0][1]).toMatchObject({ event: 'update', priority: 10 })
+
+    mockScoreboardAndPbp({ liveGames: [liveGame], pbpByGameId: { '2025020600': pbpAt('11:00') } })
+    await poll(env, makeCtx())
+    expect(sendLiveActivityPushMock).toHaveBeenCalledTimes(2)
+    expect(sendLiveActivityPushMock.mock.calls[1][1]).toMatchObject({ priority: 5, state: { clock: '11:00' } })
+  })
+
+  it('ends Live Activities with the final score, and drops a dead token', async () => {
+    sendLiveActivityPushMock.mockClear()
+    sendLiveActivityPushMock.mockResolvedValueOnce('ok').mockResolvedValueOnce('expired')
+    const good = 'aa'.repeat(32), dead = 'bb'.repeat(32)
+    const env = makeEnv({ CACHE: makeFakeCache({ 'la:tokens:2025020601': [good, dead] }) })
+    const finalGame = {
+      id: 2025020601, gameState: 'FINAL', gameType: 2, gameDate: '2026-01-15',
+      homeTeam: { id: 12, abbrev: 'CAR', score: 3 }, awayTeam: { id: 13, abbrev: 'FLA', score: 2 },
+      gameOutcome: { lastPeriodType: 'OT' },
+    }
+    mockScoreboardAndPbp({ completedGames: [finalGame] })
+    await poll(env, makeCtx())
+    expect(sendLiveActivityPushMock.mock.calls[0][1]).toMatchObject({
+      event: 'end', state: { status: 'final', homeScore: 3, awayScore: 2, periodLabel: 'OT' },
+    })
+    const kept = await env.CACHE.get('la:tokens:2025020601')
+    expect(JSON.parse(kept)).toEqual([good])
+  })
+
   it('sends End of P1 when the intermission starts, not when P2 does', async () => {
     const env = makeEnv({
       VAPID_PRIVATE_KEY: 'fake-key-for-test',
@@ -3116,5 +3159,64 @@ describe('scoreboardBroadcasts()', () => {
   it('is empty when the feed lists none', () => {
     expect(scoreboardBroadcasts(undefined)).toEqual([])
     expect(scoreboardBroadcasts([])).toEqual([])
+  })
+})
+
+describe('POST /live-activity/register', () => {
+  const token = 'ab'.repeat(32)
+  const post = (env, body) => handleNHL(
+    makeRequest('/live-activity/register', { method: 'POST', body: JSON.stringify(body) }),
+    env, makeCtx(), new URL('https://x/live-activity/register'))
+
+  it('stores a token per game, once', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({}) })
+    await post(env, { gameId: 2025020700, token })
+    const res = await post(env, { gameId: 2025020700, token })
+    expect(await res.json()).toEqual({ ok: true, count: 1 })
+    expect(JSON.parse(await env.CACHE.get('la:tokens:2025020700'))).toEqual([token])
+  })
+
+  it('rejects a bad game id or token', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({}) })
+    expect((await post(env, { gameId: 'x', token })).status).toBe(400)
+    expect((await post(env, { gameId: 2025020700, token: 'not hex!' })).status).toBe(400)
+  })
+})
+
+describe('liveActivityState()', () => {
+  const game = { gameType: 2, homeTeam: { id: 12, abbrev: 'CAR', score: 2 }, awayTeam: { id: 13, abbrev: 'FLA', score: 1 } }
+  const pbp = {
+    periodDescriptor: { number: 2, periodType: 'REG' },
+    clock: { timeRemaining: '07:58', inIntermission: false },
+    rosterSpots: [{ playerId: 1, lastName: { default: 'Aho' } }, { playerId: 2, lastName: { default: 'Tkachuk' } }],
+    plays: [
+      { typeDescKey: 'goal', periodDescriptor: { number: 2, periodType: 'REG' }, timeInPeriod: '12:02', situationCode: '1451',
+        details: { eventOwnerTeamId: 12, scoringPlayerId: 1, scoringPlayerTotal: 3 } },
+      { typeDescKey: 'penalty', periodDescriptor: { number: 2, periodType: 'REG' }, timeInPeriod: '12:30', situationCode: '1451',
+        details: { eventOwnerTeamId: 13, committedByPlayerId: 2, duration: 2, descKey: 'high-sticking' } },
+    ],
+  }
+
+  it('builds the lock-screen state from the scoreboard game and pbp', () => {
+    expect(liveActivityState(game, pbp)).toEqual({
+      homeScore: 2, awayScore: 1, periodLabel: '2nd', clock: '07:58', inIntermission: false, status: 'live',
+      lastEvent: 'PEN · FLA · Tkachuk · 2 min high sticking',
+      strength: 'CAR PP',
+    })
+  })
+
+  it('names a goal and labels 5v3, empty nets and playoff OTs', () => {
+    const goalOnly = { ...pbp, plays: [{ ...pbp.plays[0], situationCode: '1351' }] }
+    expect(liveActivityState(game, goalOnly)).toMatchObject({ lastEvent: 'GOAL · CAR · Aho (3) · 2nd 12:02', strength: 'CAR PP 5v3' })
+    const pulled = { ...pbp, plays: [{ typeDescKey: 'faceoff', situationCode: '0651' }] }
+    expect(liveActivityState(game, pulled).strength).toBe('FLA 6v5')
+    const playoffs = { ...game, gameType: 3 }
+    expect(liveActivityState(playoffs, { ...pbp, periodDescriptor: { number: 5, periodType: 'OT' } }).periodLabel).toBe('2OT')
+  })
+
+  it('has no strength during an intermission, and final uses how the game ended', () => {
+    expect(liveActivityState(game, { ...pbp, clock: { inIntermission: true } }).strength).toBe(null)
+    const final = liveActivityState({ ...game, gameOutcome: { lastPeriodType: 'SO' } }, pbp, { final: true })
+    expect(final).toMatchObject({ status: 'final', periodLabel: 'SO', strength: null, inIntermission: false })
   })
 })

@@ -916,6 +916,50 @@ export async function sendAPNsPush(sub, payload, env) {
   }
 }
 
+// Live Activity update/end for one activity push token (the iOS app's
+// lock-screen game tracker -- see nhl.js's pushLiveActivities()). Same APNs
+// key and JWT as sendAPNsPush, with the Live Activity push type and topic.
+// `state` is the activity's ContentState; its keys must match
+// GameActivityAttributes.swift in eyewall-analytics. Priority 10 is for
+// changes worth showing right away (score, period); 5 for the clock, which
+// Apple delivers opportunistically and doesn't count against the budget.
+export async function sendLiveActivityPush(token, { event = 'update', state, priority = 10, staleDate, dismissalDate }, env) {
+  if (!env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_AUTH_KEY) {
+    console.error('sendLiveActivityPush: APNS_KEY_ID/APNS_TEAM_ID/APNS_AUTH_KEY not configured');
+    return 'error';
+  }
+  try {
+    const jwt  = await buildAPNsJWT(env);
+    const host = env.APNS_ENV === 'production' ? 'api.push.apple.com' : 'api.sandbox.push.apple.com';
+    const now  = Math.floor(Date.now() / 1000);
+    const aps  = { timestamp: now, event, 'content-state': state };
+    if (staleDate) aps['stale-date'] = staleDate;
+    if (dismissalDate) aps['dismissal-date'] = dismissalDate;
+    const res = await fetch(`https://${host}/3/device/${token}`, {
+      method:  'POST',
+      headers: {
+        'authorization':  `bearer ${jwt}`,
+        'apns-topic':     `${env.APNS_BUNDLE_ID || 'com.eyewallanalytics.app'}.push-type.liveactivity`,
+        'apns-push-type': 'liveactivity',
+        'apns-priority':  String(priority),
+      },
+      body: JSON.stringify({ aps }),
+    });
+    if (res.status === 410) return 'expired';
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      // A token for an activity the user dismissed comes back 400 BadDeviceToken
+      if (res.status === 400 && body.includes('BadDeviceToken')) return 'expired';
+      console.warn(`sendLiveActivityPush failed ${res.status}: ${body.slice(0, 150)}`);
+      return 'error';
+    }
+    return 'ok';
+  } catch (err) {
+    console.error('sendLiveActivityPush error:', err.message);
+    return 'error';
+  }
+}
+
 // Head-to-head derived insights (Session 88, Team vs Team Mode 2) -- shared
 // by nhl.js's /team-seasons/head-to-head and pwhl.js's
 // /pwhl/team-seasons/head-to-head. Each route queries its own league's

@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix } from './shared.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { fetchTradeTree } from './trades.js';
@@ -1603,6 +1603,100 @@ export async function fetchNews(env, teamAbbr = TEAM_ABBR) {
 // ── Main poll ─────────────────────────────────────────────────
 
 
+// ── Live Activities (iOS lock-screen game tracker) ───────────
+// The app starts an activity for a game and registers its push token
+// (POST /live-activity/register); poll() then pushes every change to it and
+// ends it at the final. Tokens live per game in `la:tokens:{gameId}`.
+const LA_TOKEN_TTL = 8 * 3600;
+const LA_MAX_TOKENS = 1000;
+
+function periodLabelFor(num, periodType, gameType) {
+  if (!num) return '';
+  if (num <= 3) return ['1st', '2nd', '3rd'][num - 1];
+  if (periodType === 'SO' || (gameType !== 3 && num >= 5)) return 'SO';
+  return num === 4 ? 'OT' : `${num - 3}OT`;
+}
+
+// The Live Activity's ContentState. Keys must match GameActivityAttributes
+// .ContentState in eyewall-analytics (ios/App/EyeWallLiveActivity) -- the
+// app decodes this JSON straight into it.
+export function liveActivityState(game, pbp, { final = false } = {}) {
+  const homeAbbr = game.homeTeam?.abbrev, awayAbbr = game.awayTeam?.abbrev;
+  const homeId = game.homeTeam?.id;
+  const pd = pbp?.periodDescriptor || game.periodDescriptor || {};
+  const plays = pbp?.plays || [];
+  const inIntermission = !final && !!pbp?.clock?.inIntermission;
+  const periodLabel = periodLabelFor(pd.number, pd.periodType, game.gameType);
+
+  const names = {};
+  for (const r of pbp?.rosterSpots || []) names[r.playerId] = r.lastName?.default || '';
+  const teamOf = p => (p.details?.eventOwnerTeamId === homeId ? homeAbbr : awayAbbr);
+
+  let lastEvent = null;
+  const last = [...plays].reverse().find(p => p.typeDescKey === 'goal' || p.typeDescKey === 'penalty');
+  if (last) {
+    const d = last.details || {};
+    const when = `${periodLabelFor(last.periodDescriptor?.number, last.periodDescriptor?.periodType, game.gameType)} ${last.timeInPeriod || ''}`.trim();
+    if (last.typeDescKey === 'goal') {
+      const who = names[d.scoringPlayerId] || '';
+      lastEvent = `GOAL · ${teamOf(last)} · ${who}${d.scoringPlayerTotal ? ` (${d.scoringPlayerTotal})` : ''} · ${when}`;
+    } else {
+      const who = names[d.committedByPlayerId] || names[d.servedByPlayerId] || '';
+      const what = (d.descKey || 'penalty').replace(/-/g, ' ');
+      lastEvent = `PEN · ${teamOf(last)}${who ? ` · ${who}` : ''} · ${d.duration || 2} min ${what}`;
+    }
+  }
+
+  // Strength from the latest play's situationCode: [awayG][awayS][homeS][homeG]
+  let strength = null;
+  const sc = plays[plays.length - 1]?.situationCode;
+  if (!final && !inIntermission && sc?.length === 4) {
+    const awayG = sc[0] === '1', awayS = +sc[1], homeS = +sc[2], homeG = sc[3] === '1';
+    if (!awayG) strength = `${awayAbbr} 6v5`;
+    else if (!homeG) strength = `${homeAbbr} 6v5`;
+    else if (homeS !== awayS) {
+      const [pp, big, small] = homeS > awayS ? [homeAbbr, homeS, awayS] : [awayAbbr, awayS, homeS];
+      strength = `${pp} PP${big - small >= 2 ? ` ${big}v${small}` : ''}`;
+    }
+  }
+
+  return {
+    homeScore: game.homeTeam?.score ?? 0,
+    awayScore: game.awayTeam?.score ?? 0,
+    periodLabel: final && game.gameOutcome?.lastPeriodType && game.gameOutcome.lastPeriodType !== 'REG'
+      ? game.gameOutcome.lastPeriodType : periodLabel,
+    clock: pbp?.clock?.timeRemaining || '',
+    inIntermission,
+    status: final ? 'final' : 'live',
+    lastEvent,
+    strength,
+  };
+}
+
+// Pushes `state` to every activity registered for the game, if it changed.
+// Score/period/event changes go at priority 10 (shown right away); a
+// clock-only change goes at 5. Tokens Apple says are dead are dropped.
+async function pushLiveActivities(env, gameId, state, { end = false } = {}) {
+  const tokens = (await kvGet(env, `la:tokens:${gameId}`)) || [];
+  if (!tokens.length) return;
+  const lastKey = `la:last:${gameId}`;
+  const last = await kvGet(env, lastKey);
+  if (!end && last && JSON.stringify(last) === JSON.stringify(state)) return;
+  const withoutClock = st => JSON.stringify({ ...st, clock: null });
+  const priority = end || !last || withoutClock(state) !== withoutClock(last) ? 10 : 5;
+  const now = Math.floor(Date.now() / 1000);
+  const results = await Promise.all(tokens.map(t => sendLiveActivityPush(t, {
+    event: end ? 'end' : 'update',
+    state,
+    priority,
+    staleDate: end ? undefined : now + 5 * 60,
+    dismissalDate: end ? now + 30 * 60 : undefined,
+  }, env)));
+  const alive = tokens.filter((_, i) => results[i] !== 'expired');
+  if (alive.length !== tokens.length) await kvPut(env, `la:tokens:${gameId}`, alive, LA_TOKEN_TTL);
+  await kvPut(env, lastKey, state, LA_TOKEN_TTL);
+}
+
 // ── Main poll (scheduled every 60s) ────────────────────────
 
 // Derives a July 1 cutoff from the resolved season's END year (e.g.
@@ -1660,6 +1754,9 @@ export async function poll(env, _ctx) {
     if (pbpRes.status === 'fulfilled') {
       const pbpData = pbpRes.value;
       await kvPut(env, `pbp:${liveId}`, pbpData, LIVE_GAME_TTL);
+      await pushLiveActivities(env, liveId, liveActivityState(liveGame, pbpData)).catch(e =>
+        console.error(`Live Activity push error (game ${liveId}):`, e.message)
+      );
       // Detect goals + events and send push notifications
       if (env.VAPID_PRIVATE_KEY) {
         await detectAndNotify(env, liveGame, pbpData).catch(e =>
@@ -1687,6 +1784,9 @@ export async function poll(env, _ctx) {
     if (p.status === 'fulfilled') await kvPut(env, `pbp:${game.id}`, p.value, 3600);
     if (b.status === 'fulfilled') await kvPut(env, `boxscore:${game.id}`, b.value, 3600);
     if (p.status === 'fulfilled' && b.status === 'fulfilled') await kvPut(env, doneKey, true, 24 * 3600);
+    // Final score to any lock-screen Live Activity, which then ends
+    await pushLiveActivities(env, game.id, liveActivityState(game, p.status === 'fulfilled' ? p.value : null, { final: true }), { end: true })
+      .catch(e => console.error(`Live Activity end error (game ${game.id}):`, e.message));
   }
 
   // Game-over notifications — every game that finished today, any team.
@@ -2844,6 +2944,24 @@ Only reference the two teams named above and the numbers given -- no player name
   // Push subscribe — Web Push (endpoint+keys) or, as of 2026-09, native iOS
   // (platform: 'ios' + an APNs device token) share this one route and the
   // one push:subs KV array; sendPush()/broadcast() branch on sub.platform.
+  // POST /live-activity/register { gameId, token } -- the iOS app's Live
+  // Activity push token for one game (see pushLiveActivities()).
+  if (url.pathname === '/live-activity/register' && request.method === 'POST') {
+    let body;
+    try { body = await request.json(); } catch { return badRequest('invalid JSON'); }
+    const gameId = Number(body?.gameId);
+    const token = String(body?.token || '');
+    if (!Number.isInteger(gameId) || gameId <= 0) return badRequest('gameId required');
+    if (!/^[0-9a-f]{32,256}$/i.test(token)) return badRequest('token must be hex');
+    const key = `la:tokens:${gameId}`;
+    const tokens = (await kvGet(env, key)) || [];
+    if (!tokens.includes(token)) {
+      tokens.push(token);
+      await kvPut(env, key, tokens.slice(-LA_MAX_TOKENS), LA_TOKEN_TTL);
+    }
+    return json({ ok: true, count: tokens.length });
+  }
+
   if (url.pathname === '/push/subscribe' && request.method === 'POST') {
     const body = await request.json();
     const subs = (await kvGet(env, 'push:subs')) || [];
