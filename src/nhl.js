@@ -2193,7 +2193,12 @@ export async function handleNHL(request, env, ctx, url) {
       while (true) {
         const rows = await sbRows(
           `${SB_URL}/rest/v1/shot_events?game_id=in.(${gameIds.join(',')})&season=eq.${season}` +
-          `&select=game_id,team,x,y,event_type,period,time_in_period,shot_type&order=game_id.asc`,
+          // event_id (2026-09) is the NHL's own id for the play -- with
+          // game_id it addresses that goal's video and its tracking replay
+          // (/nhl/goal-replay), which is what lets the "All N" view offer
+          // them at all. Null on a row whose game predates the column and
+          // hasn't been re-processed; the app reads that as "no replay".
+          `&select=game_id,event_id,team,x,y,event_type,period,time_in_period,shot_type&order=game_id.asc`,
           { 'Range': `${offset}-${offset + PAGE - 1}`, 'Range-Unit': 'items', 'Prefer': 'count=none' }
         );
         if (rows instanceof Response) return rows;

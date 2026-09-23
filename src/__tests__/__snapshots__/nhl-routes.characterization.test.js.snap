@@ -3523,7 +3523,7 @@ exports[`nhl/shots > response, upstream requests and KV writes; repeat call 1`] 
     },
     {
       "range": "0-999",
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/shot_events?game_id=in.(2025020498,2025020499)&season=eq.20252026&select=game_id,team,x,y,event_type,period,time_in_period,shot_type&order=game_id.asc",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/shot_events?game_id=in.(2025020498,2025020499)&season=eq.20252026&select=game_id,event_id,team,x,y,event_type,period,time_in_period,shot_type&order=game_id.asc",
     },
   ],
 }
