@@ -1770,6 +1770,34 @@ describe('GET /nhl/shots', () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
   })
 
+  // The "All N" view's dots come from this route, so a goal there can only
+  // offer its video or its tracking replay if the row carries the NHL's own
+  // event id -- (game_id, event_id) is what /nhl/goal-replay takes.
+  it('asks for each row\'s event id, and passes it through', async () => {
+    const env = makeEnv()
+    const row = {
+      game_id: 2025020001, event_id: 59, team: 'TOR', x: 80, y: 3,
+      event_type: 'goal', period: 1, time_in_period: '09:14', shot_type: 'wrist',
+    }
+    let shotQuery = ''
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('club-schedule-season')) {
+        return Promise.resolve({ ok: true, json: async () => ({ games: [{ id: 2025020001, gameState: 'OFF' }] }) })
+      }
+      shotQuery = u
+      return Promise.resolve({ ok: true, json: async () => [row] })
+    })
+
+    const res = await handleNHL(
+      makeRequest('/nhl/shots?team=TOR&season=20252026'), env, makeCtx(),
+      new URL('https://example.com/nhl/shots?team=TOR&season=20252026')
+    )
+
+    expect(shotQuery).toContain('event_id')
+    expect(await res.json()).toEqual([row])
+  })
+
   it('returns an empty array without querying Supabase when the team has no completed games', async () => {
     const env = makeEnv()
     globalThis.fetch = vi.fn().mockResolvedValue({
