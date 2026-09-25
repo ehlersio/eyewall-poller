@@ -39,7 +39,7 @@ vi.mock('../shared.js', async (importOriginal) => {
   return { ...actual, sendPush: sendPushMock, sendLiveActivityPush: sendLiveActivityPushMock }
 })
 
-import { handleNHL, poll, refreshPPUnits, oppGoalBody, periodIsOver, scoreboardBroadcasts, liveActivityState } from '../nhl.js'
+import { handleNHL, poll, refreshPPUnits, oppGoalBody, periodIsOver, scoreboardBroadcasts, liveActivityState, startLiveActivities } from '../nhl.js'
 import { resolveNHLSeason } from '../seasons.js'
 
 beforeEach(() => {
@@ -3208,6 +3208,74 @@ describe('POST /live-activity/register', () => {
     const env = makeEnv({ CACHE: makeFakeCache({}) })
     expect((await post(env, { gameId: 'x', token })).status).toBe(400)
     expect((await post(env, { gameId: 2025020700, token: 'not hex!' })).status).toBe(400)
+  })
+})
+
+describe('POST /live-activity/start-token', () => {
+  const token = 'cd'.repeat(32)
+  const post = (env, body) => handleNHL(
+    makeRequest('/live-activity/start-token', { method: 'POST', body: JSON.stringify(body) }),
+    env, makeCtx(), new URL('https://x/live-activity/start-token'))
+  const list = async (env, team) => JSON.parse(await env.CACHE.get(`la:start:${team}`) || '[]')
+
+  it('puts a token on its team once, with its language', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({}) })
+    await post(env, { token, team: 'car', locale: 'fr' })
+    const res = await post(env, { token, team: 'CAR', locale: 'fr' })
+    expect(await res.json()).toEqual({ ok: true, team: 'CAR' })
+    expect(await list(env, 'CAR')).toEqual([{ token, locale: 'fr' }])
+  })
+
+  it('moves a token when the favorite changes, and takes it off when turned off', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({}) })
+    await post(env, { token, team: 'CAR' })
+    await post(env, { token, team: 'BOS' })
+    expect(await list(env, 'CAR')).toEqual([])
+    expect(await list(env, 'BOS')).toEqual([{ token, locale: 'en' }])
+    await post(env, { token, team: 'BOS', enabled: false })
+    expect(await list(env, 'BOS')).toEqual([])
+  })
+
+  it('rejects a bad token or a team that isn’t an NHL team', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({}) })
+    expect((await post(env, { token: 'nope', team: 'CAR' })).status).toBe(400)
+    expect((await post(env, { token, team: 'XYZ' })).status).toBe(400)
+  })
+})
+
+describe('startLiveActivities()', () => {
+  const game = { id: 2026010044, homeTeam: { abbrev: 'CAR' }, awayTeam: { abbrev: 'NSH' } }
+  const state = { homeScore: 0, awayScore: 0, periodLabel: '1st', clock: '20:00', inIntermission: false, status: 'live', lastEvent: null, strength: null }
+  const a = 'aa'.repeat(32), b = 'bb'.repeat(32), c = 'cc'.repeat(32)
+
+  it('starts each follower’s activity once per game, from either side', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({
+      'la:start:CAR': [{ token: a, locale: 'en' }, { token: b, locale: 'fr' }],
+      'la:start:NSH': [{ token: c, locale: 'en' }],
+    }) })
+    sendLiveActivityPushMock.mockClear()
+    await startLiveActivities(env, game, state)
+    expect(sendLiveActivityPushMock).toHaveBeenCalledTimes(3)
+    const [token, opts] = sendLiveActivityPushMock.mock.calls[0]
+    expect(token).toBe(a)
+    expect(opts).toMatchObject({
+      event: 'start', state, attributesType: 'GameActivityAttributes',
+      attributes: { gameId: 2026010044, homeAbbr: 'CAR', awayAbbr: 'NSH', homeColor: '#ff0f0f', followAbbr: 'CAR' },
+      alert: { title: 'NSH @ CAR' },
+    })
+    expect(sendLiveActivityPushMock.mock.calls[1][1].alert.body).toMatch(/écran verrouillé/)
+    expect(sendLiveActivityPushMock.mock.calls[2][1].attributes.followAbbr).toBe('NSH')
+
+    await startLiveActivities(env, game, state)
+    expect(sendLiveActivityPushMock).toHaveBeenCalledTimes(3) // not again next minute
+  })
+
+  it('drops a start token Apple says is dead', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({ 'la:start:CAR': [{ token: a, locale: 'en' }, { token: b, locale: 'en' }] }) })
+    sendLiveActivityPushMock.mockClear()
+    sendLiveActivityPushMock.mockResolvedValueOnce('expired').mockResolvedValueOnce('ok')
+    await startLiveActivities(env, game, state)
+    expect(JSON.parse(await env.CACHE.get('la:start:CAR'))).toEqual([{ token: b, locale: 'en' }])
   })
 })
 

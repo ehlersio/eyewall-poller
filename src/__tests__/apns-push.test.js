@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { generateKeyPairSync } from 'crypto'
 import { makeEnv } from './route-harness.js'
-import { subId, sendPush, sendAPNsPush } from '../shared.js'
+import { subId, sendPush, sendAPNsPush, sendLiveActivityPush } from '../shared.js'
 
 function makeTestAPNsKey() {
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
@@ -119,5 +119,36 @@ describe('sendAPNsPush', () => {
     const secondJwt = globalThis.fetch.mock.calls[1][1].headers.authorization
 
     expect(secondJwt).toBe(firstJwt)
+  })
+})
+
+describe('sendLiveActivityPush', () => {
+  it('sends a push-to-start with the activity’s attributes, their type and an alert', async () => {
+    const env = makeEnv({ APNS_KEY_ID: 'k', APNS_TEAM_ID: 't', APNS_AUTH_KEY: makeTestAPNsKey() })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{}' })
+    const attributes = { gameId: 1, homeAbbr: 'CAR', awayAbbr: 'NSH', homeColor: '#ff0f0f', awayColor: '#FFB81C', followAbbr: 'CAR' }
+
+    await sendLiveActivityPush('start-token', {
+      event: 'start', state: { homeScore: 0 }, attributes, attributesType: 'GameActivityAttributes',
+      alert: { title: 'NSH @ CAR', body: 'Puck drop' },
+    }, env)
+
+    const [url, opts] = globalThis.fetch.mock.calls[0]
+    expect(url).toBe('https://api.sandbox.push.apple.com/3/device/start-token')
+    expect(opts.headers['apns-push-type']).toBe('liveactivity')
+    const { aps } = JSON.parse(opts.body)
+    expect(aps).toMatchObject({
+      event: 'start', 'content-state': { homeScore: 0 },
+      'attributes-type': 'GameActivityAttributes', attributes, alert: { title: 'NSH @ CAR', body: 'Puck drop' },
+    })
+  })
+
+  it('leaves attributes off an update', async () => {
+    const env = makeEnv({ APNS_KEY_ID: 'k', APNS_TEAM_ID: 't', APNS_AUTH_KEY: makeTestAPNsKey() })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{}' })
+    await sendLiveActivityPush('update-token', { event: 'update', state: {}, attributes: { gameId: 1 } }, env)
+    const { aps } = JSON.parse(globalThis.fetch.mock.calls[0][1].body)
+    expect(aps.attributes).toBeUndefined()
+    expect(aps['attributes-type']).toBeUndefined()
   })
 })

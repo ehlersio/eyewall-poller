@@ -1687,6 +1687,61 @@ export function liveActivityState(game, pbp, { final = false } = {}) {
   };
 }
 
+// ── Lock Screen auto-follow (push-to-start, iOS 17.2+) ────────
+// With "Follow my team's games" on, the app registers an ActivityKit
+// push-to-start token for the user's team (POST /live-activity/start-token).
+// When that team's game is live, startLiveActivities() sends it one
+// `event: start` push -- the Live Activity appears whether or not the app
+// is open. iOS then wakes the app, which reports the new activity's update
+// token to /live-activity/register, and pushLiveActivities() takes over.
+// Entries live in `la:start:{TEAM}` as { token, locale }; `la:startteam:
+// {token}` says which team a token is on, so switching teams moves it.
+const LA_START_TTL = 90 * 24 * 3600; // re-registered on every app launch
+const LA_START_ALERT = {
+  en: { title: (away, home) => `${away} @ ${home}`, body: 'Puck drop — following on your Lock Screen.' },
+  fr: { title: (away, home) => `${away} @ ${home}`, body: 'Mise au jeu — suivi sur votre écran verrouillé.' },
+};
+// The attributes' dot colours: each team's displayColor from eyewall-
+// analytics' utils/teamConfig.js (what the app sends when it starts one
+// itself). KEEP IN SYNC with that file if a team's colour changes.
+const LA_TEAM_COLORS = { ANA: '#F47A38', BOS: '#FFB81C', BUF: '#649cff', CAR: '#ff0f0f', CBJ: '#4e9fff', CGY: '#ef3654', CHI: '#f52c4e', COL: '#c85e80', DAL: '#009365', DET: '#ef384c', EDM: '#FF4C00', FLA: '#5b9ef9', LAK: '#818181', MIN: '#2b926b', MTL: '#e04b5b', NJD: '#ef384c', NSH: '#FFB81C', NYI: '#649cff', NYR: '#689bff', OTT: '#e24b5b', PHI: '#F74902', PIT: '#FCB514', SEA: '#99D9D9', SJS: '#008e99', STL: '#659bff', TBL: '#5f9cff', TOR: '#42a0ff', UTA: '#6CAEDF', VAN: '#009645', VGK: '#B4975A', WPG: '#5b9ef9', WSH: '#5b9ef9' };
+
+export async function startLiveActivities(env, game, state) {
+  const home = game.homeTeam?.abbrev, away = game.awayTeam?.abbrev;
+  const sentKey = `la:started:${game.id}`;
+  const sent = new Set((await kvGet(env, sentKey)) || []);
+  let changed = false;
+  for (const team of [home, away]) {
+    if (!TEAM_CONFIGS[team]) continue;
+    const listKey = `la:start:${team}`;
+    const entries = (await kvGet(env, listKey)) || [];
+    const due = entries.filter(e => !sent.has(e.token));
+    if (!due.length) continue;
+    const now = Math.floor(Date.now() / 1000);
+    const attributes = {
+      gameId: game.id, homeAbbr: home, awayAbbr: away,
+      homeColor: LA_TEAM_COLORS[home] || '#e4e8f0', awayColor: LA_TEAM_COLORS[away] || '#e4e8f0',
+      followAbbr: team,
+    };
+    const results = await Promise.all(due.map(e => {
+      const copy = LA_START_ALERT[e.locale] || LA_START_ALERT.en;
+      return sendLiveActivityPush(e.token, {
+        event: 'start', state, attributes, attributesType: 'GameActivityAttributes',
+        alert: { title: copy.title(away, home), body: copy.body },
+        staleDate: now + 5 * 60,
+      }, env);
+    }));
+    // One try per device per game, whatever came back: an error here isn't
+    // retried every minute for the rest of the game. A user who opens the
+    // app during the game gets it started there instead.
+    due.forEach(e => sent.add(e.token));
+    changed = true;
+    const dead = new Set(due.filter((_, i) => results[i] === 'expired').map(e => e.token));
+    if (dead.size) await kvPut(env, listKey, entries.filter(e => !dead.has(e.token)), LA_START_TTL);
+  }
+  if (changed) await kvPut(env, sentKey, [...sent], LA_TOKEN_TTL);
+}
+
 // Pushes `state` to every activity registered for the game, if it changed.
 // Score/period/event changes go at priority 10 (shown right away); a
 // clock-only change goes at 5. Tokens Apple says are dead are dropped.
@@ -1768,7 +1823,11 @@ export async function poll(env, _ctx) {
     if (pbpRes.status === 'fulfilled') {
       const pbpData = pbpRes.value;
       await kvPut(env, `pbp:${liveId}`, pbpData, LIVE_GAME_TTL);
-      await pushLiveActivities(env, liveId, liveActivityState(liveGame, pbpData)).catch(e =>
+      const laState = liveActivityState(liveGame, pbpData);
+      await startLiveActivities(env, liveGame, laState).catch(e =>
+        console.error(`Live Activity start error (game ${liveId}):`, e.message)
+      );
+      await pushLiveActivities(env, liveId, laState).catch(e =>
         console.error(`Live Activity push error (game ${liveId}):`, e.message)
       );
       // Detect goals + events and send push notifications
@@ -2985,6 +3044,40 @@ Only reference the two teams named above and the numbers given -- no player name
       await kvPut(env, key, tokens.slice(-LA_MAX_TOKENS), LA_TOKEN_TTL);
     }
     return json({ ok: true, count: tokens.length });
+  }
+
+  // POST /live-activity/start-token { token, team, enabled, locale } -- the
+  // iOS app's push-to-start token for "Follow my team's games" (see
+  // startLiveActivities()). enabled:false takes it off every team.
+  if (url.pathname === '/live-activity/start-token' && request.method === 'POST') {
+    let body;
+    try { body = await request.json(); } catch { return badRequest('invalid JSON'); }
+    const token = String(body?.token || '');
+    const team = String(body?.team || '').toUpperCase();
+    const enabled = body?.enabled !== false;
+    const locale = body?.locale === 'fr' ? 'fr' : 'en';
+    if (!/^[0-9a-f]{32,256}$/i.test(token)) return badRequest('token must be hex');
+    if (enabled && !TEAM_CONFIGS[team]) return badRequest('team must be an NHL team');
+    const teamKey = `la:startteam:${token}`;
+    const previous = await kvGet(env, teamKey);
+    for (const t of new Set([previous, team].filter(Boolean))) {
+      if (enabled && t === team) continue;
+      const listKey = `la:start:${t}`;
+      const entries = (await kvGet(env, listKey)) || [];
+      if (entries.some(e => e.token === token)) {
+        await kvPut(env, listKey, entries.filter(e => e.token !== token), LA_START_TTL);
+      }
+    }
+    if (enabled) {
+      const listKey = `la:start:${team}`;
+      const entries = ((await kvGet(env, listKey)) || []).filter(e => e.token !== token);
+      entries.push({ token, locale });
+      await kvPut(env, listKey, entries.slice(-LA_MAX_TOKENS), LA_START_TTL);
+      await kvPut(env, teamKey, team, LA_START_TTL);
+    } else if (previous) {
+      await kvPut(env, teamKey, null, 60);
+    }
+    return json({ ok: true, team: enabled ? team : null });
   }
 
   if (url.pathname === '/push/subscribe' && request.method === 'POST') {
