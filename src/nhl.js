@@ -1611,6 +1611,15 @@ export async function fetchNews(env, teamAbbr = TEAM_ABBR) {
 const LA_TOKEN_TTL = 8 * 3600;
 const LA_MAX_TOKENS = 1000;
 
+// Each side has 3-6 skaters (5-on-3 at fewest, 6 with the goalie pulled at
+// most) and a goalie digit of 0 or 1; any other code is a data-entry error.
+// Same rule as eyewall-analytics' utils/situationCode.js.
+export function isValidSituationCode(sc) {
+  if (typeof sc !== 'string' || !/^[01]\d\d[01]$/.test(sc)) return false;
+  const awayS = Number(sc[1]), homeS = Number(sc[2]);
+  return awayS >= 3 && awayS <= 6 && homeS >= 3 && homeS <= 6;
+}
+
 function periodLabelFor(num, periodType, gameType) {
   if (!num) return '';
   if (num <= 3) return ['1st', '2nd', '3rd'][num - 1];
@@ -1648,10 +1657,14 @@ export function liveActivityState(game, pbp, { final = false } = {}) {
     }
   }
 
-  // Strength from the latest play's situationCode: [awayG][awayS][homeS][homeG]
+  // Strength from the latest real situationCode: [awayG][awayS][homeS][homeG].
+  // The NHL's scorer sometimes enters an impossible one on a new goal and
+  // fixes it later -- CAR-NSH 2026-09-24 had goals coded '1020' (no away
+  // skaters, two home skaters, no home goalie), which read as "CAR 6v5".
+  // Skip those and use the last code that can be true.
   let strength = null;
-  const sc = plays[plays.length - 1]?.situationCode;
-  if (!final && !inIntermission && sc?.length === 4) {
+  const sc = [...plays].reverse().map(p => p.situationCode).find(isValidSituationCode);
+  if (!final && !inIntermission && sc) {
     const awayG = sc[0] === '1', awayS = +sc[1], homeS = +sc[2], homeG = sc[3] === '1';
     if (!awayG) strength = `${awayAbbr} 6v5`;
     else if (!homeG) strength = `${homeAbbr} 6v5`;
