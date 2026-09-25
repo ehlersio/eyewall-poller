@@ -923,7 +923,10 @@ export async function sendAPNsPush(sub, payload, env) {
 // GameActivityAttributes.swift in eyewall-analytics. Priority 10 is for
 // changes worth showing right away (score, period); 5 for the clock, which
 // Apple delivers opportunistically and doesn't count against the budget.
-export async function sendLiveActivityPush(token, { event = 'update', state, priority = 10, staleDate, dismissalDate }, env) {
+// event 'start' is a push-to-start (iOS 17.2+): `token` is the app's
+// push-to-start token, and the payload also carries the activity's
+// attributes, their Swift type name and the alert shown as it starts.
+export async function sendLiveActivityPush(token, { event = 'update', state, priority = 10, staleDate, dismissalDate, attributes, attributesType, alert }, env) {
   if (!env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_AUTH_KEY) {
     console.error('sendLiveActivityPush: APNS_KEY_ID/APNS_TEAM_ID/APNS_AUTH_KEY not configured');
     return 'error';
@@ -935,6 +938,11 @@ export async function sendLiveActivityPush(token, { event = 'update', state, pri
     const aps  = { timestamp: now, event, 'content-state': state };
     if (staleDate) aps['stale-date'] = staleDate;
     if (dismissalDate) aps['dismissal-date'] = dismissalDate;
+    if (event === 'start') {
+      aps['attributes-type'] = attributesType;
+      aps.attributes = attributes;
+      if (alert) aps.alert = alert;
+    }
     const res = await fetch(`https://${host}/3/device/${token}`, {
       method:  'POST',
       headers: {
