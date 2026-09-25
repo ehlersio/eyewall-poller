@@ -3242,6 +3242,14 @@ describe('liveActivityState()', () => {
     expect(liveActivityState(playoffs, { ...pbp, periodDescriptor: { number: 5, periodType: 'OT' } }).periodLabel).toBe('2OT')
   })
 
+  it('skips an impossible situationCode and reads the last real one', () => {
+    // CAR-NSH 2026-09-24: a goal coded '1020' read as "CAR 6v5".
+    const bad = { ...pbp, plays: [...pbp.plays, { typeDescKey: 'goal', periodDescriptor: { number: 2, periodType: 'REG' }, timeInPeriod: '13:00', situationCode: '1020', details: { eventOwnerTeamId: 13 } }] }
+    expect(liveActivityState(game, bad).strength).toBe('CAR PP')
+    const onlyBad = { ...pbp, plays: [{ typeDescKey: 'goal', situationCode: '1020', details: { eventOwnerTeamId: 13 } }] }
+    expect(liveActivityState(game, onlyBad).strength).toBe(null)
+  })
+
   it('has no strength during an intermission, and final uses how the game ended', () => {
     expect(liveActivityState(game, { ...pbp, clock: { inIntermission: true } }).strength).toBe(null)
     const final = liveActivityState({ ...game, gameOutcome: { lastPeriodType: 'SO' } }, pbp, { final: true })
