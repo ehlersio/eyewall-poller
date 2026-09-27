@@ -253,6 +253,62 @@ describe('GET /schedule', () => {
     expect(await res.json()).toEqual(cachedGames)
     expect(ctx._promises.length).toBe(0)
   })
+
+  // Regression (2026-09-27): the next season, asked for before the Worker
+  // flips to it, was cached as "historical" for 60 days -- VGK/CHI's
+  // 2026-27 preseason games stayed FUT long after they'd been played.
+  it('cold cache, the NEXT season (not yet current here): short TTL, not the 60-day historical one', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [{ id: 7 }] }) })
+    const ctx = makeCtx()
+
+    await handleNHL(
+      makeRequest('/schedule?season=20262027'), env, ctx,
+      new URL('https://example.com/schedule?season=20262027')
+    )
+    await flushWaitUntil(ctx)
+
+    expect(putSpy).toHaveBeenCalledWith('schedule:CAR:20262027', JSON.stringify([{ id: 7 }]), { expirationTtl: 600 })
+  })
+})
+
+describe('GET /cache/schedule:* (cache miss)', () => {
+  const missEnv = putSpy => makeEnv({
+    CACHE: {
+      async get(key) { return key === 'config:season:nhl' ? JSON.stringify({ seasonId: '20252026' }) : null },
+      put: putSpy,
+    },
+  })
+
+  it('background-fetches the next season with the short TTL', async () => {
+    const putSpy = vi.fn()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [{ id: 8 }] }) })
+    const ctx = makeCtx()
+
+    const res = await handleNHL(
+      makeRequest('/cache/schedule:VGK:20262027'), missEnv(putSpy), ctx,
+      new URL('https://example.com/cache/schedule:VGK:20262027')
+    )
+    expect(res.status).toBe(404)
+    await flushWaitUntil(ctx)
+
+    expect(putSpy).toHaveBeenCalledWith('schedule:VGK:20262027', JSON.stringify([{ id: 8 }]), { expirationTtl: 600 })
+  })
+
+  it('still gives a past season the long TTL', async () => {
+    const putSpy = vi.fn()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [{ id: 9 }] }) })
+    const ctx = makeCtx()
+
+    await handleNHL(
+      makeRequest('/cache/schedule:VGK:20242025'), missEnv(putSpy), ctx,
+      new URL('https://example.com/cache/schedule:VGK:20242025')
+    )
+    await flushWaitUntil(ctx)
+
+    expect(putSpy).toHaveBeenCalledWith('schedule:VGK:20242025', JSON.stringify([{ id: 9 }]), { expirationTtl: 60 * 24 * 3600 })
+  })
 })
 
 // ── /roster (added alongside this session's roster-caching fix) ──

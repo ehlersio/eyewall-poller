@@ -92,6 +92,16 @@ function scheduleKey(abbr, season) {
   return `schedule:${abbr}:${season}`;
 }
 
+// Only a season *before* the current one is finished. The next season is
+// requested before the Worker flips to it (the frontend resolves the new
+// season on its own, and the look-ahead in seasons.js only flips once its
+// schedule is imminent), and caching it as "historical" froze it for 60
+// days: found 2026-09-27 with VGK/CHI 2026-27 preseason games still FUT
+// days after they'd been played. CAR alone stayed fresh, rewritten by poll().
+function isPastSeason(season, currentSeason) {
+  return Number(season) < Number(currentSeason);
+}
+
 // 1 hour — rosters change rarely (trades/waivers aside) most of the
 // season, but this app also gets hit hardest during training camp
 // (Sept), when the roster genuinely can change day to day as players
@@ -2009,8 +2019,9 @@ export async function handleNHL(request, env, ctx, url) {
   // ?season= (optional) selects a specific season, e.g. "20232024" — same
   // 8-digit shape the upstream NHL API takes. Defaults to the live-resolved
   // current season when omitted, preserving existing callers' behavior.
-  // Historical (non-current) seasons get a long TTL since a finished
-  // season's schedule never changes; current season keeps the short TTL.
+  // Past seasons get a long TTL since a finished season's schedule never
+  // changes; the current season (and the next, see isPastSeason) keeps the
+  // short TTL.
   //
   // Current season: mirrors the /news pattern (warm: serve from KV; cold:
   // fetch in background, return [] immediately, next request ~2s later
@@ -2027,11 +2038,11 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/schedule' && request.method === 'GET') {
     const tc     = await getTeamConfig(request, env);
     const season = url.searchParams.get('season') || String(tc.season);
-    const isCurrent = season === String(tc.season);
+    const isPast = isPastSeason(season, tc.season);
     const cached = await kvGet(env, scheduleKey(tc.abbr, season));
     if (cached) return json(cached);
 
-    if (!isCurrent) {
+    if (isPast) {
       try {
         const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${season}`);
         const games = data?.games || [];
@@ -3011,7 +3022,7 @@ Only reference the two teams named above and the numbers given -- no player name
               const season = requestedSeason || currentSeason;
               const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${season}`);
               const games = data?.games || [];
-              const ttl   = season === currentSeason ? CURRENT_SCHEDULE_TTL : HISTORICAL_SCHEDULE_TTL;
+              const ttl   = isPastSeason(season, currentSeason) ? HISTORICAL_SCHEDULE_TTL : CURRENT_SCHEDULE_TTL;
               await kvPut(env, scheduleKey(tc.abbr, season), games, ttl);
               console.log(`Schedule bg fetch (cache miss): ${tc.abbr} season ${season} (${games.length} games)`);
             } catch (e) {
