@@ -21,7 +21,7 @@ import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_IDS } from './ahl.js';
 import { handleECHL, ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS, fetchECHLNews, pollECHL } from './echl.js';
-import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser } from './shared.js';
+import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog } from './shared.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
 // GET /config/seasons/comparison, one entry per league. NHL's team_seasons is
@@ -528,7 +528,7 @@ export default {
         .catch(e => console.error('PP units scheduled error:', e.message)),
       refreshSeasonsCache(env)
         .catch(e => console.error('Season cache refresh error:', e.message)),
-    ]));
+    ]).then(() => flushAlertLog(env)));
   },
   async fetch(request, env, ctx) {
     return handleRequest(request, env, ctx);
