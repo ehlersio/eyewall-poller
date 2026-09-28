@@ -36,7 +36,7 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, subId, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam } from './shared.js';
 
 // Elo constants -- match eyewall-pipeline/elo.py (and nhl.js's
 // ELO_HOME_ADVANTAGE). hockeytech_elo.py writes the ratings these apply to.
@@ -180,6 +180,9 @@ export function createHockeyTechLeague(cfg) {
     const awayId   = game.away_team_id;
     const homeAbbr = teamCodes[homeId] || String(homeId);
     const awayAbbr = teamCodes[awayId] || String(awayId);
+    // This game's two teams, so someone following both gets each alert once.
+    const pair = [`${label}:${homeAbbr}`, `${label}:${awayAbbr}`];
+    const send = (payload, teamKey, eventType) => broadcast(env, payload, teamKey, eventType, pair);
 
     // A final game gets its game-over push only if this poll followed it
     // live (a push state exists), and only once. Checked before the PBP
@@ -221,7 +224,7 @@ export function createHockeyTechLeague(cfg) {
       if (!(await kvGet(env, sessionKey))) {
         await kvPut(env, sessionKey, true, 24 * 3600);
         for (const abbr of [homeAbbr, awayAbbr]) {
-          await broadcast(env, {
+          await send({
             title: `🏒 ${label} Game Starting!`,
             body:  `${homeAbbr} vs ${awayAbbr} — puck drop!`,
             tag:   `${key}-start-${gameId}`,
@@ -242,7 +245,7 @@ export function createHockeyTechLeague(cfg) {
           [homeAbbr, curHome, curAway, awayAbbr],
           [awayAbbr, curAway, curHome, homeAbbr],
         ]) {
-          await broadcast(env, {
+          await send({
             title: `🔔 ${periodLabel(periodNum)} Starting`,
             body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
             tag:   `${key}-period-${gameId}-${periodNum}-${abbr}`,
@@ -280,14 +283,14 @@ export function createHockeyTechLeague(cfg) {
         const curHome  = isHome ? (lastState.homeScore + 1) : lastState.homeScore;
         const curAway  = isHome ? lastState.awayScore : (lastState.awayScore + 1);
 
-        await broadcast(env, {
+        await send({
           title: `🚨 GOAL! ${abbr} ${isHome ? curHome : curAway}–${isHome ? curAway : curHome} ${oppAbbr}`,
           body:  `${scorer} scores!${modifier}${assists.length ? ` Assists: ${assists.slice(0,2).join(', ')}` : ''}`,
           tag:   `${key}-goal-${goalKey}`,
           url,
         }, `${label}:${abbr}`, 'goal');
 
-        await broadcast(env, {
+        await send({
           title: `${abbr} scores. ${oppAbbr} ${isHome ? curAway : curHome}–${isHome ? curHome : curAway} ${abbr}`,
           body:  `${scorer} scores for ${abbr}${modifier}`,
           tag:   `${key}-opp-goal-${goalKey}`,
@@ -295,7 +298,7 @@ export function createHockeyTechLeague(cfg) {
         }, `${label}:${oppAbbr}`, 'oppGoal');
 
         if (scorerId && scorerGoalCounts[scorerId] === 3) {
-          await broadcast(env, {
+          await send({
             title: `🎩 HAT TRICK! ${scorer}`,
             body:  `${scorer} scores their 3rd goal of the game for ${abbr}!`,
             tag:   `${key}-hattrick-${gameId}-${scorerId}`,
@@ -317,7 +320,7 @@ export function createHockeyTechLeague(cfg) {
         const desc      = (d.description || 'Penalty')
           .replace(/^(?:Ob|Maj|Min|Mis|Gm)-/i, '').replace(/-/g, ' ').trim();
 
-        await broadcast(env, {
+        await send({
           title: `⚡ ${ppAbbr} Power Play!`,
           body:  `${penAbbr} — ${mins} min ${desc}`,
           tag:   `${key}-pp-${penId}`,
@@ -333,7 +336,7 @@ export function createHockeyTechLeague(cfg) {
         const pullKey = `${key}:push:pull:${gameId}-${time}`;
         if (!(await kvGet(env, pullKey))) {
           await kvPut(env, pullKey, true, 24 * 3600);
-          await broadcast(env, {
+          await send({
             title: `🥅 ${pulledAbbr} pulled their goalie!`,
             body:  `6-on-5 — empty net opportunity for ${benefitAbbr}!`,
             tag:   `${key}-pull-${pullKey}`,
@@ -353,7 +356,7 @@ export function createHockeyTechLeague(cfg) {
         const hs = game.home_score ?? 0;
         const as = game.away_score ?? 0;
 
-        await broadcast(env, hs > as ? {
+        await send(hs > as ? {
           title: `🏆 ${homeAbbr} Win! ${homeAbbr} ${hs}–${as} ${awayAbbr}`,
           body:  'Final score — great win!',
           tag:   `${key}-win-${gameId}-home`,
@@ -365,7 +368,7 @@ export function createHockeyTechLeague(cfg) {
           url,
         }, `${label}:${homeAbbr}`, hs > as ? 'win' : 'loss');
 
-        await broadcast(env, as > hs ? {
+        await send(as > hs ? {
           title: `🏆 ${awayAbbr} Win! ${awayAbbr} ${as}–${hs} ${homeAbbr}`,
           body:  'Final score — great win!',
           tag:   `${key}-win-${gameId}-away`,
@@ -393,32 +396,10 @@ export function createHockeyTechLeague(cfg) {
   // haven't turned this event type off, then prunes expired subscriptions.
   // subId() covers both Web Push (endpoint-keyed) and native iOS
   // (token-keyed) subscribers -- see nhl.js's broadcast().
-  async function broadcast(env, payload, teamKey, eventType) {
-    const subs = (await kvGet(env, 'push:subs')) || [];
-    if (!subs.length) return;
-
-    const targets = subs.filter(s => {
-      const subTeam = s.teamAbbr || 'NHL:CAR';
-      if (subTeam !== teamKey) return false;
-      if (!s.prefs) return true;
-      return s.prefs[eventType] !== false;
-    });
-
-    if (!targets.length) return;
-
-    console.log(`[${label} push] ${targets.length} targets for ${teamKey}:${eventType}`);
-
-    const results = await Promise.all(targets.map(s => sendPush(s, payload, env)));
-
-    const expiredIds = new Set(
-      targets.filter((_, i) => results[i] === 'expired').map(subId)
-    );
-    if (expiredIds.size > 0) {
-      const allSubs = (await kvGet(env, 'push:subs')) || [];
-      const active = allSubs.filter(s => !expiredIds.has(subId(s)));
-      await kvPut(env, 'push:subs', active, 365 * 24 * 3600);
-    }
-    console.log(`[${label} push] results: ${results.join(', ')}`);
+  // Send to subscribers following teamKey ('AHL:TOR') with eventType on;
+  // `pair` is the game's two team keys (see shared.js's pushTargets()).
+  function broadcast(env, payload, teamKey, eventType, pair) {
+    return broadcastToTeam(env, payload, teamKey, eventType, { pair, tag: `${label} push`, send: sendPush });
   }
 
   // ── HTTP routes ────────────────────────────────────────────────────

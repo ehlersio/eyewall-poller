@@ -782,6 +782,60 @@ export function subId(sub) {
   return sub.token || sub.endpoint;
 }
 
+// ── Who gets a team's alert ───────────────────────────────────
+// A subscription follows one or more teams, each with its own alert
+// choices: `teams: [{ key: 'NHL:CAR', prefs }]` in the user's order,
+// primary first (eyewall-analytics' followed teams, 2026-09). Older
+// subscriptions -- and app versions still installed -- have a single
+// `teamAbbr` + `prefs`, read here as a one-team list.
+export function subTeams(sub) {
+  if (Array.isArray(sub.teams) && sub.teams.length) return sub.teams;
+  return [{ key: sub.teamAbbr || 'NHL:CAR', prefs: sub.prefs || null }];
+}
+
+// The subscribers who get `teamKey`'s `eventType` alert. `pair` is the
+// game's two team keys when known: someone following both teams gets
+// each alert once, from the side of whichever is higher in their list,
+// rather than one copy per team.
+export function pushTargets(subs, teamKey, eventType, pair) {
+  const opponentKey = pair?.find(k => k !== teamKey);
+  return subs.filter(s => {
+    const teams = subTeams(s);
+    const i = teams.findIndex(t => t.key === teamKey);
+    if (i < 0) return false;
+    if (opponentKey) {
+      const j = teams.findIndex(t => t.key === opponentKey);
+      if (j >= 0 && j < i) return false;
+    }
+    const prefs = teams[i].prefs;
+    return !prefs || prefs[eventType] !== false; // a type not mentioned is on
+  });
+}
+
+// Sends `payload` to pushTargets() and prunes subscriptions the push
+// service says are gone. Shared by the NHL, PWHL and AHL/ECHL pollers.
+// `send` is the caller's own sendPush import, so a test that mocks
+// shared.js's sendPush export still catches every send.
+export async function broadcastToTeam(env, payload, teamKey, eventType, { pair, tag = 'push', send = sendPush } = {}) {
+  const subs = (await kvGet(env, 'push:subs')) || [];
+  if (!subs.length) return;
+  const targets = pushTargets(subs, teamKey, eventType, pair);
+  console.log(`[${tag}] ${targets.length}/${subs.length} targets for ${teamKey}:${eventType}`);
+  if (!targets.length) return;
+
+  const results = await Promise.all(targets.map(s => send(s, payload, env)));
+
+  // subId() covers both Web Push (endpoint-keyed) and native iOS
+  // (token-keyed) subscribers. Re-read before writing, as the others did.
+  const expiredIds = new Set(targets.filter((_, i) => results[i] === 'expired').map(subId));
+  if (expiredIds.size > 0) {
+    const allSubs = (await kvGet(env, 'push:subs')) || [];
+    await kvPut(env, 'push:subs', allSubs.filter(s => !expiredIds.has(subId(s))), 365 * 24 * 3600);
+    console.log(`[${tag}] removed ${expiredIds.size} expired subscription(s)`);
+  }
+  console.log(`[${tag}] results: ${results.join(', ')}`);
+}
+
 // Send a Web Push notification with encrypted payload (RFC 8291).
 // Service worker reads e.data.json() — no KV fetch needed.
 export async function sendPush(sub, payload, env) {

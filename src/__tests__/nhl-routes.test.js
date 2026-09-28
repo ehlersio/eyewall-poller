@@ -1939,6 +1939,29 @@ describe('POST /push/subscribe', () => {
     expect((await res.json()).total).toBe(1)
   })
 
+  it('stores several teams with their own alert choices, keeping the first as teamAbbr/prefs', async () => {
+    const env = makeEnv()
+    await handleNHL(
+      makeRequest('/push/subscribe', { method: 'POST', body: {
+        endpoint: 'ep-2', keys: { p256dh: 'x', auth: 'y' },
+        teams: [
+          { key: 'nhl:car', prefs: { goal: true, periodEnd: false, junk: 'x' } },
+          { key: 'PWHL:MIN', prefs: null },
+          { key: 'NHL:CAR', prefs: null },   // repeat
+          { key: 'XFL:BAD', prefs: null },   // not a league
+        ],
+      } }),
+      env, makeCtx(), new URL('https://example.com/push/subscribe')
+    )
+    const [stored] = JSON.parse(await env.CACHE.get('push:subs'))
+    expect(stored.teams).toEqual([
+      { key: 'NHL:CAR', prefs: { goal: true, periodEnd: false } },
+      { key: 'PWHL:MIN', prefs: null },
+    ])
+    expect(stored.teamAbbr).toBe('NHL:CAR')
+    expect(stored.prefs).toEqual({ goal: true, periodEnd: false })
+  })
+
   // Native iOS push (2026-09) -- platform: 'ios' + an APNs device token,
   // sharing the same push:subs array and route as Web Push above.
   it('accepts a native iOS subscription, storing token instead of endpoint/keys', async () => {
@@ -2391,6 +2414,40 @@ describe('poll() — multi-team dual broadcast', () => {
     expect(bosGoalCall?.[1].title).toContain('GOAL')
     expect(bosGoalCall?.[1].title).toContain('BOS')
     expect(carOppGoalCall?.[1].title).toContain('BOS scores')
+  })
+
+  // Followed teams (2026-09): a device following both teams in a game gets
+  // each alert once, from the side of the team higher in its list.
+  it('sends a fan of both teams one goal alert, framed for the team they list first', async () => {
+    sendPushMock.mockClear()
+    const both = {
+      endpoint: 'https://push.example/car-then-bos', keys: { p256dh: 'x', auth: 'y' },
+      teamAbbr: 'NHL:CAR', prefs: null,
+      teams: [{ key: 'NHL:CAR', prefs: null }, { key: 'NHL:BOS', prefs: null }],
+    }
+    const env = makeEnv({ VAPID_PRIVATE_KEY: 'fake-key-for-test', CACHE: makeFakeCache({ 'push:subs': [both] }) })
+    mockScoreboardAndPbp({
+      liveGames: [{
+        id: 2025020557, gameState: 'LIVE', gameType: 2,
+        homeTeam: { id: 6, abbrev: 'BOS', score: 1 },
+        awayTeam: { id: 12, abbrev: 'CAR', score: 0 },
+      }],
+      pbpByGameId: {
+        '2025020557': {
+          periodDescriptor: { number: 1 },
+          plays: [{
+            typeDescKey: 'goal',
+            details: { eventOwnerTeamId: 6, scoringPlayerName: 'David Pastrnak', scoringPlayerId: 88, shotType: 'wrist' },
+          }],
+        },
+      },
+    })
+
+    await poll(env, makeCtx())
+
+    const goalCalls = sendPushMock.mock.calls.filter(([, p]) => /goal-/.test(p.tag || ''))
+    expect(goalCalls).toHaveLength(1)
+    expect(goalCalls[0][1].tag).toMatch(/^opp-goal-/) // CAR's side: "BOS scores"
   })
 
   it('pushes a Live Activity update only when the state changed, at priority 5 for a clock-only change', async () => {
