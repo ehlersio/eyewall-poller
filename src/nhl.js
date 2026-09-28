@@ -572,7 +572,7 @@ async function detectAndNotify(env, game, pbp) {
         title: `🔔 End of ${periodLabel(endedPeriod)}`,
         body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr} after ${periodLabel(endedPeriod)}`,
         tag:   `period-end-${liveId}-${endedPeriod}`,
-        url:   '/',
+        url:   summaryUrl(liveId, endedPeriod),
       }, 'periodEnd');
     }
   }
@@ -685,6 +685,13 @@ export function periodIsOver(pbp, period, game, homeScore, awayScore) {
   return true;
 }
 
+// Where tapping an end-of-period or final notification lands: the game
+// view, which opens that period's summary (or the game's, for 'game') --
+// eyewall-analytics' utils/summaryLink.js reads these params.
+export function summaryUrl(gameId, period) {
+  return `/?summary=${encodeURIComponent(period)}&game=${encodeURIComponent(gameId)}`;
+}
+
 async function notifyGameOver(env, game) {
   const sentKey     = `push:gameover:${game.id}`;
   const alreadySent = await kvGet(env, sentKey);
@@ -704,12 +711,12 @@ async function notifyGameOver(env, game) {
       title: `🏆 ${abbr} Win! ${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
       body:  TEAM_CONFIGS[abbr]?.winCopy || 'Final score — great win!',
       tag:   `win-${game.id}-${abbr}`,
-      url:   '/',
+      url:   summaryUrl(game.id, 'game'),
     } : {
       title: `Final: ${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
       body:  TEAM_CONFIGS[abbr]?.lossCopy || 'Final score.',
       tag:   `final-${game.id}-${abbr}`,
-      url:   '/',
+      url:   summaryUrl(game.id, 'game'),
     }, `NHL:${abbr}`, won ? 'win' : 'loss');
   }
 

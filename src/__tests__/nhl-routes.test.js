@@ -2464,6 +2464,8 @@ describe('poll() — multi-team dual broadcast', () => {
     const ends = sendPushMock.mock.calls.filter(([, payload]) => payload.tag === 'period-end-2025020556-1')
     expect(ends).toHaveLength(1)
     expect(ends[0][1].title).toBe('🔔 End of P1')
+    // Tapping it opens the P1 summary in the app.
+    expect(ends[0][1].url).toBe('/?summary=1&game=2025020556')
 
     // P2 starting afterwards doesn't send it a second time.
     sendPushMock.mockClear()
@@ -2508,6 +2510,9 @@ describe('poll() — multi-team dual broadcast', () => {
     const nyrLoss = calls.find(([sub, payload]) => sub.endpoint.includes('nyr-fan') && payload.tag?.startsWith('final-'))
     expect(torWin?.[1].title).toContain('TOR')
     expect(nyrLoss?.[1].title).toContain('NYR')
+    // Tapping either opens that game's summary in the app.
+    expect(torWin?.[1].url).toBe('/?summary=game&game=2025020777')
+    expect(nyrLoss?.[1].url).toBe('/?summary=game&game=2025020777')
   })
 
   it('does not call generateGameSummary/AI for a completed game that does not involve CAR', async () => {

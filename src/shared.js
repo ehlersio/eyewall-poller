@@ -898,6 +898,9 @@ export async function sendAPNsPush(sub, payload, env) {
       },
       body: JSON.stringify({
         aps: { alert: { title: payload.title || '', body: payload.body || '' }, sound: 'default' },
+        // Where a tap should land, as for Web Push (sw.js's data.url); the
+        // app's pushNotificationActionPerformed listener reads it.
+        ...(payload.url ? { url: payload.url } : {}),
         ...(payload.data || {}),
       }),
     });
