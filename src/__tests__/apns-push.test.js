@@ -89,6 +89,25 @@ describe('sendAPNsPush', () => {
     expect(decode(payloadB64).iss).toBe('TESTTEAMID')
   })
 
+  it('carries the payload url alongside aps, for the app to open on tap', async () => {
+    const env = makeEnv({
+      APNS_KEY_ID:   'TESTKEYID1',
+      APNS_TEAM_ID:  'TESTTEAMID',
+      APNS_AUTH_KEY: makeTestAPNsKey(),
+    })
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{}' })
+
+    await sendAPNsPush(
+      { platform: 'ios', token: 'device-token-abc' },
+      { title: '🔔 End of P1', body: 'CAR 1–0 BOS after P1', url: '/?summary=1&game=2025020556' },
+      env
+    )
+
+    const body = JSON.parse(globalThis.fetch.mock.calls[0][1].body)
+    expect(body.url).toBe('/?summary=1&game=2025020556')
+    expect(body.aps.alert.title).toBe('🔔 End of P1')
+  })
+
   it('uses the production host when APNS_ENV=production', async () => {
     const env = makeEnv({
       APNS_KEY_ID: 'k', APNS_TEAM_ID: 't', APNS_AUTH_KEY: makeTestAPNsKey(), APNS_ENV: 'production',
