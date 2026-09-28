@@ -258,6 +258,9 @@ async function fetchPWHLBootstrap(env) {
   return parsed;
 }
 
+// How soon before its first game the next PWHL season counts as current.
+const PWHL_LOOKAHEAD_DAYS = 14;
+
 export async function resolvePWHLSeason(env) {
   const override = await kvGet(env, 'config:season:pwhl:override');
   if (override) return override;
@@ -286,9 +289,17 @@ export async function resolvePWHLSeason(env) {
     // So: prefer the most recent non-hidden REGULAR season specifically.
     // Only fall back to "most recent of any type" if no regular season
     // exists at all in the response (shouldn't happen in practice).
+    //
+    // And only a season that has started, or is about to (within
+    // PWHL_LOOKAHEAD_DAYS): HockeyTech un-hides the next regular season
+    // well before it begins. On 2026-09-28 season 11 (2026-27, starting
+    // 2026-12-04) became visible while current_season_id was still the
+    // hidden preseason, this fallback picked it, and every PWHL page went
+    // empty two months early. Same idea as the NHL's look-ahead above.
     let chosen = currentSeason;
     if (!chosen || chosen.hide_in_standings) {
-      const nonHidden = seasons.filter(s => !s.hide_in_standings);
+      const cutoff = Date.now() + PWHL_LOOKAHEAD_DAYS * 24 * 3600 * 1000;
+      const nonHidden = seasons.filter(s => !s.hide_in_standings && !(s.start_date && new Date(s.start_date).getTime() > cutoff));
       const regularSeasons = nonHidden.filter(s => s.seasonType === 'regular');
       const pool = regularSeasons.length > 0 ? regularSeasons : nonHidden;
       chosen = pool.sort((a, b) => new Date(b.start_date) - new Date(a.start_date))[0];
