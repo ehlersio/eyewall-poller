@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
@@ -437,45 +437,39 @@ export function scoreboardBroadcasts(tvBroadcasts) {
     .map(b => ({ network: b.network, market: b.market || null, countryCode: b.countryCode || null }));
 }
 
+// A subscribe request's `teams`: [{ key: 'NHL:CAR', prefs }], cleaned up.
+// Keys are LEAGUE:ABBR in one of the four leagues; prefs an object of
+// booleans or null; no repeats; at most MAX_SUB_TEAMS. null when absent
+// or nothing valid, so the caller falls back to the one-team fields.
+const MAX_SUB_TEAMS = 20;
+const SUB_TEAM_KEY = /^(NHL|PWHL|AHL|ECHL):[A-Z0-9]{1,5}$/;
+export function parseSubTeams(raw) {
+  if (!Array.isArray(raw)) return null;
+  const out = [];
+  for (const t of raw) {
+    const key = String(t?.key || '').toUpperCase();
+    if (!SUB_TEAM_KEY.test(key) || out.some(o => o.key === key)) continue;
+    const prefs = t.prefs && typeof t.prefs === 'object'
+      ? Object.fromEntries(Object.entries(t.prefs).filter(([, v]) => typeof v === 'boolean'))
+      : null;
+    out.push({ key, prefs });
+    if (out.length === MAX_SUB_TEAMS) break;
+  }
+  return out.length ? out : null;
+}
+
 function isCompleted(game) {
   return ['OFF','FINAL','F','FINAL_OVERTIME','FINAL_SHOOTOUT'].includes(game.gameState);
 }
 
 
-// broadcast — send to subscribers filtered by teamAbbr + eventType pref
+// broadcast — send to subscribers following teamAbbr ('NHL:CAR') who have
+// eventType on. `pair`: the game's two team keys, so someone following
+// both gets one alert, not two (see shared.js's pushTargets()).
 // eventType: 'goal'|'oppGoal'|'gameStart'|'periodStart'|'periodEnd'|
 //            'penalty'|'win'|'loss'|'goaliePulled'|'hatTrick'
-async function broadcast(env, payload, teamAbbr, eventType) {
-  const subs = (await kvGet(env, 'push:subs')) || [];
-  if (!subs.length) return;
-
-  // Filter to subscribers for this team who have this pref enabled
-  const targets = subs.filter(s => {
-    // Legacy subs (no teamAbbr) always match NHL:CAR
-    const subTeam = s.teamAbbr || 'NHL:CAR';
-    if (subTeam !== teamAbbr) return false;
-    // Legacy subs (no prefs) get all events
-    if (!s.prefs) return true;
-    return s.prefs[eventType] !== false; // default true if not explicitly false
-  });
-
-  console.log(`broadcast: ${targets.length}/${subs.length} targets for ${teamAbbr}:${eventType}`);
-  if (!targets.length) return;
-
-  const results = await Promise.all(targets.map(s => sendPush(s, payload, env)));
-
-  // Prune expired subs from full list. subId() covers both Web Push
-  // (endpoint-keyed) and native iOS (token-keyed) subscribers -- endpoint
-  // alone used to miss every expired iOS sub silently.
-  const expiredIds = new Set(
-    targets.filter((_, i) => results[i] === 'expired').map(subId)
-  );
-  if (expiredIds.size > 0) {
-    const active = subs.filter(s => !expiredIds.has(subId(s)));
-    await kvPut(env, 'push:subs', active, 365 * 24 * 3600);
-    console.log(`broadcast: removed ${expiredIds.size} expired subscription(s)`);
-  }
-  console.log(`broadcast results: ${results.join(', ')}`);
+function broadcast(env, payload, teamAbbr, eventType, pair) {
+  return broadcastToTeam(env, payload, teamAbbr, eventType, { pair, tag: 'NHL push', send: sendPush });
 }
 
 // Body of the goal-against push, for the team that conceded. Framed by what
@@ -522,7 +516,8 @@ async function detectAndNotify(env, game, pbp) {
   const newPlays    = pbp.plays.slice(lastPlayIdx);
   const periodLabel = n => n === 4 ? 'OT' : n === 5 ? 'SO' : `P${n}`;
 
-  const notify = (abbr, payload, eventType) => broadcast(env, payload, `NHL:${abbr}`, eventType);
+  const pair = [`NHL:${homeAbbr}`, `NHL:${awayAbbr}`];
+  const notify = (abbr, payload, eventType) => broadcast(env, payload, `NHL:${abbr}`, eventType, pair);
 
   // ── Game just started ─────────────────────────────────────
   if (!lastState.started && game.gameState === 'LIVE') {
@@ -717,7 +712,7 @@ async function notifyGameOver(env, game) {
       body:  TEAM_CONFIGS[abbr]?.lossCopy || 'Final score.',
       tag:   `final-${game.id}-${abbr}`,
       url:   summaryUrl(game.id, 'game'),
-    }, `NHL:${abbr}`, won ? 'win' : 'loss');
+    }, `NHL:${abbr}`, won ? 'win' : 'loss', [`NHL:${homeAbbr}`, `NHL:${awayAbbr}`]);
   }
 
   await kvPut(env, sentKey, true, 24 * 3600);
@@ -3106,10 +3101,22 @@ Only reference the two teams named above and the numbers given -- no player name
     const rawTeam = body.teamAbbr || 'CAR';
     const teamAbbr = rawTeam.includes(':') ? rawTeam : `NHL:${rawTeam}`;
 
+    // Several teams (the app's followed teams, 2026-09): `teams`, each with
+    // its own alert choices, in the user's order. teamAbbr/prefs stay the
+    // first team's, for anything still reading the one-team shape; older
+    // app versions send only those, and get a one-team subscription.
+    const teams = parseSubTeams(body.teams);
+    const first = teams?.[0];
+
     const isIOS = body.platform === 'ios';
+    const base = {
+      teamAbbr: first ? first.key : teamAbbr,
+      prefs: first ? first.prefs : (body.prefs || null),
+      ...(teams ? { teams } : {}),
+    };
     const newSub = isIOS
-      ? { platform: 'ios', token: body.token, teamAbbr, prefs: body.prefs || null }
-      : { endpoint: body.endpoint, keys: body.keys, teamAbbr, prefs: body.prefs || null };
+      ? { platform: 'ios', token: body.token, ...base }
+      : { endpoint: body.endpoint, keys: body.keys, ...base };
 
     // Update existing or add new (dedupe by token for iOS, endpoint for Web Push)
     const idx = isIOS
@@ -3121,7 +3128,7 @@ Only reference the two teams named above and the numbers given -- no player name
       subs.push(newSub);
     }
     await kvPut(env, 'push:subs', subs, 365 * 24 * 3600);
-    console.log(`Subscriber upserted: ${newSub.teamAbbr} (${isIOS ? 'ios' : 'web'}) prefs=${JSON.stringify(newSub.prefs)}. Total: ${subs.length}`);
+    console.log(`Subscriber upserted: ${(newSub.teams || [{ key: newSub.teamAbbr }]).map(t => t.key).join(', ')} (${isIOS ? 'ios' : 'web'}). Total: ${subs.length}`);
     return json({ ok: true, total: subs.length });
   }
 

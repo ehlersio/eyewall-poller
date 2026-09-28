@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, subId, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes } from './seasons.js';
 
 // Elo constants for /pwhl/prediction -- match eyewall-pipeline/elo.py.
@@ -252,6 +252,9 @@ async function pollPWHLGame(env, game) {
   const awayId    = game.away_team_id;
   const homeAbbr  = PWHL_TEAM_CODES[homeId] || String(homeId);
   const awayAbbr  = PWHL_TEAM_CODES[awayId]  || String(awayId);
+  // This game's two teams, so someone following both gets each alert once.
+  const pair = [`PWHL:${homeAbbr}`, `PWHL:${awayAbbr}`];
+  const send = (payload, teamKey, eventType) => broadcastPWHL(env, payload, teamKey, eventType, pair);
 
   // A final game gets its game-over push only if this poll followed it
   // live (a push state exists), and only once. Checked before the PBP
@@ -301,7 +304,7 @@ async function pollPWHLGame(env, game) {
       await kvPut(env, sessionKey, true, 24 * 3600);
       // Notify both home and away subscribers
       for (const abbr of [homeAbbr, awayAbbr]) {
-        await broadcastPWHL(env, {
+        await send({
           title: `🏒 PWHL Game Starting!`,
           body:  `${homeAbbr} vs ${awayAbbr} — puck drop!`,
           tag:   `pwhl-start-${gameId}`,
@@ -322,7 +325,7 @@ async function pollPWHLGame(env, game) {
         [homeAbbr, curHome, curAway, awayAbbr],
         [awayAbbr, curAway, curHome, homeAbbr],
       ]) {
-        await broadcastPWHL(env, {
+        await send({
           title: `🔔 ${periodLabel(periodNum)} Starting`,
           body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
           tag:   `pwhl-period-${gameId}-${periodNum}-${abbr}`,
@@ -363,7 +366,7 @@ async function pollPWHLGame(env, game) {
       const curAway  = isHome ? lastState.awayScore : (lastState.awayScore + 1);
 
       // Notify scoring team subscribers
-      await broadcastPWHL(env, {
+      await send({
         title: `🚨 GOAL! ${abbr} ${isHome ? curHome : curAway}–${isHome ? curAway : curHome} ${oppAbbr}`,
         body:  `${scorer} scores!${modifier}${assists.length ? ` Assists: ${assists.slice(0,2).join(', ')}` : ''}`,
         tag:   `pwhl-goal-${goalKey}`,
@@ -371,7 +374,7 @@ async function pollPWHLGame(env, game) {
       }, `PWHL:${abbr}`, 'goal');
 
       // Notify opp subscribers (they gave up the goal)
-      await broadcastPWHL(env, {
+      await send({
         title: `${abbr} scores. ${oppAbbr} ${isHome ? curAway : curHome}–${isHome ? curHome : curAway} ${abbr}`,
         body:  `${scorer} scores for ${abbr}${modifier}`,
         tag:   `pwhl-opp-goal-${goalKey}`,
@@ -380,7 +383,7 @@ async function pollPWHLGame(env, game) {
 
       // Hat trick
       if (scorerId && scorerGoalCounts[scorerId] === 3) {
-        await broadcastPWHL(env, {
+        await send({
           title: `🎩 HAT TRICK! ${scorer}`,
           body:  `${scorer} scores her 3rd goal of the game for ${abbr}!`,
           tag:   `pwhl-hattrick-${gameId}-${scorerId}`,
@@ -403,7 +406,7 @@ async function pollPWHLGame(env, game) {
       const desc      = (d.description || 'Penalty')
         .replace(/^(?:Ob|Maj|Min|Mis|Gm)-/i, '').replace(/-/g, ' ').trim();
 
-      await broadcastPWHL(env, {
+      await send({
         title: `⚡ ${ppAbbr} Power Play!`,
         body:  `${penAbbr} — ${mins} min ${desc}`,
         tag:   `pwhl-pp-${penId}`,
@@ -420,7 +423,7 @@ async function pollPWHLGame(env, game) {
       const pullKey = `pwhl:push:pull:${gameId}-${time}`;
       if (!(await kvGet(env, pullKey))) {
         await kvPut(env, pullKey, true, 24 * 3600);
-        await broadcastPWHL(env, {
+        await send({
           title: `🥅 ${pulledAbbr} pulled their goalie!`,
           body:  `6-on-5 — empty net opportunity for ${benefitAbbr}!`,
           tag:   `pwhl-pull-${pullKey}`,
@@ -439,7 +442,7 @@ async function pollPWHLGame(env, game) {
       const as = game.away_score ?? 0;
 
       // Home team
-      await broadcastPWHL(env, hs > as ? {
+      await send(hs > as ? {
         title: `🏆 ${homeAbbr} Win! ${homeAbbr} ${hs}–${as} ${awayAbbr}`,
         body:  'Final score — great win!',
         tag:   `pwhl-win-${gameId}-home`,
@@ -452,7 +455,7 @@ async function pollPWHLGame(env, game) {
       }, `PWHL:${homeAbbr}`, hs > as ? 'win' : 'loss');
 
       // Away team
-      await broadcastPWHL(env, as > hs ? {
+      await send(as > hs ? {
         title: `🏆 ${awayAbbr} Win! ${awayAbbr} ${as}–${hs} ${homeAbbr}`,
         body:  'Final score — great win!',
         tag:   `pwhl-win-${gameId}-away`,
@@ -478,35 +481,10 @@ async function pollPWHLGame(env, game) {
 }
 
 // PWHL-specific broadcast — wraps shared broadcast with PWHL: prefixed teamAbbr
-async function broadcastPWHL(env, payload, teamKey, eventType) {
-  // Import broadcast from nhl.js isn't possible (circular) — inline the lookup here
-  const subs = (await kvGet(env, 'push:subs')) || [];
-  if (!subs.length) return;
-
-  const targets = subs.filter(s => {
-    const subTeam = s.teamAbbr || 'NHL:CAR';
-    if (subTeam !== teamKey) return false;
-    if (!s.prefs) return true;
-    return s.prefs[eventType] !== false;
-  });
-
-  if (!targets.length) return;
-
-  console.log(`[PWHL push] ${targets.length} targets for ${teamKey}:${eventType}`);
-
-  const results = await Promise.all(targets.map(s => sendPush(s, payload, env)));
-
-  // Prune expired subs. subId() covers both Web Push (endpoint-keyed) and
-  // native iOS (token-keyed) subscribers -- see nhl.js's broadcast().
-  const expiredIds = new Set(
-    targets.filter((_, i) => results[i] === 'expired').map(subId)
-  );
-  if (expiredIds.size > 0) {
-    const allSubs = (await kvGet(env, 'push:subs')) || [];
-    const active = allSubs.filter(s => !expiredIds.has(subId(s)));
-    await kvPut(env, 'push:subs', active, 365 * 24 * 3600);
-  }
-  console.log(`[PWHL push] results: ${results.join(', ')}`);
+// Send to subscribers following teamKey ('PWHL:MIN') with eventType on;
+// `pair` is the game's two team keys (see shared.js's pushTargets()).
+function broadcastPWHL(env, payload, teamKey, eventType, pair) {
+  return broadcastToTeam(env, payload, teamKey, eventType, { pair, tag: 'PWHL push', send: sendPush });
 }
 
 export async function handlePWHL(request, env, ctx, url) {
