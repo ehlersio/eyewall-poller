@@ -812,11 +812,70 @@ export function pushTargets(subs, teamKey, eventType, pair) {
   });
 }
 
+// ── Recent alerts (the app's notifications bell) ──────────────
+// Every alert the pollers send is kept, per league, for the app's bell
+// to list whether or not the user has push on. Collected in memory during
+// a cron run and written once per league at its end (flushAlertLog), not
+// once per alert: a busy night is hundreds of alerts.
+export const ALERT_LOG_HOURS = 72;
+const ALERT_LOG_MAX = 400;
+const alertLogKey = league => `alerts:recent:${league}`;
+let pendingAlerts = [];
+
+export function recordAlert(teamKey, eventType, payload, pair, at = Date.now()) {
+  if (!teamKey || !payload?.title) return;
+  pendingAlerts.push({
+    team: teamKey,
+    vs: pair?.find(k => k !== teamKey) || null,
+    type: eventType || null,
+    title: payload.title,
+    body: payload.body || '',
+    url: payload.url || '/',
+    at,
+  });
+}
+
+// Pure: a league's stored list plus new alerts, oldest dropped.
+export function mergeAlertLog(stored, added, now = Date.now()) {
+  const since = now - ALERT_LOG_HOURS * 3600 * 1000;
+  return [...(stored || []), ...added].filter(a => a.at >= since).slice(-ALERT_LOG_MAX);
+}
+
+export async function flushAlertLog(env) {
+  const batch = pendingAlerts;
+  pendingAlerts = [];
+  const byLeague = new Map();
+  for (const a of batch) {
+    const league = a.team.split(':')[0];
+    byLeague.set(league, [...(byLeague.get(league) || []), a]);
+  }
+  for (const [league, added] of byLeague) {
+    try {
+      const stored = (await kvGet(env, alertLogKey(league))) || [];
+      await kvPut(env, alertLogKey(league), mergeAlertLog(stored, added), (ALERT_LOG_HOURS + 24) * 3600);
+    } catch (e) {
+      console.warn(`alert log ${league}: ${e.message}`);
+    }
+  }
+}
+
+// The recent alerts for `teamKeys` (LEAGUE:ABBR), newest first.
+export async function readAlertLog(env, teamKeys, limit = 50) {
+  const wanted = new Set(teamKeys);
+  const leagues = [...new Set(teamKeys.map(k => k.split(':')[0]))];
+  const lists = await Promise.all(leagues.map(l => kvGet(env, alertLogKey(l)).catch(() => null)));
+  const since = Date.now() - ALERT_LOG_HOURS * 3600 * 1000;
+  return lists.flat().filter(a => a && wanted.has(a.team) && a.at >= since)
+    .sort((a, b) => b.at - a.at).slice(0, limit);
+}
+
 // Sends `payload` to pushTargets() and prunes subscriptions the push
 // service says are gone. Shared by the NHL, PWHL and AHL/ECHL pollers.
 // `send` is the caller's own sendPush import, so a test that mocks
 // shared.js's sendPush export still catches every send.
 export async function broadcastToTeam(env, payload, teamKey, eventType, { pair, tag = 'push', send = sendPush } = {}) {
+  // Kept for the bell whether or not anyone is subscribed.
+  recordAlert(teamKey, eventType, payload, pair);
   const subs = (await kvGet(env, 'push:subs')) || [];
   if (!subs.length) return;
   const targets = pushTargets(subs, teamKey, eventType, pair);

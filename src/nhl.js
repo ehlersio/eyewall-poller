@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
@@ -3093,6 +3093,19 @@ Only reference the two teams named above and the numbers given -- no player name
     return json({ ok: true, team: enabled ? team : null });
   }
 
+  // GET /alerts/recent?teams=NHL:CAR,PWHL:MIN -- the alerts sent for those
+  // teams in the last ALERT_LOG_HOURS, newest first (shared.js's alert
+  // log): the app's notifications bell, whether or not push is on.
+  if (url.pathname === '/alerts/recent' && request.method === 'GET') {
+    const keys = [...new Set(String(url.searchParams.get('teams') || '')
+      .split(',').map(k => k.trim().toUpperCase()).filter(k => SUB_TEAM_KEY.test(k)))].slice(0, MAX_SUB_TEAMS);
+    if (!keys.length) return badRequest('teams required, e.g. NHL:CAR,PWHL:MIN');
+    const alerts = await readAlertLog(env, keys);
+    return new Response(JSON.stringify(alerts), {
+      headers: { ...corsHeaders(), 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=30' },
+    });
+  }
+
   if (url.pathname === '/push/subscribe' && request.method === 'POST') {
     const body = await request.json();
     const subs = (await kvGet(env, 'push:subs')) || [];
@@ -3148,6 +3161,7 @@ Only reference the two teams named above and the numbers given -- no player name
     const secret = url.searchParams.get('secret');
     if (secret !== env.POLL_SECRET) return unauthorized();
     await poll(env, ctx);
+    await flushAlertLog(env);
     return json({ ok: true, polled: new Date().toISOString() });
   }
 
