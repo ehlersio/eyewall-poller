@@ -359,6 +359,41 @@ describe('resolvePWHLSeason', () => {
     expect(result.startYear).toBe(2025)
   })
 
+  // The real 2026-09-28 bootstrap: HockeyTech un-hid 2026-27 (season 11)
+  // two months before its first game while current_season_id was the
+  // hidden preseason. Picking 11 emptied every PWHL page.
+  const SEPT_28_BOOTSTRAP = {
+    current_season_id: '10',
+    seasons: [
+      { id: '11', name: '2026-27 Regular Season', start_date: '2026-12-04', hide_in_standings: false },
+      { id: '10', name: '2026-27 Preseason', start_date: '2026-10-01', hide_in_standings: true },
+      { id: '9', name: '2026 Playoffs', start_date: '2026-04-28', hide_in_standings: false },
+      { id: '8', name: '2025-26 Regular Season', start_date: '2025-11-21', hide_in_standings: false },
+    ],
+  }
+
+  it('does not jump to a regular season that is still months away (2026-09-28)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-28T17:00:00Z'))
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockResolvedValue({ ok: true, text: async () => `(${JSON.stringify(SEPT_28_BOOTSTRAP)})` })
+    const result = await resolvePWHLSeason(env)
+    vi.useRealTimers()
+    expect(result.seasonId).toBe(8)
+    expect(result.startYear).toBe(2025)
+  })
+
+  it('moves to the new regular season once its first game is within two weeks', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-25T17:00:00Z'))
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockResolvedValue({ ok: true, text: async () => `(${JSON.stringify(SEPT_28_BOOTSTRAP)})` })
+    const result = await resolvePWHLSeason(env)
+    vi.useRealTimers()
+    expect(result.seasonId).toBe(11)
+    expect(result.startYear).toBe(2026)
+  })
+
   it('calls the bootstrap endpoint with feed=statviewfeed, not feed=modulekit', async () => {
     // Regression test for a real bug: feed=modulekit returns a 200 OK with
     // no seasons/teams data at all (a bogus {"SiteKit":{"Undefined":
