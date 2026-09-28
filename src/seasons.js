@@ -412,6 +412,33 @@ async function fetchAHLSeasons(env) {
   return seasons;
 }
 
+// AHL/ECHL: which season is "current". The newest career season that has
+// started -- except that once a postseason has ended, the newest REGULAR
+// season that has started. Before 2026-09-28 this was just "newest
+// started", which meant the playoffs from late April until the next
+// season began in October: all summer every team that missed the playoffs
+// showed no stats at all (AHL: 9 of 32 teams, ECHL: 13 of 29). During the
+// playoffs they're still what's current; a new season takes over on its
+// start date as before.
+//
+// "Ended" is a week past the playoffs' listed end_date: that date is the
+// schedule's, and a final series can run past it. The nightly pipeline
+// imports whatever season this answers, so switching the day after the
+// listed end could miss the last games.
+const PLAYOFF_GRACE_DAYS = 7;
+export function pickHockeyTechSeason(seasons, today = new Date().toISOString().slice(0, 10)) {
+  const started = seasons.filter(s => s.career === '1' && (s.start_date || '9999') <= today);
+  if (!started.length) return null;
+  const newest = list => list.reduce((a, b) => (Number(b.season_id) > Number(a.season_id) ? b : a));
+  const latest = newest(started);
+  const graceEnd = latest.end_date
+    && new Date(Date.parse(`${latest.end_date}T00:00:00Z`) + PLAYOFF_GRACE_DAYS * 86400000).toISOString().slice(0, 10);
+  const playoffsOver = latest.playoff === '1' && graceEnd && graceEnd < today;
+  if (!playoffsOver) return latest;
+  const regular = started.filter(s => s.playoff !== '1');
+  return regular.length ? newest(regular) : latest;
+}
+
 export async function resolveAHLSeason(env) {
   const override = await kvGet(env, 'config:season:ahl:override');
   if (override) return override;
@@ -421,13 +448,11 @@ export async function resolveAHLSeason(env) {
 
   try {
     const seasons = await fetchAHLSeasons(env);
-    const today = new Date().toISOString().slice(0, 10);
-    const started = seasons.filter(s => s.career === '1' && (s.start_date || '9999') <= today);
-    if (!started.length) {
+    const latest = pickHockeyTechSeason(seasons);
+    if (!latest) {
       console.warn('AHL season resolve: no started career season in feed — using fallback');
       return FALLBACK_AHL;
     }
-    const latest = started.reduce((a, b) => (Number(b.season_id) > Number(a.season_id) ? b : a));
     const resolved = {
       seasonId: Number(latest.season_id),
       seasonType: ahlSeasonTypeFromName(latest.season_name, latest.playoff, latest.career),
@@ -544,13 +569,11 @@ export async function resolveECHLSeason(env) {
 
   try {
     const seasons = await fetchECHLSeasons(env);
-    const today = new Date().toISOString().slice(0, 10);
-    const started = seasons.filter(s => s.career === '1' && (s.start_date || '9999') <= today);
-    if (!started.length) {
+    const latest = pickHockeyTechSeason(seasons);
+    if (!latest) {
       console.warn('ECHL season resolve: no started career season in feed — using fallback');
       return FALLBACK_ECHL;
     }
-    const latest = started.reduce((a, b) => (Number(b.season_id) > Number(a.season_id) ? b : a));
     const resolved = {
       seasonId: Number(latest.season_id),
       seasonType: echlSeasonTypeFromName(latest.season_name, latest.playoff, latest.career),
