@@ -1968,7 +1968,7 @@ export async function poll(env, _ctx) {
 // ── PP/PK unit refresh ──────────────────────────────────────
 
 // Cache-first: scheduled() calls this every minute, but special_teams_units
-// only changes when the nightly pipeline runs, so a warm pp_units:{season}
+// only changes when the nightly pipeline runs, so a warm pp_units:{season}:{gameType}
 // is returned as-is instead of re-reading Supabase and rewriting KV each
 // tick. { force: true } re-reads regardless (/pp-units/refresh, after a
 // pipeline run).
@@ -1979,16 +1979,21 @@ export async function poll(env, _ctx) {
 // the units it labels those games with have to be that season's -- one key
 // can only ever hold one season. Callers that just want "now" omit
 // `season` and get the resolved current one, as before.
-export async function refreshPPUnits(env, { force = false, season } = {}) {
+//
+// Units are per game type (special_teams_units.game_type): regular season
+// (2, the default) or playoffs (3), one KV key each. The pipeline never
+// infers them from preseason, so before a team's opener it has none.
+export async function refreshPPUnits(env, { force = false, season, gameType = '2' } = {}) {
   const seasonId = season || String(await resolveNHLSeason(env));
-  const key = `pp_units:${seasonId}`;
+  const key = `pp_units:${seasonId}:${gameType}`;
   if (!force) {
     const cached = await kvGet(env, key);
     if (cached) return cached;
   }
   const r = await fetch(
     `${SB_URL}/rest/v1/special_teams_units` +
-    `?season=eq.${seasonId}&select=team,unit_type,unit_number,player_ids&limit=256`,
+    `?season=eq.${seasonId}&game_type=eq.${gameType}` +
+    `&select=team,unit_type,unit_number,player_ids&limit=256`,
     { headers: sbHeaders() }
   );
   if (!r.ok) throw new Error(`Supabase ${r.status}`);
@@ -2399,22 +2404,31 @@ export async function handleNHL(request, env, ctx, url) {
     });
   }
 
+  // GET /team-lines?team=CAR&season=20262027&gameType=2
+  // The team's most-used 5v5 units from line_combinations for one game
+  // type: regular season (2, the default) or playoffs (3). The pipeline
+  // builds them per game type and never from preseason, so a team that
+  // hasn't played a regular-season game has none ([]) -- the app shows
+  // /projected-lines then. `source` says where a unit came from: 'current'
+  // (these games), 'prior_season' (carried over from last season to fill a
+  // slot), or 'regular_season' (a playoff slot filled from the regular
+  // season). A failed read is a 502, not cached, rather than an empty list
+  // cached for an hour.
   if (url.pathname === '/team-lines') {
-    const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    return cachedJson(env, `nhl:team-lines:${team}:${season}`, 3600, async () => {
-      let rows;
+    const team     = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const gameType = url.searchParams.get('gameType') || '2';
+    if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
+    return cachedJson(env, `nhl:team-lines:${team}:${season}:${gameType}`, 3600, async () => {
       try {
-        rows = await sbRowsOrThrow(
-          `line_combinations?team=eq.${team}&season=eq.${season}` +
+        return await sbRowsOrThrow(
+          `line_combinations?team=eq.${team}&season=eq.${season}&game_type=eq.${gameType}` +
           `&order=unit_type.asc,rank.asc` +
-          `&select=unit_type,rank,name_a,name_b,name_c,pos_a,pos_b,pos_c,toi_secs,xgf_pct`
+          `&select=unit_type,rank,name_a,name_b,name_c,pos_a,pos_b,pos_c,toi_secs,xgf_pct,source`
         );
-      } catch {
-        rows = []; // matches supabaseClient.js's own .catch(() => []) — frontend falls back to static lines
+      } catch (e) {
+        return errorJson(502, { error: e.message });
       }
-
-      return rows;
     });
   }
 
@@ -3005,18 +3019,20 @@ Only reference the two teams named above and the numbers given -- no player name
     });
   }
 
-  // PP/PK unit compositions — pp_units:{season} is kept warm for the
-  // CURRENT season by refreshPPUnits() on every scheduled() tick, so that
+  // PP/PK unit compositions — pp_units:{season}:2 is kept warm for the
+  // CURRENT regular season by refreshPPUnits() on every scheduled() tick, so that
   // case is normally a pure KV read. The inline refresh below covers a
   // cold cache (first deploy, KV namespace wiped) and, now that ?season=
   // is accepted, any past season the ticker never warms — the first
   // request for one pays a single Supabase read and caches it for 4h.
   if (url.pathname === '/special-teams') {
-    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    let map = await kvGet(env, `pp_units:${season}`);
+    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const gameType = url.searchParams.get('gameType') || '2';
+    if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
+    let map = await kvGet(env, `pp_units:${season}:${gameType}`);
     if (!map) {
       try {
-        map = await refreshPPUnits(env, { season });
+        map = await refreshPPUnits(env, { season, gameType });
       } catch (e) {
         return errorJson(502, { error: e.message });
       }
@@ -3352,13 +3368,15 @@ Only reference the two teams named above and the numbers given -- no player name
   if (url.pathname === '/pp-units/refresh') {
     const secret = url.searchParams.get('secret');
     if (secret !== env.POLL_SECRET) return unauthorized();
-    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const gameType = url.searchParams.get('gameType') || '2';
+    if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
     ctx.waitUntil(
-      refreshPPUnits(env, { force: true, season })
-        .then(map => console.log(`PP units done (${season}): ${Object.keys(map).length} teams`))
+      refreshPPUnits(env, { force: true, season, gameType })
+        .then(map => console.log(`PP units done (${season}, ${gameType}): ${Object.keys(map).length} teams`))
         .catch(e => console.error('PP units error:', e.message))
     );
-    return json({ ok: true, status: `refreshing — check /cache/pp_units:${season} in ~5s` });
+    return json({ ok: true, status: `refreshing — check /cache/pp_units:${season}:${gameType} in ~5s` });
   }
 
   if (url.pathname === '/summary/generate') {

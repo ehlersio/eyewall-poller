@@ -1790,6 +1790,45 @@ describe('GET /player-shots', () => {
 // shot_events and game_xg hold a season's preseason and playoff games as
 // well as its regular season. These routes read one game type: regular
 // season by default, playoffs with gameType=3, and never preseason.
+// line_combinations and special_teams_units are built per game type and
+// never from preseason; these routes read one game type.
+describe('game type on /team-lines and /special-teams', () => {
+  async function call(path) {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+    const res = await handleNHL(makeRequest(path), makeEnv(), makeCtx(), new URL(`https://example.com${path}`))
+    return { res, url: String(globalThis.fetch.mock.calls[0]?.[0]) }
+  }
+
+  it('/team-lines reads the regular season by default, with source', async () => {
+    const { url } = await call('/team-lines?team=CAR&season=20262027')
+    expect(url).toContain('game_type=eq.2')
+    expect(url).toContain(',source')
+  })
+
+  it('/team-lines reads playoff units with gameType=3', async () => {
+    const { url } = await call('/team-lines?team=CAR&season=20252026&gameType=3')
+    expect(url).toContain('game_type=eq.3')
+  })
+
+  it.each(['/team-lines?team=CAR&season=20262027', '/special-teams?season=20262027'])(
+    '%s 400s on preseason or junk gameType', async (path) => {
+      for (const gameType of ['1', 'abc']) {
+        const { res } = await call(`${path}&gameType=${gameType}`)
+        expect(res.status).toBe(400)
+      }
+    }
+  )
+
+  it('/team-lines 502s on a failed read instead of caching []', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({}) })
+    const env = makeEnv()
+    const path = '/team-lines?team=CAR&season=20262027'
+    const res = await handleNHL(makeRequest(path), env, makeCtx(), new URL(`https://example.com${path}`))
+    expect(res.status).toBe(502)
+    expect(await env.CACHE.get('nhl:team-lines:CAR:20262027:2')).toBeNull()
+  })
+})
+
 describe('game type on /player-shots, /goalie-shots, /xg-trend', () => {
   const ROUTES = [
     '/player-shots?playerId=8478402&season=20252026&team=TOR',
@@ -2656,9 +2695,9 @@ describe('refreshPPUnits()', () => {
   // own upstream call in the middle of these fetch assertions.
   const PP_SEASON = '20252026'
 
-  it('returns a warm pp_units:{season} without re-reading Supabase', async () => {
+  it('returns a warm pp_units:{season}:{gameType} without re-reading Supabase', async () => {
     const cached = { CAR: { PP: { 1: [8478402] }, PK: {} } }
-    const env = makeEnv({ CACHE: makeFakeCache({ [`pp_units:${PP_SEASON}`]: cached }) })
+    const env = makeEnv({ CACHE: makeFakeCache({ [`pp_units:${PP_SEASON}:2`]: cached }) })
     globalThis.fetch = vi.fn()
 
     expect(await refreshPPUnits(env, { season: PP_SEASON })).toEqual(cached)
@@ -2666,7 +2705,7 @@ describe('refreshPPUnits()', () => {
   })
 
   it('re-reads Supabase when forced, even with a warm cache', async () => {
-    const env = makeEnv({ CACHE: makeFakeCache({ [`pp_units:${PP_SEASON}`]: { OLD: { PP: {}, PK: {} } } }) })
+    const env = makeEnv({ CACHE: makeFakeCache({ [`pp_units:${PP_SEASON}:2`]: { OLD: { PP: {}, PK: {} } } }) })
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ team: 'CAR', unit_type: 'PP', unit_number: 1, player_ids: [8478402] }],
@@ -2676,7 +2715,7 @@ describe('refreshPPUnits()', () => {
 
     expect(map).toEqual({ CAR: { PP: { 1: [8478402] }, PK: {} } })
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(await env.CACHE.get(`pp_units:${PP_SEASON}`))).toEqual(map)
+    expect(JSON.parse(await env.CACHE.get(`pp_units:${PP_SEASON}:2`))).toEqual(map)
   })
 
   // The whole reason the key is season-scoped: the shot map can be showing
@@ -2684,7 +2723,7 @@ describe('refreshPPUnits()', () => {
   // chips), and the flat pp_units:all key this used to write would hand it
   // the CURRENT season's units to label those games with.
   it('does not serve one season\'s warm cache to another season', async () => {
-    const env = makeEnv({ CACHE: makeFakeCache({ [`pp_units:${PP_SEASON}`]: { CAR: { PP: { 1: [8478402] }, PK: {} } } }) })
+    const env = makeEnv({ CACHE: makeFakeCache({ [`pp_units:${PP_SEASON}:2`]: { CAR: { PP: { 1: [8478402] }, PK: {} } } }) })
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ team: 'BOS', unit_type: 'PK', unit_number: 2, player_ids: [8477956] }],
@@ -2695,7 +2734,23 @@ describe('refreshPPUnits()', () => {
     expect(map).toEqual({ BOS: { PP: {}, PK: { 2: [8477956] } } })
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
     expect(String(globalThis.fetch.mock.calls[0][0])).toContain('season=eq.20242025')
-    expect(JSON.parse(await env.CACHE.get('pp_units:20242025'))).toEqual(map)
+    expect(JSON.parse(await env.CACHE.get('pp_units:20242025:2'))).toEqual(map)
+  })
+
+  // Units are per game type: a playoff game's PP labels come from the
+  // playoff units, which have their own key and query.
+  it('reads and caches playoff units separately from the regular season\'s', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({ [`pp_units:${PP_SEASON}:2`]: { CAR: { PP: { 1: [1] }, PK: {} } } }) })
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ team: 'CAR', unit_type: 'PP', unit_number: 1, player_ids: [8478402] }],
+    })
+
+    const map = await refreshPPUnits(env, { season: PP_SEASON, gameType: '3' })
+
+    expect(map).toEqual({ CAR: { PP: { 1: [8478402] }, PK: {} } })
+    expect(String(globalThis.fetch.mock.calls[0][0])).toContain(`season=eq.${PP_SEASON}&game_type=eq.3`)
+    expect(JSON.parse(await env.CACHE.get(`pp_units:${PP_SEASON}:3`))).toEqual(map)
   })
 })
 
