@@ -14,7 +14,14 @@ import { makeEnv, makeCtx, makeRequest, makeFakeCache, makeFakeRateLimiter, mock
 
 vi.mock('../seasons.js', () => ({
   resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
-  getAllPWHLSeasonTypes: vi.fn().mockResolvedValue({ 8: 'regular', 9: 'playoffs' }),
+  getAllPWHLSeasonTypes: vi.fn().mockResolvedValue({ 5: 'regular', 7: 'preseason', 8: 'regular', 9: 'playoffs', 10: 'preseason', 11: 'regular' }),
+  // Non-hidden seasons only, like the real one: 10 (preseason) is hidden.
+  getAllPWHLSeasons: vi.fn().mockResolvedValue([
+    { seasonId: 5, seasonType: 'regular', startYear: 2024 },
+    { seasonId: 8, seasonType: 'regular', startYear: 2025 },
+    { seasonId: 9, seasonType: 'playoffs', startYear: 2026 },
+    { seasonId: 11, seasonType: 'regular', startYear: 2026 },
+  ]),
 }))
 
 import { getAllPWHLSeasonTypes } from '../seasons.js'
@@ -1207,7 +1214,9 @@ describe('GET /pwhl/prediction', () => {
   // the single-game lookup, the 2-team pwhl_team_seasons pull, the
   // season-wide Final game log (for streak + this-season H2H), and the two
   // teams' Elo ratings (win probability).
-  function mockSupabaseFlow({ game, teams, seasonGames, eloRows = [], aiText = 'mock AI response', aiReject = false }) {
+  // pwhl_team_seasons: `teams` for the game's own season, `priorTeams` for
+  // any other (the prior regular season the route blends with).
+  function mockSupabaseFlow({ game, teams, priorTeams = [], seasonGames, eloRows = [], aiText = 'mock AI response', aiReject = false }) {
     globalThis.fetch = vi.fn((url) => {
       const u = String(url)
       if (u.includes('openrouter.ai')) {
@@ -1218,7 +1227,8 @@ describe('GET /pwhl/prediction', () => {
         return Promise.resolve({ ok: true, json: async () => (game ? [game] : []) })
       }
       if (u.includes('pwhl_team_seasons')) {
-        return Promise.resolve({ ok: true, json: async () => teams })
+        const own = game && u.includes(`season_id=eq.${game.season_id}&`)
+        return Promise.resolve({ ok: true, json: async () => (own ? teams : priorTeams) })
       }
       if (u.includes('pwhl_game_log?season_id=eq.')) {
         return Promise.resolve({ ok: true, json: async () => seasonGames })
@@ -1302,12 +1312,13 @@ describe('GET /pwhl/prediction', () => {
     expect(JSON.parse(await env.CACHE.get('pwhl:prediction:elo:210')).homeWinPct).toBe(body.homeWinPct)
   })
 
-  it('an opener (tied stats, expansion teams with no rating yet) is a home-ice edge, not 0%', async () => {
+  it('an opener (no games yet, expansion team with no rating) is a home-ice edge, not 0%', async () => {
     const env = makeEnv()
-    const blank = { gp: 0, wins: 0, losses: 0, ot_losses: 0, points: 0, goals_for: 0, goals_against: 0, pp_pct: 0, pk_pct: 0 }
+    const blank = { gp: 0, wins: 0, losses: 0, ot_losses: 0, points: 0, goals_for: 0, goals_against: 0, pp_pct: 0, pk_pct: 0, pp_opportunities: 0, times_shorthanded: 0 }
     mockSupabaseFlow({
-      game: { game_id: 210, season_id: 8, home_team_id: 10, away_team_id: 11 },
-      teams: [{ team_id: 10, ...blank }, { team_id: 11, ...blank }],
+      game: { game_id: 210, season_id: 11, home_team_id: 10, away_team_id: 3 },
+      teams: [{ team_id: 10, ...blank }, { team_id: 3, ...blank }],
+      priorTeams: [{ ...homeTeamRow, gp: 30 }],
       seasonGames: [],
     })
     const res = await handlePWHL(
@@ -1414,6 +1425,184 @@ describe('GET /pwhl/prediction', () => {
       makeRequest('/pwhl/prediction?gameId=210'), env, makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
     )
     expect(res.status).toBe(502)
+  })
+})
+
+// /pwhl/prediction's prompt never feeds the AI a made-up number (2026-09-29,
+// after NHL Opening Night's "our 0.0% PK%"): 0-GP rows, missing stats and
+// expansion teams, early-season blending with last regular season, and the
+// league-average line. Same cases as nhl-routes.test.js's
+// 'GET /prediction/analyze'.
+describe('GET /pwhl/prediction -- no made-up stats', () => {
+  // pwhl_team_seasons rows by season_id; every request URL is recorded.
+  function mockFlow({ game, rowsBySeason = {}, seasonGames = [] }) {
+    globalThis.fetch = vi.fn((url) => {
+      const u = String(url)
+      if (u.includes('openrouter.ai')) {
+        return Promise.resolve({ ok: true, json: async () => ({ choices: [{ message: { content: 'Analysis.' } }] }) })
+      }
+      if (u.includes('pwhl_game_log?game_id=eq.')) return Promise.resolve({ ok: true, json: async () => [game] })
+      if (u.includes('pwhl_team_seasons')) {
+        const season = Number(u.match(/season_id=eq\.(\d+)/)[1])
+        return Promise.resolve({ ok: true, json: async () => rowsBySeason[season] || [] })
+      }
+      if (u.includes('pwhl_game_log?season_id=eq.')) return Promise.resolve({ ok: true, json: async () => seasonGames })
+      if (u.includes('pwhl_team_elo_ratings')) return Promise.resolve({ ok: true, json: async () => [] })
+      throw new Error(`unexpected fetch: ${u}`)
+    })
+  }
+  async function predict() {
+    const res = await handlePWHL(
+      makeRequest('/pwhl/prediction?gameId=210'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/prediction?gameId=210')
+    )
+    const body = await res.json()
+    return { status: res.status, body, prompt: res.status === 200 ? aiPrompt(globalThis.fetch)[0].content : null }
+  }
+  const urls = () => globalThis.fetch.mock.calls.map(([u]) => String(u))
+
+  // 2025-26 (season 8) finals, stored the way pwhl_team_seasons really
+  // stores them: pp_pct/pk_pct as 0-1 fractions, Corsi already a percentage.
+  const MTL_2526 = { team_id: 3, gp: 30, wins: 18, losses: 8, ot_losses: 4, points: 58, goals_for: 78, goals_against: 60, pp_pct: 0.193, pk_pct: 0.918, pp_opportunities: 83, times_shorthanded: 85, corsi_for_pct: 52.5, corsi_for_pct_5v5: 51.7 }
+  const OTT_2526 = { team_id: 5, gp: 30, wins: 12, losses: 14, ot_losses: 4, points: 42, goals_for: 71, goals_against: 80, pp_pct: 0.178, pk_pct: 0.818, pp_opportunities: 90, times_shorthanded: 99, corsi_for_pct: 47.9, corsi_for_pct_5v5: 49.0 }
+  // The rest of the 2025-26 league, for the league-average line.
+  const OTHERS_2526 = [[1, 0.10, 0.80], [2, 0.12, 0.82], [4, 0.14, 0.84], [6, 0.16, 0.86], [8, 0.18, 0.88], [9, 0.20, 0.80]]
+    .map(([team_id, pp_pct, pk_pct]) => ({ team_id, gp: 30, pp_pct, pk_pct, pp_opportunities: 80, times_shorthanded: 80 }))
+  // What the pipeline writes for a team that hasn't played: zeros everywhere.
+  const zeroGp = (team_id) => ({ team_id, gp: 0, wins: 0, losses: 0, ot_losses: 0, points: 0, goals_for: 0, goals_against: 0, pp_pct: 0, pk_pct: 0, pp_opportunities: 0, times_shorthanded: 0, corsi_for_pct: null, corsi_for_pct_5v5: null })
+  // 5 games into 2026-27. MTL went 0-for-10 on the power play -- a real
+  // 0.0%, but only 5 games of it.
+  const MTL_5GP = { team_id: 3, gp: 5, wins: 3, losses: 2, ot_losses: 0, points: 9, goals_for: 20, goals_against: 5, pp_pct: 0, pk_pct: 1.0, pp_opportunities: 10, times_shorthanded: 12, corsi_for_pct: 58, corsi_for_pct_5v5: 60 }
+  const OTT_5GP = { team_id: 5, gp: 5, wins: 2, losses: 3, ot_losses: 0, points: 6, goals_for: 10, goals_against: 15, pp_pct: 0.2, pk_pct: 0.75, pp_opportunities: 10, times_shorthanded: 12, corsi_for_pct: 42, corsi_for_pct_5v5: 40 }
+  const game = (season_id, home_team_id = 3, away_team_id = 5) => ({ game_id: 210, season_id, home_team_id, away_team_id })
+
+  it('0 GP for both teams: a preseason-style prompt from last regular season, no 0.0% anywhere', async () => {
+    mockFlow({ game: game(11), rowsBySeason: { 11: [zeroGp(3), zeroGp(5)], 8: [MTL_2526, OTT_2526, ...OTHERS_2526] } })
+    const { status, body, prompt } = await predict()
+    expect(status).toBe(200)
+    expect(prompt).toContain('PRESEASON analysis — neither team has played a game yet this season')
+    expect(prompt).toContain('Context: Season opener — no games played yet this season')
+    // Units: pp_pct 0.193 -> 19.3% (not 0.2% or 1930%); Corsi 51.7 stays 51.7%.
+    expect(prompt).toContain('MTL, 2025-26 regular season: 18-8-4 (58 pts, 30 GP), GF/GA per game: 2.60 / 2.00, PP%: 19.3%, PK%: 91.8%, Shot-attempt share (Corsi For%, 5-on-5): 51.7%')
+    expect(prompt).toContain('OTT, 2025-26 regular season: 12-14-4 (42 pts, 30 GP), GF/GA per game: 2.37 / 2.67, PP%: 17.8%, PK%: 81.8%, Shot-attempt share (Corsi For%, 5-on-5): 49.0%')
+    // Mean of the 8 real 2025-26 values, labeled with season and team count.
+    expect(prompt).toContain('League average (2025-26 regular season, mean of 8 teams): PP% 15.9% · PK% 84.2%')
+    expect(prompt).toContain('Expected score (Pythagorean, from the 2025-26 regular season rates): MTL 2.8 - OTT 2.1')
+    expect(prompt).not.toMatch(/[^\d.]0\.0%/)
+    expect(prompt).not.toMatch(/[^\d.]0\.00\b/)
+    expect(body).toMatchObject({ expHome: 2.8, expAway: 2.1, homeWinPct: 55, corsiForPct: { home: 51.7, away: 49.0 } })
+    expect(body.corsiCaveat).toContain('From the 2025-26 regular season')
+    // Last regular season is 8 -- not 10 (the preseason) or 9 (playoffs).
+    expect(urls()).toContain('https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_team_seasons?season_id=eq.8&season_type=eq.regular')
+  })
+
+  it('blends small-GP stats with last regular season by games played, and labels them', async () => {
+    mockFlow({ game: game(11), rowsBySeason: { 11: [MTL_5GP, OTT_5GP], 8: [MTL_2526, OTT_2526] } })
+    const { body, prompt } = await predict()
+    expect(prompt).toContain('- Record: 3-2-0 (9 pts, 5 GP)')
+    // (5 * 4.00 + 20 * 2.60) / 25 = 2.88
+    expect(prompt).toContain('- GF per game: 2.88 early-season estimate (4.00 in 5 GP this season, blended with 2.60 in 2025-26 regular season)')
+    // (5 * 0.0 + 30 * 19.3) / 35 = 16.5 -- the 0-for-10 start isn't the headline
+    expect(prompt).toContain('- PP%: 16.5% early-season estimate (0.0% in 5 GP this season, blended with 19.3% in 2025-26 regular season)')
+    expect(prompt).not.toMatch(/PP%: 0\.0%/)
+    // Corsi, k = 10: (5 * 60 + 10 * 51.7) / 15 = 54.5
+    expect(prompt).toContain('- Shot-attempt share (Corsi For%, 5-on-5): 54.5% early-season estimate (60.0% in 5 GP this season, blended with 51.7% in 2025-26 regular season)')
+    expect(prompt).toContain('Note: it\'s early in the season.')
+    expect(body.corsiForPct.home).toBe(54.5)
+    expect(body.corsiCaveat).toContain('Early-season estimate, blended with the 2025-26 regular season.')
+  })
+
+  it('one team at 0 GP: in-season prompt, that team shows last regular season\'s numbers, labeled', async () => {
+    mockFlow({ game: game(11), rowsBySeason: { 11: [MTL_5GP, zeroGp(5)], 8: [MTL_2526, OTT_2526] } })
+    const { prompt } = await predict()
+    expect(prompt).toContain('Context: Regular Season')
+    expect(prompt).toContain('OTT stats:\n- Record: 0-0-0 (0 pts, 0 GP)\n- GF per game: 2.37 (2025-26 regular season; none this season yet)')
+    expect(prompt).toContain('- PP%: 17.8% (2025-26 regular season; none this season yet)')
+    expect(prompt).toContain('- PK%: 81.8% (2025-26 regular season; none this season yet)')
+    expect(prompt).not.toMatch(/P[PK]%: 0\.0%/)
+  })
+
+  it('a missing stat is "not available", never 0 -- expansion team, no power plays yet', async () => {
+    // DET (10): expansion, no 2025-26 row; 5 GP with no power-play chances,
+    // which the pipeline stores as pp_pct 0.0.
+    const DET_5GP = { team_id: 10, gp: 5, wins: 1, losses: 4, ot_losses: 0, points: 3, goals_for: 10, goals_against: 20, pp_pct: 0, pk_pct: 0.8, pp_opportunities: 0, times_shorthanded: 10, corsi_for_pct: null, corsi_for_pct_5v5: null }
+    mockFlow({ game: game(11, 10, 3), rowsBySeason: { 11: [DET_5GP, MTL_5GP], 8: [MTL_2526] } })
+    const { body, prompt } = await predict()
+    expect(prompt).toContain('DET stats:\n- Record: 1-4-0 (3 pts, 5 GP)\n- GF per game: 2.00 (5 GP this season, small sample)')
+    expect(prompt).toContain('- PP%: not available')
+    expect(prompt).toContain('- PK%: 80.0% (5 GP this season, small sample)')
+    expect(prompt).toContain('- Shot-attempt share (Corsi For%, all situations): not available')
+    expect(prompt).toContain('do not reference Corsi or possession')
+    expect(prompt).toContain('a stat marked "small sample"')
+    expect(prompt).toContain('Don\'t cite any stat marked "not available".')
+    // (MTL's own 0-for-10 is real and shows inside its blended estimate.)
+    expect(prompt).not.toMatch(/P[PK]%: 0\.0%/)
+    expect(body.corsiForPct).toEqual({ home: null, away: null })
+  })
+
+  it('opener against a team with no numbers at all: "not available", and no expected score from zeros', async () => {
+    mockFlow({ game: game(11, 10, 3), rowsBySeason: { 11: [zeroGp(10), zeroGp(3)], 8: [MTL_2526, OTT_2526, ...OTHERS_2526] } })
+    const { status, body, prompt } = await predict()
+    expect(status).toBe(200)
+    expect(prompt).toContain('DET, 2025-26 regular season: not available')
+    expect(prompt).toContain('MTL, 2025-26 regular season: 18-8-4')
+    expect(prompt).not.toContain('Expected score')
+    expect(prompt).not.toContain('expected-score range')
+    expect(prompt).not.toMatch(/[^\d.]0\.00\b/)
+    expect(body.expHome).toBeNull()
+    expect(body.expAway).toBeNull()
+    expect(body.homeWinPct).toBe(55)
+  })
+
+  it('404s (nothing to say) when neither team has numbers this season or last', async () => {
+    mockFlow({ game: game(11, 10, 11), rowsBySeason: { 11: [zeroGp(10), zeroGp(11)], 8: [MTL_2526] } })
+    const { status, body } = await predict()
+    expect(status).toBe(404)
+    expect(body.error).toMatch(/No PWHL stats available yet for DET or HAM/)
+    expect(aiCalls(globalThis.fetch)).toHaveLength(0)
+  })
+
+  it('league average needs at least 3/4 of the league, and a team with no power plays doesn\'t count as 0%', async () => {
+    // 6 of 2025-26's 8 teams (min 6): PK% qualifies; PP% has only 5 real
+    // values because one team's 0 power plays isn't a 0.0%.
+    const six = [MTL_2526, OTT_2526, ...OTHERS_2526.slice(0, 3), { ...OTHERS_2526[3], pp_opportunities: 0, pp_pct: 0 }]
+    mockFlow({ game: game(11), rowsBySeason: { 11: [zeroGp(3), zeroGp(5)], 8: six } })
+    const { prompt } = await predict()
+    expect(prompt).toContain('League average (2025-26 regular season, mean of 6 teams): PK% ')
+    expect(prompt).not.toContain('League average (2025-26 regular season, mean of 6 teams): PP%')
+
+    mockFlow({ game: game(11), rowsBySeason: { 11: [zeroGp(3), zeroGp(5)], 8: six.slice(0, 5) } })
+    expect((await predict()).prompt).not.toContain('League average')
+  })
+
+  it('uses this season\'s league average once every team has 30 GP', async () => {
+    const full = [MTL_2526, OTT_2526, ...OTHERS_2526]
+    const older = full.map(r => ({ ...r, pp_pct: 0.3 }))
+    mockFlow({ game: game(8), rowsBySeason: { 8: full, 5: older } })
+    const { prompt } = await predict()
+    expect(prompt).toContain('League average (2025-26 regular season, mean of 8 teams): PP% 15.9% · PK% 84.2%')
+    expect(prompt).not.toContain('early-season estimate')
+  })
+
+  it('a preseason game uses last regular season and never reads preseason results', async () => {
+    mockFlow({ game: game(10), rowsBySeason: { 8: [MTL_2526, OTT_2526] } })
+    const { body, prompt } = await predict()
+    expect(prompt).toContain('Context: Preseason game')
+    expect(prompt).toContain('MTL, 2025-26 regular season: 18-8-4')
+    expect(body).toMatchObject({ homeStreak: 'N/A (preseason)', awayStreak: 'N/A (preseason)', h2hRecord: 'no games played yet this season' })
+    expect(urls().some(u => u.includes('pwhl_game_log?season_id='))).toBe(false)
+    expect(urls().some(u => u.includes('season_id=eq.10'))).toBe(false)
+  })
+
+  it('playoffs blend with the regular season just played', async () => {
+    const MTL_PO = { team_id: 3, gp: 2, wins: 2, losses: 0, ot_losses: 0, points: 6, goals_for: 6, goals_against: 2, pp_pct: 0.25, pk_pct: 0.9, pp_opportunities: 8, times_shorthanded: 10, corsi_for_pct: 55, corsi_for_pct_5v5: 55 }
+    const OTT_PO = { ...MTL_PO, team_id: 5, wins: 0, losses: 2, points: 0, goals_for: 2, goals_against: 6 }
+    mockFlow({ game: game(9), rowsBySeason: { 9: [MTL_PO, OTT_PO], 8: [MTL_2526, OTT_2526] } })
+    const { body, prompt } = await predict()
+    expect(body.isPlayoff).toBe(true)
+    // (2 * 3.00 + 20 * 2.60) / 22 = 2.64
+    expect(prompt).toContain('- GF per game: 2.64 small-sample estimate (3.00 in 2 GP these playoffs, blended with 2.60 in 2025-26 regular season)')
+    expect(prompt).toContain('Head-to-head these playoffs: MTL no prior meetings')
+    expect(prompt).toContain('focus on possession, goaltending, and recent form')
   })
 })
 

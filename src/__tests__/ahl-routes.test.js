@@ -7,11 +7,20 @@
 // docstring for the confirmed differences from PWHL this reflects).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { makeEnv, makeCtx, makeRequest, mockFetchWithAI } from './route-harness.js'
+import { makeEnv, makeCtx, makeRequest, mockFetchWithAI, aiPrompt } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({
   resolveAHLSeason: vi.fn().mockResolvedValue({ seasonId: 90, seasonType: 'regular' }),
-  getAllAHLSeasonTypes: vi.fn().mockResolvedValue({ 90: 'regular', 92: 'playoffs' }),
+  getAllAHLSeasonTypes: vi.fn().mockResolvedValue({ 86: 'regular', 88: 'playoffs', 90: 'regular', 92: 'playoffs', 93: 'preseason', 94: 'regular' }),
+  // Real shape and dates (HockeyTech's AHL season list, 2026-09-29).
+  getAllAHLSeasons: vi.fn().mockResolvedValue([
+    { seasonId: 94, seasonName: '2026-27 Regular Season', seasonType: 'regular', startYear: 2026, startDate: '2026-10-02', endDate: '2027-04-11' },
+    { seasonId: 93, seasonName: '2026 Preseason', seasonType: 'preseason', startYear: 2026, startDate: '2026-09-21', endDate: '2026-09-30' },
+    { seasonId: 92, seasonName: '2026 Calder Cup Playoffs', seasonType: 'playoffs', startYear: 2026, startDate: '2026-04-20', endDate: '2026-06-20' },
+    { seasonId: 90, seasonName: '2025-26 Regular Season', seasonType: 'regular', startYear: 2025, startDate: '2025-10-07', endDate: '2026-04-19' },
+    { seasonId: 88, seasonName: '2025 Calder Cup Playoffs', seasonType: 'playoffs', startYear: 2025, startDate: '2025-04-21', endDate: '2025-06-24' },
+    { seasonId: 86, seasonName: '2024-25 Regular Season', seasonType: 'regular', startYear: 2024, startDate: '2024-10-09', endDate: '2025-04-20' },
+  ]),
 }))
 
 import { handleAHL, AHL_TEAM_CODES } from '../ahl.js'
@@ -378,5 +387,78 @@ describe('GET /ahl/prediction -- Elo win probability', () => {
     const body = await predict([{ team_id: 323, rating: 1580 }])
     // 1 / (1 + 10^((1580 - 1500 - 35) / 400)) = 0.436
     expect(body.homeWinPct).toBe(44)
+  })
+})
+
+describe('GET /ahl/prediction -- no made-up stats', () => {
+  // ahl_team_seasons rows by season_id (the route reads this season's and
+  // last regular season's, every team).
+  function mockFlow(game, rowsBySeason) {
+    mockFetchWithAI('Analysis.', (url) => {
+      const u = String(url)
+      if (u.includes('ahl_game_log?game_id=')) return Promise.resolve({ ok: true, json: async () => [game] })
+      if (u.includes('ahl_team_seasons')) {
+        const season = Number(u.match(/season_id=eq\.(\d+)/)[1])
+        return Promise.resolve({ ok: true, json: async () => rowsBySeason[season] || [] })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+  }
+  async function predict() {
+    const res = await handleAHL(
+      makeRequest('/ahl/prediction?gameId=1028992'), makeEnv(), makeCtx(),
+      new URL('https://example.com/ahl/prediction?gameId=1028992')
+    )
+    return { status: res.status, body: await res.json(), prompt: res.status === 200 ? aiPrompt(globalThis.fetch)[0].content : null }
+  }
+
+  const OPENER = { game_id: 1028992, season_id: 94, home_team_id: 335, away_team_id: 323 }
+  // 2025-26 finals; pp_pct/pk_pct are 0-1 fractions in ahl_team_seasons.
+  const TOR = { team_id: 335, gp: 72, wins: 40, losses: 24, ot_losses: 5, shootout_losses: 3, points: 88, goals_for: 230, goals_against: 200, pp_pct: 0.21, pk_pct: 0.83, pp_opportunities: 280, times_shorthanded: 290 }
+  const ROC = { team_id: 323, gp: 72, wins: 35, losses: 28, ot_losses: 6, shootout_losses: 3, points: 79, goals_for: 210, goals_against: 215, pp_pct: 0.17, pk_pct: 0.8, pp_opportunities: 270, times_shorthanded: 260 }
+  const others = n => Array.from({ length: n }, (_, i) => ({ team_id: 1000 + i, gp: 72, pp_pct: 0.18, pk_pct: 0.82, pp_opportunities: 250, times_shorthanded: 250 }))
+  const zeroGp = team_id => ({ team_id, gp: 0, wins: 0, losses: 0, ot_losses: 0, shootout_losses: 0, points: 0, goals_for: 0, goals_against: 0, pp_pct: 0, pk_pct: 0, pp_opportunities: 0, times_shorthanded: 0 })
+
+  it('0 GP for both teams: last regular season (90 -- not the 93 preseason or 92 playoffs), no 0.0%', async () => {
+    mockFlow(OPENER, { 94: [zeroGp(335), zeroGp(323)], 90: [TOR, ROC, ...others(22)] })
+    const { status, body, prompt } = await predict()
+    expect(status).toBe(200)
+    expect(prompt).toContain('You are EyeWall Analytics, an AHL hockey analytics assistant. Write a sharp, data-driven PRESEASON analysis')
+    expect(prompt).toContain('TOR, 2025-26 regular season: 40-24-5-3 (88 pts, 72 GP), GF/GA per game: 3.19 / 2.78, PP%: 21.0%, PK%: 83.0%')
+    expect(prompt).toContain('ROC, 2025-26 regular season: 35-28-6-3 (79 pts, 72 GP), GF/GA per game: 2.92 / 2.99, PP%: 17.0%, PK%: 80.0%')
+    // Mean of 24 real values -- 3/4 of the league.
+    expect(prompt).toContain('League average (2025-26 regular season, mean of 24 teams): PP% 18.1% · PK% 82.0%')
+    expect(prompt).toContain('do not reference Corsi')
+    expect(prompt).not.toMatch(/[^\d.]0\.0%/)
+    expect(body.expHome).not.toBeNull()
+    expect(body.corsiForPct).toBeUndefined()
+  })
+
+  it('omits the league average when fewer than 24 teams have the stat', async () => {
+    mockFlow(OPENER, { 94: [zeroGp(335), zeroGp(323)], 90: [TOR, ROC, ...others(21)] })
+    expect((await predict()).prompt).not.toContain('League average')
+  })
+
+  it('blends a few games with last regular season and labels the estimate', async () => {
+    const TOR_4GP = { team_id: 335, gp: 4, wins: 3, losses: 1, ot_losses: 0, shootout_losses: 0, points: 6, goals_for: 16, goals_against: 8, pp_pct: 0.25, pk_pct: 0.9, pp_opportunities: 12, times_shorthanded: 10 }
+    mockFlow(OPENER, { 94: [TOR_4GP, zeroGp(323)], 90: [TOR, ROC] })
+    const { prompt } = await predict()
+    expect(prompt).toContain('TOR stats:\n- Record: 3-1-0-0 (6 pts, 4 GP)')
+    // (4 * 4.00 + 20 * 3.19) / 24 = 3.33; (4 * 25.0 + 30 * 21.0) / 34 = 21.5
+    expect(prompt).toContain('- GF per game: 3.33 early-season estimate (4.00 in 4 GP this season, blended with 3.19 in 2025-26 regular season)')
+    expect(prompt).toContain('- PP%: 21.5% early-season estimate (25.0% in 4 GP this season, blended with 21.0% in 2025-26 regular season)')
+    expect(prompt).toContain('ROC stats:\n- Record: 0-0-0-0 (0 pts, 0 GP)\n- GF per game: 2.92 (2025-26 regular season; none this season yet)')
+    expect(prompt).not.toMatch(/P[PK]%: 0\.0%/)
+  })
+
+  it('a stat missing from the row is "not available" and there is no expected score from zeros', async () => {
+    const TOR_NO_GOALS = { ...TOR, goals_for: null, pp_pct: null }
+    mockFlow({ ...OPENER, season_id: 90 }, { 90: [TOR_NO_GOALS, ROC] })
+    const { body, prompt } = await predict()
+    expect(prompt).toContain('- GF per game: not available')
+    expect(prompt).toContain('- PP%: not available')
+    expect(prompt).not.toContain('Expected score')
+    expect(body.expHome).toBeNull()
+    expect(body.expAway).toBeNull()
   })
 })

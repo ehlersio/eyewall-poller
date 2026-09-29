@@ -36,7 +36,8 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { buildHockeyTechPrediction } from './hockeytechPrediction.js';
 
 // Elo constants -- match eyewall-pipeline/elo.py (and nhl.js's
 // ELO_HOME_ADVANTAGE). hockeytech_elo.py writes the ratings these apply to.
@@ -61,6 +62,10 @@ function seasonActive() {
  * @param {string} cfg.headshotSize LeagueStat headshot path segment
  * @param {Function} cfg.resolveSeason     (env) => { seasonId, seasonType }
  * @param {Function} cfg.getAllSeasonTypes (env) => { [seasonId]: seasonType }
+ * @param {Function} cfg.getAllSeasons     (env) => [{ seasonId, seasonType, startYear, startDate }]
+ *                                  -- /prediction's "last regular season"
+ * @param {number} cfg.leagueAvgFloor fewest teams /prediction's league-
+ *                                  average PP%/PK% may be the mean of
  * @param {object} cfg.ht           { base, key, headers } for HockeyTech;
  *                                  read at call time, never at creation
  * @returns {{ handle: Function, poll: Function, fetchNews: Function }}
@@ -85,6 +90,24 @@ export function createHockeyTechLeague(cfg) {
     const types = await cfg.getAllSeasonTypes(env);
     return types?.[String(seasonId)] || 'regular';
   }
+
+  // /prediction's league config for hockeytechPrediction.js. No Corsi:
+  // there's no shot-attempts source for either league.
+  const predictionCfg = {
+    key,
+    label,
+    article: 'an',
+    teamCodes,
+    getSeasonTypes: (env) => cfg.getAllSeasonTypes(env),
+    getSeasons: (env) => cfg.getAllSeasons(env),
+    gameLogSelect: 'game_id,home_team_id,away_team_id,home_score,away_score',
+    recordFields: ['wins', 'losses', 'ot_losses', 'shootout_losses'],
+    corsi: false,
+    playoffFocus: 'goaltending and recent form',
+    leagueAvgFloor: cfg.leagueAvgFloor,
+    eloInitial: ELO_INITIAL_RATING,
+    eloHomeAdvantage: ELO_HOME_ADVANTAGE,
+  };
 
   // ── News ───────────────────────────────────────────────────────────
   // Every source is league-scoped by construction, but a source can still
@@ -971,9 +994,9 @@ export function createHockeyTechLeague(cfg) {
     }
 
     // GET /{league}/prediction?gameId=1028992
-    // Elo win probability + AI narrative. The context fed to the AI
-    // (record, GF/GA, PP/PK, streaks, head-to-head) is the same as before;
-    // streaks count every non-win as a loss, same as /standings.
+    // Elo win probability + AI narrative from record, GF/GA, PP/PK, streaks
+    // and head-to-head (hockeytechPrediction.js); streaks count every
+    // non-win as a loss, same as /standings.
     if (url.pathname === `${P}/prediction`) {
       const limited = await checkAiRateLimit(env, request, `${key}-prediction`);
       if (limited) return limited;
@@ -999,134 +1022,12 @@ export function createHockeyTechLeague(cfg) {
         return errorJson(404, { error: `Game not found in ${key}_game_log` });
       }
 
-      const seasonId = game.season_id;
-      const homeId = game.home_team_id;
-      const awayId = game.away_team_id;
-
-      const seasonType = await resolveSeasonType(env, seasonId);
-      const isPlayoff = seasonType === 'playoffs';
-
-      const [teamRows, games, eloRows] = await Promise.all([
-        sbRows(`${table('team_seasons')}?team_id=in.(${homeId},${awayId})&season_id=eq.${seasonId}&season_type=eq.${seasonType}`),
-        sbRowsOr(`${table('game_log')}?season_id=eq.${seasonId}&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score`, []),
-        // Optional: without ratings both teams are rated at the mean (see below).
-        sbRowsOr(`${table('team_elo_ratings')}?team_id=in.(${homeId},${awayId})&select=team_id,rating`, []).catch(() => []),
-      ]);
-      if (teamRows instanceof Response) return teamRows;
-
-      const home = teamRows.find(t => t.team_id === homeId);
-      const away = teamRows.find(t => t.team_id === awayId);
-      if (!home || !away) {
-        return errorJson(404, { error: `${key}_team_seasons rows not found for both teams` });
-      }
-
-      const streakFor = (teamId) => {
-        const results = games
-          .filter(g => g.home_team_id === teamId || g.away_team_id === teamId)
-          .map(g => {
-            const isHomeG = g.home_team_id === teamId;
-            const my = isHomeG ? g.home_score : g.away_score;
-            const opp = isHomeG ? g.away_score : g.home_score;
-            return my > opp ? 'W' : 'L';
-          });
-        let streak = 0, streakType = '';
-        for (const res of results) {
-          if (!streakType) { streakType = res; streak = 1; }
-          else if (res === streakType) streak++;
-          else break;
-        }
-        return streak ? `${streakType}${streak}` : 'unknown';
-      };
-      const homeStreak = streakFor(homeId);
-      const awayStreak = streakFor(awayId);
-
-      const h2hGames = games.filter(g =>
-        (g.home_team_id === homeId && g.away_team_id === awayId) ||
-        (g.home_team_id === awayId && g.away_team_id === homeId)
-      );
-      const h2hHomeWins = h2hGames.filter(g => {
-        const homeWasHome = g.home_team_id === homeId;
-        const myScore = homeWasHome ? g.home_score : g.away_score;
-        const oppScore = homeWasHome ? g.away_score : g.home_score;
-        return myScore > oppScore;
-      }).length;
-      const h2hRecord = h2hGames.length > 0
-        ? `${h2hHomeWins}-${h2hGames.length - h2hHomeWins}`
-        : 'no prior meetings';
-
-      const homeAbbr = teamCodes[homeId] || `T${homeId}`;
-      const awayAbbr = teamCodes[awayId] || `T${awayId}`;
-
-      const hGp = home.gp || 1, aGp = away.gp || 1;
-      const hGpg = (home.goals_for ?? 0) / hGp, aGpg = (away.goals_for ?? 0) / aGp;
-      const hGag = (home.goals_against ?? 0) / hGp, aGag = (away.goals_against ?? 0) / aGp;
-      const hPP = (home.pp_pct ?? 0) * 100, aPP = (away.pp_pct ?? 0) * 100;
-      const hPK = (home.pk_pct ?? 0) * 100, aPK = (away.pk_pct ?? 0) * 100;
-
-      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-      const expHome = clamp(Math.sqrt(Math.max(hGpg, 0.5) * Math.max(aGag, 0.5)) + 0.12, 1.5, 5.0).toFixed(1);
-      const expAway = clamp(Math.sqrt(Math.max(aGpg, 0.5) * Math.max(hGag, 0.5)) - 0.12, 1.5, 5.0).toFixed(1);
-
-      // Elo, same model as NHL (eyewall-pipeline elo.py): expected score
-      // with the home team's rating + ELO_HOME_ADVANTAGE. A team with no
-      // row yet (new franchise, or the ratings table unreachable) is rated
-      // at the mean, so the worst case is a plain home-ice edge (~55%) --
-      // never the 0%-home the old point split gave every season opener.
-      const ratingOf = (teamId) => eloRows.find(r => r.team_id === teamId)?.rating ?? ELO_INITIAL_RATING;
-      const homeWinPct = Math.round(100 / (1 + 10 ** ((ratingOf(awayId) - ratingOf(homeId) - ELO_HOME_ADVANTAGE) / 400)));
-
-      const prompt = `You are EyeWall Analytics, an ${label} hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. Shot-attempt/possession data is not available for ${label} -- do not reference Corsi, possession, or shot-attempt share.
-
-Game: ${homeAbbr} (HOME) vs ${awayAbbr} (AWAY)
-Context: ${isPlayoff ? 'PLAYOFFS' : 'Regular Season'}
-
-${homeAbbr} stats:
-- Record: ${home.wins}-${home.losses}-${home.ot_losses}-${home.shootout_losses ?? 0} (${home.points} pts)
-- GF/GA per game: ${hGpg.toFixed(2)} / ${hGag.toFixed(2)}
-- PP%: ${hPP.toFixed(1)}% · PK%: ${hPK.toFixed(1)}%
-- Current streak: ${homeStreak}
-
-${awayAbbr} stats:
-- Record: ${away.wins}-${away.losses}-${away.ot_losses}-${away.shootout_losses ?? 0} (${away.points} pts)
-- GF/GA per game: ${aGpg.toFixed(2)} / ${aGag.toFixed(2)}
-- PP%: ${aPP.toFixed(1)}% · PK%: ${aPK.toFixed(1)}%
-- Current streak: ${awayStreak}
-
-Head-to-head this season: ${homeAbbr} ${h2hRecord}
-Expected score (Pythagorean): ${homeAbbr} ${expHome} - ${awayAbbr} ${expAway}
-Model win probability: ${homeAbbr} ${homeWinPct}%${isPlayoff ? '\n\nNote: This is a playoff game. Ignore regular season points — focus on goaltending and recent form.' : ''}
-
-Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.`;
-
-      let narrative = '';
-      try {
-        const aiResponse = await generateText(env, {
-          messages: [{ role: 'user', content: localizePrompt(prompt, locale) }],
-        });
-        narrative = aiResponse.response?.trim() || '';
-      } catch (e) {
-        console.error(`${label} prediction AI error:`, e);
-      }
-      if (!narrative) return errorJson(502, { error: 'Empty AI response' });
-
-      const result = {
-        gameId,
-        homeTeamId: homeId,
-        awayTeamId: awayId,
-        homeAbbr,
-        awayAbbr,
-        isPlayoff,
-        homeWinPct,
-        awayWinPct: 100 - homeWinPct,
-        winModel: 'elo',
-        expHome: parseFloat(expHome),
-        expAway: parseFloat(expAway),
-        narrative,
-        h2hRecord,
-        homeStreak,
-        awayStreak,
-        generatedAt: new Date().toISOString(),
-      };
+      // Stats, prompt, Elo and AI call: hockeytechPrediction.js, shared with
+      // /pwhl/prediction. A missing stat is "not available" (never 0),
+      // early-season stats are blended with last regular season's, and at
+      // 0 GP for both teams the prompt is built from last regular season.
+      const { result, error } = await buildHockeyTechPrediction(env, predictionCfg, game, gameId, locale);
+      if (error) return error;
 
       await kvPut(env, kvKey, result, 1800);
       return json(result);

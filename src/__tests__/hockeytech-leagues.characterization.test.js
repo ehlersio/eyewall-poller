@@ -28,8 +28,18 @@ vi.mock('../seasons.js', async (importOriginal) => {
     ...actual,
     resolveAHLSeason: vi.fn().mockResolvedValue({ seasonId: 90, seasonType: 'regular' }),
     getAllAHLSeasonTypes: vi.fn().mockResolvedValue({ 90: 'regular', 92: 'playoffs' }),
+    getAllAHLSeasons: vi.fn().mockResolvedValue([
+      { seasonId: 86, seasonType: 'regular', startYear: 2024, startDate: '2024-10-09' },
+      { seasonId: 90, seasonType: 'regular', startYear: 2025, startDate: '2025-10-07' },
+      { seasonId: 92, seasonType: 'playoffs', startYear: 2026, startDate: '2026-04-20' },
+    ]),
     resolveECHLSeason: vi.fn().mockResolvedValue({ seasonId: 73, seasonType: 'regular' }),
     getAllECHLSeasonTypes: vi.fn().mockResolvedValue({ 73: 'regular', 76: 'playoffs' }),
+    getAllECHLSeasons: vi.fn().mockResolvedValue([
+      { seasonId: 70, seasonType: 'regular', startYear: 2024, startDate: '2024-10-17' },
+      { seasonId: 73, seasonType: 'regular', startYear: 2025, startDate: '2025-10-15' },
+      { seasonId: 76, seasonType: 'playoffs', startYear: 2026, startDate: '2026-04-21' },
+    ]),
   }
 })
 

@@ -11,7 +11,7 @@
  */
 
 import { createHockeyTechLeague } from './hockeytech.js';
-import { resolveECHLSeason, getAllECHLSeasonTypes, ECHL_HT_BASE, ECHL_HT_KEY, ECHL_HT_HDR } from './seasons.js';
+import { resolveECHLSeason, getAllECHLSeasonTypes, getAllECHLSeasons, ECHL_HT_BASE, ECHL_HT_KEY, ECHL_HT_HDR } from './seasons.js';
 
 // Only 2 sources, not AHL's 3: echl.com has no RSS feed at all (confirmed
 // live 2026-08-30, /feed and /rss both 404). Both are ECHL-scoped by
@@ -71,6 +71,8 @@ const echl = createHockeyTechLeague({
   // Read at call time, not here -- see ahl.js.
   resolveSeason:     (env) => resolveECHLSeason(env),
   getAllSeasonTypes: (env) => getAllECHLSeasonTypes(env),
+  getAllSeasons:     (env) => getAllECHLSeasons(env),
+  leagueAvgFloor:    21, // 3/4 of 28 teams; a season with more rows raises it
   ht: {
     get base()    { return ECHL_HT_BASE; },
     get key()     { return ECHL_HT_KEY; },

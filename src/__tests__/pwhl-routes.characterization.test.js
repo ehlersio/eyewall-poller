@@ -29,6 +29,11 @@ vi.mock('../seasons.js', async (importOriginal) => {
     ...actual,
     resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
     getAllPWHLSeasonTypes: vi.fn().mockResolvedValue({ 8: 'regular', 9: 'playoffs' }),
+    getAllPWHLSeasons: vi.fn().mockResolvedValue([
+      { seasonId: 5, seasonType: 'regular', startYear: 2024 },
+      { seasonId: 8, seasonType: 'regular', startYear: 2025 },
+      { seasonId: 9, seasonType: 'playoffs', startYear: 2026 },
+    ]),
   }
 })
 
