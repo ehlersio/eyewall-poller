@@ -2927,6 +2927,43 @@ describe('GET /prediction/analyze', () => {
     // construction, not just by reading the source.
   })
 
+  it('routes to the preseason fallback when standings are on the current season but a team has 0 games played (Opening Night)', async () => {
+    // Real shape of /standings/now on 2026-09-29: seasonId already flipped
+    // to the new season, every team at 0 GP with null PP%/PK%. The in-season
+    // branch used to render that as "PK%: 0.0%" in the AI prompt.
+    const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, seasonId: 20252026, gamesPlayed: 0, wins: 0, losses: 0, otLosses: 0, points: 0, goalFor: 0, goalAgainst: 0, powerPlayPct: null, penaltyKillPct: null },
+      { teamAbbrev: { default: 'BOS' }, seasonId: 20252026, gamesPlayed: 0, wins: 0, losses: 0, otLosses: 0, points: 0, goalFor: 0, goalAgainst: 0, powerPlayPct: null, penaltyKillPct: null },
+    ]
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
+    })
+    mockSupabaseByTable({
+      'team_seasons': [
+        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 24 },
+        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 20 },
+      ],
+      'team_elo_ratings': [
+        { team: 'CAR', rating: 1550 },
+        { team: 'BOS', rating: 1480 },
+      ],
+    }, 'Preseason take.')
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.regime).toBe('preseason')
+    expect(body.dataSeason).toBe(20242025)
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).not.toMatch(/PK%/)
+    expect(promptSent).toMatch(/CAR last season \(20242025\)/)
+  })
+
   it('returns an error rather than guessing when neither team has prior-season team_seasons data', async () => {
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [

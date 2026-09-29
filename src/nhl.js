@@ -3422,6 +3422,16 @@ Only reference the two teams named above and the numbers given -- no player name
 
     if (!carTeam || !oppTeam) return errorJson(404, { error: 'Team standings not found' });
 
+    // Standings flip to the new seasonId on Opening Night before any game
+    // is played (seen live 2026-09-29): every team at gamesPlayed 0 with
+    // null PP%/PK%/shot rates. The seasonId check above passes, so without
+    // this the in-season prompt told the AI "PK%: 0.0%", "GF/GA 0.00" and
+    // it wrote them up as real weaknesses. A team with no games yet has no
+    // current-season numbers to describe -- use last season's instead.
+    if (carTeam.gamesPlayed === 0 || oppTeam.gamesPlayed === 0) {
+      return buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey, neutral, locale);
+    }
+
     // Calculate key metrics
     const carGp  = carTeam.gamesPlayed || 1;
     const oppGp  = oppTeam.gamesPlayed || 1;
