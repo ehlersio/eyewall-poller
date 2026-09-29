@@ -1787,6 +1787,41 @@ describe('GET /player-shots', () => {
   })
 })
 
+// shot_events and game_xg hold a season's preseason and playoff games as
+// well as its regular season. These routes read one game type: regular
+// season by default, playoffs with gameType=3, and never preseason.
+describe('game type on /player-shots, /goalie-shots, /xg-trend', () => {
+  const ROUTES = [
+    '/player-shots?playerId=8478402&season=20252026&team=TOR',
+    '/goalie-shots?goalieId=8481611&season=20252026',
+    '/xg-trend?team=TOR&season=20252026',
+  ]
+
+  async function fetchedUrlFor(path) {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+    const res = await handleNHL(makeRequest(path), makeEnv(), makeCtx(), new URL(`https://example.com${path}`))
+    return { res, url: String(globalThis.fetch.mock.calls[0]?.[0]) }
+  }
+
+  it.each(ROUTES)('%s reads the regular season by default', async (path) => {
+    const { url } = await fetchedUrlFor(path)
+    expect(url).toContain('game_type=eq.2')
+  })
+
+  it.each(ROUTES)('%s reads playoffs with gameType=3', async (path) => {
+    const { url } = await fetchedUrlFor(`${path}&gameType=3`)
+    expect(url).toContain('game_type=eq.3')
+  })
+
+  it.each(ROUTES)('%s 400s on preseason or junk gameType', async (path) => {
+    for (const gameType of ['1', 'abc']) {
+      const { res } = await fetchedUrlFor(`${path}&gameType=${gameType}`)
+      expect(res.status).toBe(400)
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+})
+
 describe('GET /nhl/shots', () => {
   // Regression: an earlier version of this route filtered shot_events on
   // car_game=eq.true, which only ever means "Carolina played in this game"

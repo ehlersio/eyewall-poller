@@ -2240,13 +2240,20 @@ export async function handleNHL(request, env, ctx, url) {
     });
   }
 
+  // shot_events holds a season's preseason and playoff games as well as its
+  // regular season. /player-shots, /goalie-shots and /xg-trend read one game
+  // type (game_type, generated from game_id -- eyewall-pipeline's
+  // docs/game_type_column.sql): regular season unless gameType=3. Preseason
+  // is never offered. Until 2026-09 they read all three together.
   if (url.pathname === '/player-shots') {
     const playerId = url.searchParams.get('playerId');
     const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     const team     = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const gameType = url.searchParams.get('gameType') || '2';
     if (!playerId) return badRequest('playerId required');
+    if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
 
-    return cachedJson(env, `nhl:player-shots:${playerId}:${season}:${team}`, 3600, async () => {
+    return cachedJson(env, `nhl:player-shots:${playerId}:${season}:${team}:${gameType}`, 3600, async () => {
       // No car_game filter: that column only means "Carolina played in this
       // game" (see eyewall-pipeline's shot_events.py), so filtering on it here
       // silently restricted every non-CAR player's shots to games against
@@ -2256,7 +2263,7 @@ export async function handleNHL(request, env, ctx, url) {
       try {
         rows = await sbRowsOrThrow(
           `shot_events?player_id=eq.${playerId}&season=eq.${season}` +
-          `&team=eq.${team}` +
+          `&game_type=eq.${gameType}&team=eq.${team}` +
           `&select=x,y,event_type,period,time_in_period,shot_type&limit=2000`
         );
       } catch (e) {
@@ -2322,13 +2329,15 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/goalie-shots') {
     const goalieId = url.searchParams.get('goalieId');
     const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const gameType = url.searchParams.get('gameType') || '2';
     if (!goalieId) return badRequest('goalieId required');
+    if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
 
-    return cachedJson(env, `nhl:goalie-shots:${goalieId}:${season}`, 3600, async () => {
+    return cachedJson(env, `nhl:goalie-shots:${goalieId}:${season}:${gameType}`, 3600, async () => {
       let rows;
       try {
         rows = await sbRowsOrThrow(
-          `shot_events?goalie_id=eq.${goalieId}&season=eq.${season}` +
+          `shot_events?goalie_id=eq.${goalieId}&season=eq.${season}&game_type=eq.${gameType}` +
           `&select=x,y,event_type,period,time_in_period,shot_type,team&limit=2000`
         );
       } catch (e) {
@@ -2592,14 +2601,17 @@ export async function handleNHL(request, env, ctx, url) {
     });
   }
 
+  // Regular season unless gameType=3 -- see /player-shots above.
   if (url.pathname === '/xg-trend') {
-    const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    return cachedJson(env, `nhl:xg-trend:${team}:${season}`, 3600, async () => {
+    const team     = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const gameType = url.searchParams.get('gameType') || '2';
+    if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
+    return cachedJson(env, `nhl:xg-trend:${team}:${season}:${gameType}`, 3600, async () => {
       let rows;
       try {
         rows = await sbRowsOrThrow(
-          `game_xg?team=eq.${team}&season=eq.${season}&situation=eq.5on5` +
+          `game_xg?team=eq.${team}&season=eq.${season}&game_type=eq.${gameType}&situation=eq.5on5` +
           `&select=game_id,xgf_pct&limit=999`
         );
       } catch (e) {
