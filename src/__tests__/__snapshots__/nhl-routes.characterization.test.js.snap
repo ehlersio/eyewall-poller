@@ -2894,7 +2894,7 @@ exports[`goalie-shots > NHL API and AI unavailable 1`] = `
   ],
   "kvWrites": [
     {
-      "key": "nhl:goalie-shots:8481611:20252026",
+      "key": "nhl:goalie-shots:8481611:20252026:2",
       "ttl": 3600,
     },
   ],
@@ -2905,7 +2905,7 @@ exports[`goalie-shots > NHL API and AI unavailable 1`] = `
 exports[`goalie-shots > Supabase unavailable 1`] = `
 {
   "body": {
-    "error": "Supabase 503: shot_events?goalie_id=eq.8481611&season=eq.20252026&select=x,y,event_type,period,time_in_period,shot_type,team&limit=2000",
+    "error": "Supabase 503: shot_events?goalie_id=eq.8481611&season=eq.20252026&game_type=eq.2&select=x,y,event_type,period,time_in_period,shot_type,team&limit=2000",
   },
   "kvWrites": [],
   "status": 502,
@@ -2948,14 +2948,14 @@ exports[`goalie-shots > response, upstream requests and KV writes; repeat call 1
   ],
   "kvWrites": [
     {
-      "key": "nhl:goalie-shots:8481611:20252026",
+      "key": "nhl:goalie-shots:8481611:20252026:2",
       "ttl": 3600,
     },
   ],
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/shot_events?goalie_id=eq.8481611&season=eq.20252026&select=x,y,event_type,period,time_in_period,shot_type,team&limit=2000",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/shot_events?goalie_id=eq.8481611&season=eq.20252026&game_type=eq.2&select=x,y,event_type,period,time_in_period,shot_type,team&limit=2000",
     },
   ],
 }
@@ -4201,7 +4201,7 @@ exports[`player-shots > NHL API and AI unavailable 1`] = `
   ],
   "kvWrites": [
     {
-      "key": "nhl:player-shots:8478427:20252026:CAR",
+      "key": "nhl:player-shots:8478427:20252026:CAR:2",
       "ttl": 3600,
     },
   ],
@@ -4212,7 +4212,7 @@ exports[`player-shots > NHL API and AI unavailable 1`] = `
 exports[`player-shots > Supabase unavailable 1`] = `
 {
   "body": {
-    "error": "Supabase 503: shot_events?player_id=eq.8478427&season=eq.20252026&team=eq.CAR&select=x,y,event_type,period,time_in_period,shot_type&limit=2000",
+    "error": "Supabase 503: shot_events?player_id=eq.8478427&season=eq.20252026&game_type=eq.2&team=eq.CAR&select=x,y,event_type,period,time_in_period,shot_type&limit=2000",
   },
   "kvWrites": [],
   "status": 502,
@@ -4255,14 +4255,14 @@ exports[`player-shots > response, upstream requests and KV writes; repeat call 1
   ],
   "kvWrites": [
     {
-      "key": "nhl:player-shots:8478427:20252026:CAR",
+      "key": "nhl:player-shots:8478427:20252026:CAR:2",
       "ttl": 3600,
     },
   ],
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/shot_events?player_id=eq.8478427&season=eq.20252026&team=eq.CAR&select=x,y,event_type,period,time_in_period,shot_type&limit=2000",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/shot_events?player_id=eq.8478427&season=eq.20252026&game_type=eq.2&team=eq.CAR&select=x,y,event_type,period,time_in_period,shot_type&limit=2000",
     },
   ],
 }
@@ -8386,7 +8386,7 @@ exports[`xg-trend > NHL API and AI unavailable 1`] = `
   ],
   "kvWrites": [
     {
-      "key": "nhl:xg-trend:CAR:20252026",
+      "key": "nhl:xg-trend:CAR:20252026:2",
       "ttl": 3600,
     },
   ],
@@ -8397,7 +8397,7 @@ exports[`xg-trend > NHL API and AI unavailable 1`] = `
 exports[`xg-trend > Supabase unavailable 1`] = `
 {
   "body": {
-    "error": "Supabase 503: game_xg?team=eq.CAR&season=eq.20252026&situation=eq.5on5&select=game_id,xgf_pct&limit=999",
+    "error": "Supabase 503: game_xg?team=eq.CAR&season=eq.20252026&game_type=eq.2&situation=eq.5on5&select=game_id,xgf_pct&limit=999",
   },
   "kvWrites": [],
   "status": 502,
@@ -8424,14 +8424,14 @@ exports[`xg-trend > response, upstream requests and KV writes; repeat call 1`] =
   ],
   "kvWrites": [
     {
-      "key": "nhl:xg-trend:CAR:20252026",
+      "key": "nhl:xg-trend:CAR:20252026:2",
       "ttl": 3600,
     },
   ],
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_xg?team=eq.CAR&season=eq.20252026&situation=eq.5on5&select=game_id,xgf_pct&limit=999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/game_xg?team=eq.CAR&season=eq.20252026&game_type=eq.2&situation=eq.5on5&select=game_id,xgf_pct&limit=999",
     },
   ],
 }
