@@ -4872,6 +4872,16 @@ exports[`summary > Supabase unavailable 1`] = `
         "lastName": "Home",
       },
     },
+    "goalieLog": [
+      {
+        "firstName": "Home",
+        "id": 7003,
+        "lastName": "Goalie",
+        "periodEnd": 3,
+        "periodStart": 1,
+        "teamId": 1,
+      },
+    ],
     "homeTeamStats": {
       "faceoffWinPercentage": 55,
       "goals": 3,
@@ -5037,6 +5047,16 @@ exports[`summary > response, upstream requests and KV writes; repeat call 1`] = 
         "lastName": "Home",
       },
     },
+    "goalieLog": [
+      {
+        "firstName": "Home",
+        "id": 7003,
+        "lastName": "Goalie",
+        "periodEnd": 3,
+        "periodStart": 1,
+        "teamId": 1,
+      },
+    ],
     "homeTeamStats": {
       "faceoffWinPercentage": 55,
       "goals": 3,
@@ -5237,7 +5257,7 @@ Faceoff Win%: 55% · Hits: 14 · Penalties: Boston Fleet 2–3 Minnesota Frost
 Goals:
 Boston Fleet: Alex Skater at 5:00 P1 (PP)
 Minnesota Frost: Minnesota Frost at 12:00 P2
-Goalie: Home Goalie
+Boston Fleet goalie in net: Home Goalie
 Best period: P1 (61% CF)
 Worst period: P3 (44% CF)
 
@@ -5299,6 +5319,7 @@ Penalties this period: 5 (Boston Fleet took 2)
 Goals:
 Boston Fleet: Alex Skater at 5:00 (PP)
 Minnesota Frost: Minnesota Frost at 12:00
+Boston Fleet goalie in net: Home Goalie
 
 Write in plain text, no markdown. 1-2 sentences max.",
       "maxTokens": 80,

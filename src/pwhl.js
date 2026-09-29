@@ -1993,9 +1993,23 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
         return c ? { firstName: c.firstName || '', lastName: c.lastName || '' } : null;
       };
 
+      // Each team's goalie stints: who was in net, from which period to
+      // which. The AI summaries name the goalie in net from these -- not from
+      // the goalies list (the backup is on it, sometimes first) or the three
+      // stars (whose one goalie is often the other team's).
+      const goalieStints = (side) => (raw[side]?.goalieLog || []).map(s => ({
+        teamId:      parseInt(raw[side]?.info?.id, 10) || null,
+        id:          parseInt(s.info?.id, 10) || null,
+        firstName:   s.info?.firstName || '',
+        lastName:    s.info?.lastName  || '',
+        periodStart: parseInt(s.periodStart?.id, 10) || null,
+        periodEnd:   parseInt(s.periodEnd?.id, 10) || null,
+      }));
+
       const payload = {
         periods,
         mvps,
+        goalieLog: [...goalieStints('homeTeam'), ...goalieStints('visitingTeam')],
         venue: raw.details?.venue || null,
         officials: {
           referees: (raw.referees || []).map(official),
@@ -2037,13 +2051,23 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
         carHits, carFOPct, carHDCF, oppHDCF,
         penaltyCount, carPenaltyCount,
         bestPeriod, worstPeriod,
-        primaryGoalieName,
+        goalieNames,
         goals = [],
       } = body;
 
       // Use full team names in prose so the model writes "the Fleet" not "BOS"
       const carDisplay = carName || carAbbr;
       const oppDisplay = oppName || oppAbbr;
+
+      // The team's goalies in net, which the client reads off /pwhl/summary's
+      // goalieLog. Deliberately not the older primaryGoalieName field:
+      // clients still sending it took the first goalie among the three
+      // stars, often the other team's.
+      const goalies = (Array.isArray(goalieNames) ? goalieNames : [])
+        .filter(n => typeof n === 'string' && n.trim());
+      const goalieLine = goalies.length
+        ? `\n${carDisplay} goalie in net: ${goalies.join(', then ')}`
+        : '';
 
       const isGame = periodKey === 'game';
 
@@ -2060,8 +2084,7 @@ Game: ${carDisplay} (${carAbbr}) vs ${oppDisplay} (${oppAbbr})
 Score: ${carDisplay} ${carGoals}–${oppGoals} ${oppDisplay}
 Corsi For%: ${corsiForPct}% · SOG: ${carSOG}–${oppSOG} · HD Chances: ${carHDCF}–${oppHDCF}
 Faceoff Win%: ${carFOPct != null ? carFOPct + '%' : '—'} · Hits: ${carHits} · Penalties: ${carDisplay} ${carPenaltyCount}–${penaltyCount - carPenaltyCount} ${oppDisplay}
-Goals:\n${goalLines || 'None'}
-${primaryGoalieName ? `Goalie: ${primaryGoalieName}` : ''}
+Goals:\n${goalLines || 'None'}${goalieLine}
 Best period: ${bestPeriod?.period ? 'P' + bestPeriod.period + ' (' + bestPeriod.corsiForPct + '% CF)' : '—'}
 Worst period: ${worstPeriod?.period ? 'P' + worstPeriod.period + ' (' + worstPeriod.corsiForPct + '% CF)' : '—'}
 
@@ -2071,7 +2094,7 @@ Period: ${periodLabel} — ${carDisplay} (${carAbbr}) vs ${oppDisplay} (${oppAbb
 Corsi For%: ${corsiForPct}% · SOG: ${carSOG}–${oppSOG} · HD Chances: ${carHDCF}–${oppHDCF}
 Goals: ${carGoals}–${oppGoals} · Hits: ${carHits} · Faceoffs: ${carFOPct != null ? carFOPct + '%' : '—'}
 Penalties this period: ${penaltyCount} (${carDisplay} took ${carPenaltyCount})
-${goalLines ? 'Goals:\n' + goalLines : 'No goals this period.'}
+${goalLines ? 'Goals:\n' + goalLines : 'No goals this period.'}${goalieLine}
 
 Write in plain text, no markdown. 1-2 sentences max.`;
 
