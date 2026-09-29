@@ -3495,6 +3495,42 @@ describe('POST /summary/narrative', () => {
     expect(promptSent).toMatch(/CAR goal by Sebastian Aho at 6:12 \(EV\)/)
     expect(promptSent).not.toMatch(/P2 6:12/)
   })
+
+  it('names the goalie in net from carGoalieNames, labelled as the goalie', async () => {
+    const env = makeEnv()
+    mockFetchWithAI('Period summary text.')
+    await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=2&carAbbr=CAR', {
+        method: 'POST',
+        body: {
+          carGoals: 0, oppGoals: 1, corsiForPct: 45, carSOG: 8, oppSOG: 12, carHits: 5, carFOPct: 50, penaltyCount: 0, carPenaltyCount: 0,
+          periodLabel: '2nd Period', carGoalieNames: ['Frederik Andersen', 'Pyotr Kochetkov'], goals: [],
+        },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=2&carAbbr=CAR')
+    )
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).toMatch(/CAR goalie in net: Frederik Andersen, then Pyotr Kochetkov/)
+    expect(promptSent).toMatch(/Players you may name: Frederik Andersen, Pyotr Kochetkov\./)
+  })
+
+  it('ignores the legacy primaryGoalieName, which older clients took from roster order (often the backup)', async () => {
+    const env = makeEnv()
+    mockFetchWithAI('Period summary text.')
+    await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=2&carAbbr=CAR', {
+        method: 'POST',
+        body: {
+          carGoals: 0, oppGoals: 0, corsiForPct: 50, carSOG: 8, oppSOG: 8, carHits: 5, carFOPct: 50, penaltyCount: 0, carPenaltyCount: 0,
+          periodLabel: '2nd Period', primaryGoalieName: 'Pyotr Kochetkov', goals: [],
+        },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=2&carAbbr=CAR')
+    )
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).not.toMatch(/Kochetkov/)
+    expect(promptSent).not.toMatch(/goalie in net/)
+  })
 })
 
 describe('oppGoalBody()', () => {

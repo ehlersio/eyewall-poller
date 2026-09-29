@@ -307,7 +307,7 @@ const NARRATIVE_BODY = {
   carAbbr: 'CAR', oppAbbr: 'BOS', isPlayoff: false, periodLabel: '2nd Period',
   corsiForPct: 56.1, carSOG: 31, oppSOG: 25, carGoals: 4, oppGoals: 2, carHits: 20, carFOPct: 52, carHDCF: 11, oppHDCF: 7,
   penaltyCount: 5, carPenaltyCount: 2, bestPeriod: { period: 2, corsiForPct: 62 }, worstPeriod: { period: 3, corsiForPct: 45 },
-  primaryGoalieName: 'Pyotr Kochetkov',
+  carGoalieNames: ['Pyotr Kochetkov'],
   goals: [
     { isCar: true, scorerName: 'Sebastian Aho', time: '4:00', period: 1, strength: 'pp' },
     { isCar: false, scorerName: 'unknown', time: '12:00', period: 2 },

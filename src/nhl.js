@@ -3737,13 +3737,24 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       return `${g.isCar ? carAbbr : oppAbbr} goal by ${g.scorerName || 'unknown'} at ${when} (${(g.strength || 'EV').toUpperCase()})`;
     }).join('; ') || 'no goals';
 
-    // Build explicit allowed-names list from goal scorer data only
-    const confirmedNames = [...new Set(
-      (stats.goals || [])
+    // The team's goalies who actually faced shots, which the client reads off
+    // the play-by-play's goalieInNetId. Deliberately not the older
+    // primaryGoalieName field: clients still sending it (older iOS builds)
+    // took the first goalie in rosterSpots, which isn't ordered by who
+    // starts -- the summary credited the backup. No names = no goalie line.
+    const goalieNames = (Array.isArray(stats.carGoalieNames) ? stats.carGoalieNames : [])
+      .filter(n => typeof n === 'string' && n.trim());
+    const goalieLine = goalieNames.length
+      ? `\n  - ${carAbbr} goalie in net: ${goalieNames.join(', then ')}`
+      : '';
+
+    // Build explicit allowed-names list from goal scorers and goalies in net
+    const confirmedNames = [...new Set([
+      ...(stats.goals || [])
         .map(g => g.scorerName)
-        .filter(n => n && n !== 'unknown' && n !== 'Unknown')
-    )];
-    if (stats.primaryGoalieName) confirmedNames.push(stats.primaryGoalieName);
+        .filter(n => n && n !== 'unknown' && n !== 'Unknown'),
+      ...goalieNames,
+    ])];
     const allowedNamesNote = confirmedNames.length > 0
       ? `Players you may name: ${confirmedNames.join(', ')}. Do not name any other player — not linemates, not defensemen, not anyone not listed here.`
       : `No confirmed player names — refer to teams by abbreviation only (${carAbbr}, ${oppAbbr}).`;
@@ -3765,7 +3776,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   - Best period for CAR: P${stats.bestPeriod?.period} (${stats.bestPeriod?.corsiForPct}% CF)
   - Worst period: P${stats.worstPeriod?.period} (${stats.worstPeriod?.corsiForPct}% CF)
   - CAR hits: ${stats.carHits}, CAR faceoffs: ${stats.carFOPct}%
-  - Goals: ${goalsSummary}
+  - Goals: ${goalsSummary}${goalieLine}
 
   ${allowedNamesNote}
 
@@ -3780,7 +3791,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   - CAR goals: ${stats.carGoals}, OPP goals: ${stats.oppGoals}
   - CAR hits: ${stats.carHits}
   - Penalties: ${stats.penaltyCount} total (${stats.carPenaltyCount} against ${carAbbr})
-  - Goals: ${goalsSummary}
+  - Goals: ${goalsSummary}${goalieLine}
 
   ${allowedNamesNote}
 
