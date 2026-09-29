@@ -1277,21 +1277,26 @@ describe('GET /goalie-analytics', () => {
   // below the GP/gsax-not-null floor. Found while wiring a header radar
   // chart for goalies (2026-08) that reused this exact route.
   describe('the live season has zero rows (season flipped ahead of real data)', () => {
-    function mockFetchWithPriorSeason(priorRows) {
+    function mockFetchWithPriorSeason(priorRows, priorPlayoffRows = []) {
       globalThis.fetch = vi.fn((url) => {
         const u = String(url)
         if (u.includes('season=eq.20262027')) {
           return Promise.resolve({ ok: true, json: async () => [] }) // live season: nothing yet
         }
         if (u.includes('season=eq.20252026')) {
-          return Promise.resolve({ ok: true, json: async () => priorRows })
+          const rows = u.includes('game_type=eq.3') ? priorPlayoffRows : priorRows
+          return Promise.resolve({ ok: true, json: async () => rows })
         }
         throw new Error(`unexpected fetch: ${u}`)
       })
     }
 
     it('falls back one season back and flags the result as stale with the specific season', async () => {
-      mockFetchWithPriorSeason([{ player_id: 8479979, gsax: 12.4, pct_gsax: 88 }])
+      // Playoff rows come from the same (fallback) season as the rows.
+      mockFetchWithPriorSeason(
+        [{ player_id: 8479979, gsax: 12.4, pct_gsax: 88 }],
+        [{ player_id: 8479979, gsax: 3.1 }],
+      )
 
       const res = await handleNHL(
         makeRequest('/goalie-analytics?season=20262027'), makeEnv(), makeCtx(),
@@ -1302,6 +1307,7 @@ describe('GET /goalie-analytics', () => {
       const body = await res.json()
       expect(body).toEqual({
         rows: [{ player_id: 8479979, gsax: 12.4, pct_gsax: 88 }],
+        poRows: [{ player_id: 8479979, gsax: 3.1 }],
         statsStale: true,
         statsSeason: '20252026',
       })
@@ -1317,7 +1323,7 @@ describe('GET /goalie-analytics', () => {
 
       expect(res.status).toBe(200)
       const body = await res.json()
-      expect(body).toEqual({ rows: [], statsStale: false, statsSeason: null })
+      expect(body).toEqual({ rows: [], poRows: [], statsStale: false, statsSeason: null })
     })
   })
 })
@@ -3494,6 +3500,42 @@ describe('POST /summary/narrative', () => {
     const promptSent = aiPrompt(globalThis.fetch)[0].content
     expect(promptSent).toMatch(/CAR goal by Sebastian Aho at 6:12 \(EV\)/)
     expect(promptSent).not.toMatch(/P2 6:12/)
+  })
+
+  it('names the goalie in net from carGoalieNames, labelled as the goalie', async () => {
+    const env = makeEnv()
+    mockFetchWithAI('Period summary text.')
+    await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=2&carAbbr=CAR', {
+        method: 'POST',
+        body: {
+          carGoals: 0, oppGoals: 1, corsiForPct: 45, carSOG: 8, oppSOG: 12, carHits: 5, carFOPct: 50, penaltyCount: 0, carPenaltyCount: 0,
+          periodLabel: '2nd Period', carGoalieNames: ['Frederik Andersen', 'Pyotr Kochetkov'], goals: [],
+        },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=2&carAbbr=CAR')
+    )
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).toMatch(/CAR goalie in net: Frederik Andersen, then Pyotr Kochetkov/)
+    expect(promptSent).toMatch(/Players you may name: Frederik Andersen, Pyotr Kochetkov\./)
+  })
+
+  it('ignores the legacy primaryGoalieName, which older clients took from roster order (often the backup)', async () => {
+    const env = makeEnv()
+    mockFetchWithAI('Period summary text.')
+    await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=2&carAbbr=CAR', {
+        method: 'POST',
+        body: {
+          carGoals: 0, oppGoals: 0, corsiForPct: 50, carSOG: 8, oppSOG: 8, carHits: 5, carFOPct: 50, penaltyCount: 0, carPenaltyCount: 0,
+          periodLabel: '2nd Period', primaryGoalieName: 'Pyotr Kochetkov', goals: [],
+        },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=2&carAbbr=CAR')
+    )
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).not.toMatch(/Kochetkov/)
+    expect(promptSent).not.toMatch(/goalie in net/)
   })
 })
 

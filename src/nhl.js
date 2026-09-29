@@ -2157,7 +2157,7 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/player-analytics') {
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     return cachedJson(env, `nhl:player-analytics:${season}`, 3600, async () => {
-      const ANA_COLS = 'player_id,team,war,ev_off_pct,ev_def_inv,pp_xgf60,pk_xga60_inv,pp_icetime,pk_icetime,' +
+      const ANA_COLS = 'player_id,team,war,rapm,rapm_toi_min,ev_off_pct,ev_def_inv,pp_xgf60,pk_xga60_inv,pp_icetime,pk_icetime,' +
         'finishing,goals_per60,a1_per60,xgf_per60,penalties_per60,competition,teammates,game_score,' +
         'pct_ev_off,pct_ev_def,pct_pp,pct_pk,pct_finishing,pct_goals,pct_a1,' +
         'pct_penalties,pct_competition,pct_teammates,games_played,' +
@@ -2191,12 +2191,20 @@ export async function handleNHL(request, env, ctx, url) {
         'pct_blocked_shots_conf,pct_blocked_shots_div,' +
         'pct_takeaways_conf,pct_takeaways_div,' +
         'pct_giveaways_conf,pct_giveaways_div';
-      const DEF_COLS = 'player_id,hits,blocked_shots,takeaways,giveaways';
+      // Playoff rows (game_type 3): the four box-score defensive stats the
+      // Stats tab's playoff section uses, plus the playoff analytics the
+      // pipeline writes there -- WAR and RAPM (pooled over three seasons of
+      // playoffs, shrunk toward the regular-season RAPM; rapm_toi_min is the
+      // playoff ice time behind it) and the MoneyPuck rates. No percentiles:
+      // the pipeline doesn't rank playoff samples.
+      const PO_COLS = 'player_id,hits,blocked_shots,takeaways,giveaways,' +
+        'games_played,war,rapm,rapm_toi_min,ev_off_pct,xgf_per60,xga_per60,hdca_per60,' +
+        'goals_per60,a1_per60,pp_icetime,pk_icetime,game_score';
 
       async function fetchAnalytics(forSeason) {
         const [rows, poRows] = await Promise.all([
           sbRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.2&war=not.is.null&select=${ANA_COLS}&limit=2000`),
-          sbRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.3&select=${DEF_COLS}&limit=2000`).catch(() => []),
+          sbRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.3&select=${PO_COLS}&limit=2000`).catch(() => []),
         ]);
         return { rows, poRows };
       }
@@ -2360,11 +2368,21 @@ export async function handleNHL(request, env, ctx, url) {
         'ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,' +
         'pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv';
 
+      // Playoff rows (game_type 3): GSAX, save% and QS% from the season's
+      // playoffs. No percentiles -- the pipeline doesn't rank playoff samples.
+      const GOALIE_PO_COLS = 'player_id,games_played,gsax,gsax_per60,qs_pct,qs,' +
+        'ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct';
+
       async function fetchGoalieAnalytics(forSeason) {
         return sbRowsOrThrow(
           `goalie_seasons?season=eq.${forSeason}&game_type=eq.2&gsax=not.is.null&select=${GOALIE_COLS}`
         );
       }
+      // Its own read, and a failure is just "no playoff rows": the regular
+      // season's analytics don't depend on it.
+      const fetchGoaliePlayoffs = forSeason => sbRowsOrThrow(
+        `goalie_seasons?season=eq.${forSeason}&game_type=eq.3&gsax=not.is.null&select=${GOALIE_PO_COLS}`
+      ).catch(() => []);
 
       let rows;
       try {
@@ -2399,7 +2417,8 @@ export async function handleNHL(request, env, ctx, url) {
         }
       }
 
-      const result = { rows, statsStale, statsSeason };
+      const poRows = await fetchGoaliePlayoffs(statsSeason || season);
+      const result = { rows, poRows, statsStale, statsSeason };
       return result;
     });
   }
@@ -3737,13 +3756,24 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       return `${g.isCar ? carAbbr : oppAbbr} goal by ${g.scorerName || 'unknown'} at ${when} (${(g.strength || 'EV').toUpperCase()})`;
     }).join('; ') || 'no goals';
 
-    // Build explicit allowed-names list from goal scorer data only
-    const confirmedNames = [...new Set(
-      (stats.goals || [])
+    // The team's goalies who actually faced shots, which the client reads off
+    // the play-by-play's goalieInNetId. Deliberately not the older
+    // primaryGoalieName field: clients still sending it (older iOS builds)
+    // took the first goalie in rosterSpots, which isn't ordered by who
+    // starts -- the summary credited the backup. No names = no goalie line.
+    const goalieNames = (Array.isArray(stats.carGoalieNames) ? stats.carGoalieNames : [])
+      .filter(n => typeof n === 'string' && n.trim());
+    const goalieLine = goalieNames.length
+      ? `\n  - ${carAbbr} goalie in net: ${goalieNames.join(', then ')}`
+      : '';
+
+    // Build explicit allowed-names list from goal scorers and goalies in net
+    const confirmedNames = [...new Set([
+      ...(stats.goals || [])
         .map(g => g.scorerName)
-        .filter(n => n && n !== 'unknown' && n !== 'Unknown')
-    )];
-    if (stats.primaryGoalieName) confirmedNames.push(stats.primaryGoalieName);
+        .filter(n => n && n !== 'unknown' && n !== 'Unknown'),
+      ...goalieNames,
+    ])];
     const allowedNamesNote = confirmedNames.length > 0
       ? `Players you may name: ${confirmedNames.join(', ')}. Do not name any other player — not linemates, not defensemen, not anyone not listed here.`
       : `No confirmed player names — refer to teams by abbreviation only (${carAbbr}, ${oppAbbr}).`;
@@ -3765,7 +3795,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   - Best period for CAR: P${stats.bestPeriod?.period} (${stats.bestPeriod?.corsiForPct}% CF)
   - Worst period: P${stats.worstPeriod?.period} (${stats.worstPeriod?.corsiForPct}% CF)
   - CAR hits: ${stats.carHits}, CAR faceoffs: ${stats.carFOPct}%
-  - Goals: ${goalsSummary}
+  - Goals: ${goalsSummary}${goalieLine}
 
   ${allowedNamesNote}
 
@@ -3780,7 +3810,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   - CAR goals: ${stats.carGoals}, OPP goals: ${stats.oppGoals}
   - CAR hits: ${stats.carHits}
   - Penalties: ${stats.penaltyCount} total (${stats.carPenaltyCount} against ${carAbbr})
-  - Goals: ${goalsSummary}
+  - Goals: ${goalsSummary}${goalieLine}
 
   ${allowedNamesNote}
 
