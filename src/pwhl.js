@@ -5,8 +5,9 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam } from './shared.js';
-import { resolvePWHLSeason, getAllPWHLSeasonTypes } from './seasons.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons } from './seasons.js';
+import { buildHockeyTechPrediction } from './hockeytechPrediction.js';
 
 // Elo constants for /pwhl/prediction -- match eyewall-pipeline/elo.py.
 const PWHL_ELO_INITIAL_RATING = 1500;
@@ -60,6 +61,29 @@ export const PWHL_TEAM_CODES = {
   // so these won't show up in live polling until that changes — but wiring
   // the IDs in now means nothing needs manual updating once they do.
   10:'DET', 11:'HAM', 12:'LV', 13:'SJS',
+};
+
+// /pwhl/prediction's league config for hockeytechPrediction.js.
+// "Corsi" here is shot-attempt share -- goals + shots + blocked shots --
+// preferring the 5v5-filtered column over all-situations (same preference
+// order as NHL's /prediction/analyze); labeled explicitly in the AI prompt
+// and in corsiCaveat so nothing overclaims precision.
+const PWHL_PREDICTION_CFG = {
+  key: 'pwhl',
+  label: 'PWHL',
+  article: 'a',
+  teamCodes: PWHL_TEAM_CODES,
+  getSeasonTypes: (env) => getAllPWHLSeasonTypes(env),
+  getSeasons: (env) => getAllPWHLSeasons(env),
+  gameLogSelect: 'game_id,home_team_id,away_team_id,home_score,away_score,ot,shootout',
+  recordFields: ['wins', 'losses', 'ot_losses'],
+  corsi: true,
+  playoffFocus: 'possession, goaltending, and recent form',
+  // 3/4 of 8 teams (2025-26); 2026-27's 12 teams raise it to 9 via the
+  // season's own row count.
+  leagueAvgFloor: 6,
+  eloInitial: PWHL_ELO_INITIAL_RATING,
+  eloHomeAdvantage: PWHL_ELO_HOME_ADVANTAGE,
 };
 
 const PWHL_NEWS_SOURCES = [
@@ -2160,13 +2184,8 @@ Write in plain text, no markdown. 1-2 sentences max.`;
   // WAR/RAPM October blocker clears (see eyewall-pipeline CLAUDE.md). Don't
   // present this as full parity with NHL's "real" prediction system.
   //
-  // "Corsi" here (corsiForPct) is shot-attempt share — goals + shots +
-  // blocked shots — at ALL STRENGTHS, not 5-on-5 filtered (PWHL's PBP data
-  // has no strength-state reconstruction yet). It's still more complete
-  // than NHL's own possession proxy in /prediction/analyze, which is only
-  // shots-on-goal share and doesn't count blocked shots at all — but it's
-  // not a true 5v5 possession stat either. Labeled explicitly in the AI
-  // prompt and in corsiCaveat below so nothing overclaims precision.
+  // "Corsi" here (corsiForPct) is shot-attempt share — see
+  // PWHL_PREDICTION_CFG above; corsiCaveat says which kind a response used.
   //
   // Public, billed-AI route; rate-limited below (no secret check — called
   // directly from the frontend, same pattern as /pwhl/scout).
@@ -2195,171 +2214,13 @@ Write in plain text, no markdown. 1-2 sentences max.`;
       return errorJson(404, { error: 'Game not found in pwhl_game_log' });
     }
 
-    const seasonId  = game.season_id;
-    const homeId    = game.home_team_id;
-    const awayId    = game.away_team_id;
-
-    const seasonTypeMap = await getAllPWHLSeasonTypes(env);
-    const seasonType    = seasonTypeMap?.[seasonId] || 'regular';
-    const isPlayoff      = seasonType === 'playoffs';
-
-    const [teamRows, games, eloRows] = await Promise.all([
-      sbRows(`${SB_URL}/rest/v1/pwhl_team_seasons?team_id=in.(${homeId},${awayId})&season_id=eq.${seasonId}&season_type=eq.${seasonType}`),
-      sbRowsOr(`${SB_URL}/rest/v1/pwhl_game_log?season_id=eq.${seasonId}&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ot,shootout`, []),
-      // Optional: without ratings both teams are rated at the mean (see below).
-      sbRowsOr(`${SB_URL}/rest/v1/pwhl_team_elo_ratings?team_id=in.(${homeId},${awayId})&select=team_id,rating`, []).catch(() => []),
-    ]);
-    if (teamRows instanceof Response) return teamRows;
-
-    const home = teamRows.find(t => t.team_id === homeId);
-    const away = teamRows.find(t => t.team_id === awayId);
-    if (!home || !away) {
-      return errorJson(404, { error: 'pwhl_team_seasons rows not found for both teams' });
-    }
-
-    // Streak, computed live from the game log — same result-string logic as
-    // /pwhl/standings' streak calc above, scoped to just these 2 teams.
-    const streakFor = (teamId) => {
-      const results = games
-        .filter(g => g.home_team_id === teamId || g.away_team_id === teamId)
-        .map(g => {
-          const isHomeG = g.home_team_id === teamId;
-          const my  = isHomeG ? g.home_score : g.away_score;
-          const opp = isHomeG ? g.away_score : g.home_score;
-          const extra = g.ot || g.shootout;
-          return my > opp ? 'W' : extra ? 'O' : 'L';
-        });
-      let streak = 0, streakType = '';
-      for (const res of results) {
-        if (!streakType) { streakType = res === 'W' ? 'W' : 'L'; streak = 1; }
-        else if ((res === 'W' && streakType === 'W') || (res !== 'W' && streakType === 'L')) streak++;
-        else break;
-      }
-      return streak ? `${streakType}${streak}` : 'unknown';
-    };
-    const homeStreak = streakFor(homeId);
-    const awayStreak = streakFor(awayId);
-
-    // This-season head-to-head between these 2 teams (long-run multi-season
-    // H2H lives in /pwhl/preview's headToHeadRecords instead).
-    const h2hGames = games.filter(g =>
-      (g.home_team_id === homeId && g.away_team_id === awayId) ||
-      (g.home_team_id === awayId && g.away_team_id === homeId)
-    );
-    const h2hHomeWins = h2hGames.filter(g => {
-      const homeWasHome = g.home_team_id === homeId;
-      const myScore  = homeWasHome ? g.home_score : g.away_score;
-      const oppScore = homeWasHome ? g.away_score : g.home_score;
-      return myScore > oppScore;
-    }).length;
-    const h2hRecord = h2hGames.length > 0
-      ? `${h2hHomeWins}-${h2hGames.length - h2hHomeWins}`
-      : 'no prior meetings';
-
-    const homeAbbr = PWHL_TEAM_CODES[homeId] || `T${homeId}`;
-    const awayAbbr = PWHL_TEAM_CODES[awayId] || `T${awayId}`;
-
-    const hGp = home.gp || 1, aGp = away.gp || 1;
-    const hGpg = (home.goals_for ?? 0) / hGp,     aGpg = (away.goals_for ?? 0) / aGp;
-    const hGag = (home.goals_against ?? 0) / hGp, aGag = (away.goals_against ?? 0) / aGp;
-    const hPP  = (home.pp_pct ?? 0) * 100,        aPP  = (away.pp_pct ?? 0) * 100;
-    const hPK  = (home.pk_pct ?? 0) * 100,        aPK  = (away.pk_pct ?? 0) * 100;
-
-    // Real Corsi, preferring the 5v5-filtered column over all-situations —
-    // same preference-order pattern as NHL's /prediction/analyze
-    // (nhl.js:2299-2307). Unlike NHL's team_seasons, pwhl_team_seasons
-    // stores corsi_for_pct[_5v5] already scaled to a percentage (see
-    // pwhl_stats.py::run_team_shot_totals[_5v5]), not a 0-1 fraction — no
-    // *100 here, that would double-scale.
-    let hCF, aCF, corsiSource;
-    if (home.corsi_for_pct_5v5 != null && away.corsi_for_pct_5v5 != null) {
-      hCF = home.corsi_for_pct_5v5; aCF = away.corsi_for_pct_5v5; corsiSource = '5v5';
-    } else if (home.corsi_for_pct != null && away.corsi_for_pct != null) {
-      hCF = home.corsi_for_pct; aCF = away.corsi_for_pct; corsiSource = 'all_situations';
-    } else {
-      hCF = null; aCF = null; corsiSource = 'unavailable';
-    }
-    const corsiCaveat = corsiSource === '5v5'
-      ? '5-on-5 shot-attempt share (goals+shots+blocked), not all-situations.'
-      : corsiSource === 'all_situations'
-        ? 'All-situations shot-attempt share (goals+shots+blocked), not 5-on-5 filtered.'
-        : 'Shot-attempt share unavailable for this team/season yet.';
-    const corsiLabel = corsiSource === '5v5' ? 'Shot-attempt share (Corsi For%, 5-on-5)' : 'Shot-attempt share (Corsi For%, all situations)';
-
-    // Pythagorean expected score — same geometric-mean-of-rates shape as
-    // NHL's /prediction/analyze (nhl.js:2306-2310), home-ice adjustment
-    // ported unchanged.
-    const clamp    = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-    const expHome  = clamp(Math.sqrt(Math.max(hGpg, 0.5) * Math.max(aGag, 0.5)) + 0.12, 1.5, 5.0).toFixed(1);
-    const expAway  = clamp(Math.sqrt(Math.max(aGpg, 0.5) * Math.max(hGag, 0.5)) - 0.12, 1.5, 5.0).toFixed(1);
-
-    // Win probability — Elo (eyewall-pipeline's hockeytech_elo.py writes
-    // pwhl_team_elo_ratings), same model as NHL and AHL/ECHL: expected score
-    // with the home team's rating + ELO_HOME_ADVANTAGE. Replaced an additive
-    // point split that backtested worse than a coin flip and gave the home
-    // team 0% whenever the two teams' stats tied, e.g. every season opener
-    // (docs/hockeytech_elo_backtest_results.md in eyewall-pipeline). A team
-    // with no row (expansion team, or ratings unreachable) is rated at the
-    // mean. Corsi/PP% still feed the AI prompt below, just not the number.
-    const ratingOf = (teamId) => eloRows.find(r => r.team_id === teamId)?.rating ?? PWHL_ELO_INITIAL_RATING;
-    const homeWinPct = Math.round(100 / (1 + 10 ** ((ratingOf(awayId) - ratingOf(homeId) - PWHL_ELO_HOME_ADVANTAGE) / 400)));
-
-    const prompt = `You are EyeWall Analytics, a PWHL hockey analytics assistant. Write a sharp, data-driven pre-game analysis. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener. ${corsiSource === '5v5' ? 'The shot-attempt numbers below are 5-ON-5 filtered — describe it as "5v5 shot-attempt share" or "possession," accurately reflecting that scope.' : corsiSource === 'all_situations' ? 'The shot-attempt numbers below are ALL-SITUATIONS (not 5-on-5 only) — describe it as "shot-attempt share," not as a 5v5/possession-only stat.' : 'Shot-attempt data is unavailable for one or both teams — do not reference Corsi or possession.'}
-
-Game: ${homeAbbr} (HOME) vs ${awayAbbr} (AWAY)
-Context: ${isPlayoff ? 'PLAYOFFS' : 'Regular Season'}
-
-${homeAbbr} stats:
-- Record: ${home.wins}-${home.losses}-${home.ot_losses} (${home.points} pts)
-- GF/GA per game: ${hGpg.toFixed(2)} / ${hGag.toFixed(2)}
-- PP%: ${hPP.toFixed(1)}% · PK%: ${hPK.toFixed(1)}%
-- ${corsiLabel}: ${hCF != null ? hCF.toFixed(1) : '—'}%
-- Current streak: ${homeStreak}
-
-${awayAbbr} stats:
-- Record: ${away.wins}-${away.losses}-${away.ot_losses} (${away.points} pts)
-- GF/GA per game: ${aGpg.toFixed(2)} / ${aGag.toFixed(2)}
-- PP%: ${aPP.toFixed(1)}% · PK%: ${aPK.toFixed(1)}%
-- ${corsiLabel}: ${aCF != null ? aCF.toFixed(1) : '—'}%
-- Current streak: ${awayStreak}
-
-Head-to-head this season: ${homeAbbr} ${h2hRecord}
-Expected score (Pythagorean): ${homeAbbr} ${expHome} - ${awayAbbr} ${expAway}
-Model win probability: ${homeAbbr} ${homeWinPct}%${isPlayoff ? '\n\nNote: This is a playoff game. Ignore regular season points — focus on possession, goaltending, and recent form.' : ''}
-
-Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.`;
-
-    let narrative = '';
-    try {
-      const aiResponse = await generateText(env, {
-        messages: [{ role: 'user', content: localizePrompt(prompt, locale) }],
-      });
-      narrative = aiResponse.response?.trim() || '';
-    } catch (e) {
-      console.error('PWHL prediction AI error:', e);
-    }
-    if (!narrative) return errorJson(502, { error: 'Empty AI response' });
-
-    const result = {
-      gameId,
-      homeTeamId: homeId,
-      awayTeamId: awayId,
-      homeAbbr,
-      awayAbbr,
-      isPlayoff,
-      homeWinPct,
-      awayWinPct: 100 - homeWinPct,
-      winModel: 'elo',
-      expHome: parseFloat(expHome),
-      expAway: parseFloat(expAway),
-      narrative,
-      h2hRecord,
-      homeStreak,
-      awayStreak,
-      corsiForPct: { home: hCF, away: aCF },
-      corsiCaveat,
-      generatedAt: new Date().toISOString(),
-    };
+    // Stats, prompt, Elo and AI call: hockeytechPrediction.js, shared with
+    // /ahl/prediction and /echl/prediction. It never feeds the AI a made-up
+    // number -- a missing stat is "not available", early-season stats are
+    // blended with last regular season's, and at 0 GP for both teams the
+    // prompt is built from last regular season alone.
+    const { result, error } = await buildHockeyTechPrediction(env, PWHL_PREDICTION_CFG, game, gameId, locale);
+    if (error) return error;
 
     // 30min TTL, not NHL's 24hr (nhl.js:2379) — that convention assumes a
     // day's worth of staleness is fine for lineup-change risk only; PWHL's

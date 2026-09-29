@@ -1131,3 +1131,88 @@ export function buildHeadToHeadPayload(teamA, teamB, games) {
     games,
   };
 }
+
+// ── Pre-game prediction prompt helpers ──────────────────────────
+// Shared by every league's AI prediction route: NHL's /prediction/analyze
+// (nhl.js) and /pwhl/prediction, /ahl/prediction, /echl/prediction
+// (hockeytechPrediction.js). The rule they all follow: a stat the data
+// doesn't have is "not available" in the prompt, never a stand-in like 0
+// or a hardcoded default -- a made-up "PK%: 0.0%" reads to the AI as a real
+// weakness (NHL Opening Night 2026-09-29).
+
+// Early-season blending. A few games say little about a team -- one bad
+// night is a 0-for-3 PK, "0.0%" -- so while a stat's sample is small it's
+// shrunk toward the same team's last-season number:
+// (gp * thisSeason + k * lastSeason) / (gp + k). k is how many games of
+// this season it takes to count as much as last season; from k games on,
+// this season's number stands alone. Shot volume and share settle
+// quickly, goal rates slower, special teams (a few chances a night)
+// slowest.
+export const EARLY_SEASON_K = { shots: 10, goals: 20, specialTeams: 30 };
+
+// { value, cur, gp, prior, k }, or null when neither season has the stat
+// -- a missing stat is never replaced with a made-up number.
+export function blendStat(cur, gp, prior, k) {
+  const hasCur = cur != null && gp > 0;
+  const hasPrior = prior != null;
+  if (!hasCur && !hasPrior) return null;
+  if (!hasCur) return { value: prior, cur: null, gp: 0, prior, k };
+  if (!hasPrior || gp >= k) return { value: cur, cur, gp, prior, k };
+  return { value: (gp * cur + k * prior) / (gp + k), cur, gp, prior, k };
+}
+
+// Prompt text for a blendStat() result: says where the number came from
+// whenever it isn't simply this season's. `words` lets a playoff prompt
+// say "these playoffs" where the default says "this season".
+const SEASON_WORDS = { current: 'this season', estimate: 'early-season estimate' };
+export function describeStat(label, s, priorLabel, fmt, words = SEASON_WORDS) {
+  if (!s) return `${label}: not available`;
+  if (s.cur == null) return `${label}: ${fmt(s.value)} (${priorLabel}; none ${words.current} yet)`;
+  if (s.gp >= s.k) return `${label}: ${fmt(s.value)}`;
+  if (s.prior == null) return `${label}: ${fmt(s.value)} (${s.gp} GP ${words.current}, small sample)`;
+  return `${label}: ${fmt(s.value)} ${words.estimate} (${fmt(s.cur)} in ${s.gp} GP ${words.current}, blended with ${fmt(s.prior)} in ${priorLabel})`;
+}
+
+export const fmtPct = v => `${v.toFixed(1)}%`;
+export const fmtRate = v => v.toFixed(2);
+
+// team_seasons (NHL) and {pwhl,ahl,echl}_team_seasons all store pp_pct/
+// pk_pct as 0-1 fractions (0.249 = 24.9%); NHL's corsi columns too (PWHL's
+// corsi_for_pct[_5v5] are already percentages -- see pwhl.js).
+export const asPct = v => (v != null ? v * 100 : null);
+
+// League-average PP%/PK% for one season: the mean of every team's
+// pp_pct/pk_pct, as percentages -- real data, never a stand-in. Each is
+// null (and left out of the prompt) unless at least `minTeams` teams have
+// the stat, so a handful of rows never passes for the league.
+export function leagueSpecialTeams(rows, minTeams) {
+  const mean = key => {
+    const vals = rows.map(r => r[key]).filter(v => v != null);
+    return vals.length >= minTeams ? { value: asPct(vals.reduce((a, b) => a + b, 0) / vals.length), teams: vals.length } : null;
+  };
+  return { pp: mean('pp_pct'), pk: mean('pk_pct') };
+}
+
+// "League average (2025-26, mean of 32 teams): PP% 21.0% · PK% 79.0%", or
+// null when neither average is available. seasonText names the season.
+export function leagueAverageLine(avg, seasonText) {
+  const parts = [];
+  if (avg.pp) parts.push(`PP% ${fmtPct(avg.pp.value)}`);
+  if (avg.pk) parts.push(`PK% ${fmtPct(avg.pk.value)}`);
+  if (!parts.length) return null;
+  const teams = Math.max(avg.pp?.teams ?? 0, avg.pk?.teams ?? 0);
+  return `League average (${seasonText}, mean of ${teams} teams): ${parts.join(' · ')}`;
+}
+
+// Pythagorean expected score, as "3.1"-style strings, or nulls when either
+// team's goal rates are unavailable -- never computed from zeros. expCar is
+// the first team's (the side whose rates come first), expOpp the other's.
+export function expectedScore(carGf, carGa, oppGf, oppGa, isHome) {
+  if ([carGf, carGa, oppGf, oppGa].some(v => v == null)) return { expCar: null, expOpp: null };
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const homeAdj = isHome ? 0.12 : -0.12;
+  return {
+    expCar: clamp(Math.sqrt(Math.max(carGf, 0.5) * Math.max(oppGa, 0.5)) + homeAdj, 1.5, 5.0).toFixed(1),
+    expOpp: clamp(Math.sqrt(Math.max(oppGf, 0.5) * Math.max(carGa, 0.5)) - homeAdj, 1.5, 5.0).toFixed(1),
+  };
+}

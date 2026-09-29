@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
@@ -220,76 +220,15 @@ function seasonLabel(season) {
   return `${Math.floor(season / 10000)}-${String(season % 100).padStart(2, '0')}`;
 }
 
-// Early-season blending for the /prediction/analyze prompt. A few games say
-// little about a team -- one bad night is a 0-for-3 PK, "0.0%" -- so while
-// a stat's sample is small it's shrunk toward the same team's last-season
-// number: (gp * thisSeason + k * lastSeason) / (gp + k). k is how many
-// games of this season it takes to count as much as last season; from k
-// games on, this season's number stands alone. Shot volume and share
-// settle quickly, goal rates slower, special teams (a few chances a
-// night) slowest.
-const EARLY_SEASON_K = { shots: 10, goals: 20, specialTeams: 30 };
+// Early-season blending (EARLY_SEASON_K/blendStat/describeStat), the
+// prompt formatters and expectedScore() live in shared.js -- the PWHL/AHL/
+// ECHL prediction routes use them too.
 
-// { value, cur, gp, prior, k }, or null when neither season has the stat
-// -- a missing stat is never replaced with a made-up number.
-function blendStat(cur, gp, prior, k) {
-  const hasCur = cur != null && gp > 0;
-  const hasPrior = prior != null;
-  if (!hasCur && !hasPrior) return null;
-  if (!hasCur) return { value: prior, cur: null, gp: 0, prior, k };
-  if (!hasPrior || gp >= k) return { value: cur, cur, gp, prior, k };
-  return { value: (gp * cur + k * prior) / (gp + k), cur, gp, prior, k };
-}
-
-// Prompt text for a blendStat() result: says where the number came from
-// whenever it isn't simply this season's.
-function describeStat(label, s, priorLabel, fmt) {
-  if (!s) return `${label}: not available`;
-  if (s.cur == null) return `${label}: ${fmt(s.value)} (${priorLabel}; none this season yet)`;
-  if (s.gp >= s.k) return `${label}: ${fmt(s.value)}`;
-  if (s.prior == null) return `${label}: ${fmt(s.value)} (${s.gp} GP this season, small sample)`;
-  return `${label}: ${fmt(s.value)} early-season estimate (${fmt(s.cur)} in ${s.gp} GP this season, blended with ${fmt(s.prior)} in ${priorLabel})`;
-}
-
-const fmtPct = v => `${v.toFixed(1)}%`;
-const fmtRate = v => v.toFixed(2);
-
-// team_seasons stores pp_pct/pk_pct/corsi as 0-1 fractions (0.249 = 24.9%).
-const asPct = v => (v != null ? v * 100 : null);
-
-// League-average PP%/PK% for one season: the mean of every team's
-// team_seasons value, as percentages -- real data, never a stand-in. Null
-// (and left out of the prompt) until at least LEAGUE_AVG_MIN_TEAMS teams
-// have the stat, so a handful of rows never passes for the league.
+// League-average PP%/PK%: null (and left out of the prompt) until at least
+// LEAGUE_AVG_MIN_TEAMS of the 32 teams have the stat.
 const LEAGUE_AVG_MIN_TEAMS = 24;
-function leagueSpecialTeams(rows) {
-  const mean = key => {
-    const vals = rows.map(r => r[key]).filter(v => v != null);
-    return vals.length >= LEAGUE_AVG_MIN_TEAMS ? { value: asPct(vals.reduce((a, b) => a + b, 0) / vals.length), teams: vals.length } : null;
-  };
-  return { pp: mean('pp_pct'), pk: mean('pk_pct') };
-}
-
-function leagueAverageLine(avg, season) {
-  const parts = [];
-  if (avg.pp) parts.push(`PP% ${fmtPct(avg.pp.value)}`);
-  if (avg.pk) parts.push(`PK% ${fmtPct(avg.pk.value)}`);
-  if (!parts.length) return null;
-  const teams = Math.max(avg.pp?.teams ?? 0, avg.pk?.teams ?? 0);
-  return `League average (${seasonLabel(season)}, mean of ${teams} teams): ${parts.join(' · ')}`;
-}
-
-// Pythagorean expected score, as "3.1"-style strings, or nulls when either
-// team's goal rates are unavailable.
-function expectedScore(carGf, carGa, oppGf, oppGa, isHome) {
-  if ([carGf, carGa, oppGf, oppGa].some(v => v == null)) return { expCar: null, expOpp: null };
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  const homeAdj = isHome ? 0.12 : -0.12;
-  return {
-    expCar: clamp(Math.sqrt(Math.max(carGf, 0.5) * Math.max(oppGa, 0.5)) + homeAdj, 1.5, 5.0).toFixed(1),
-    expOpp: clamp(Math.sqrt(Math.max(oppGf, 0.5) * Math.max(carGa, 0.5)) - homeAdj, 1.5, 5.0).toFixed(1),
-  };
-}
+const leagueSpecialTeams = rows => sharedLeagueSpecialTeams(rows, LEAGUE_AVG_MIN_TEAMS);
+const leagueAverageLine = (avg, season) => sharedLeagueAverageLine(avg, seasonLabel(season));
 
 // Elo win probability -- see eyewall-pipeline/docs/elo_prediction_model_results.md
 // for the backtest (beats both the scorecard-based in-season branch and

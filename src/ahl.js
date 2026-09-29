@@ -7,7 +7,7 @@
  */
 
 import { createHockeyTechLeague } from './hockeytech.js';
-import { resolveAHLSeason, getAllAHLSeasonTypes, AHL_HT_BASE, AHL_HT_KEY, AHL_HT_HDR } from './seasons.js';
+import { resolveAHLSeason, getAllAHLSeasonTypes, getAllAHLSeasons, AHL_HT_BASE, AHL_HT_KEY, AHL_HT_HDR } from './seasons.js';
 
 // All three sources are AHL-only feeds (confirmed live 2026-08-29), so none
 // need keyword filtering.
@@ -78,6 +78,8 @@ const ahl = createHockeyTechLeague({
   // the AHL exports.
   resolveSeason:     (env) => resolveAHLSeason(env),
   getAllSeasonTypes: (env) => getAllAHLSeasonTypes(env),
+  getAllSeasons:     (env) => getAllAHLSeasons(env),
+  leagueAvgFloor:    24, // 3/4 of 32 teams (same bar as the NHL)
   ht: {
     get base()    { return AHL_HT_BASE; },
     get key()     { return AHL_HT_KEY; },
