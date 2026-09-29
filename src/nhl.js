@@ -280,8 +280,10 @@ async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameI
   // kept so the prompt never silently prints a bare 0%.
   if (carRow.pp_pct == null) console.error(`buildPreseasonFallback: ${tc.abbr} ${prior} pp_pct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
   if (oppRow.pp_pct == null) console.error(`buildPreseasonFallback: ${oppAbbr} ${prior} pp_pct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
-  const carPP = carRow.pp_pct ?? PP_PCT_DEFAULT;
-  const oppPP = oppRow.pp_pct ?? PP_PCT_DEFAULT;
+  // team_seasons.pp_pct is a 0-1 fraction (0.249 = 24.9%), same as its
+  // corsi/xgf columns -- scale it before printing it as a percentage.
+  const carPP = carRow.pp_pct != null ? carRow.pp_pct * 100 : PP_PCT_DEFAULT;
+  const oppPP = oppRow.pp_pct != null ? oppRow.pp_pct * 100 : PP_PCT_DEFAULT;
 
   const carWinPct = Math.round(eloWinProb(eloRatings.car, eloRatings.opp, isHome, neutral) * 100);
 

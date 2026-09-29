@@ -2895,8 +2895,8 @@ describe('GET /prediction/analyze', () => {
     })
     mockSupabaseByTable({
       'team_seasons': [
-        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 24, shots_for_pg: 28 },
-        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 20, shots_for_pg: 31 },
+        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 0.24, shots_for_pg: 28 },
+        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 0.2, shots_for_pg: 31 },
       ],
       'team_elo_ratings': [
         { team: 'CAR', rating: 1550 },
@@ -2941,8 +2941,8 @@ describe('GET /prediction/analyze', () => {
     })
     mockSupabaseByTable({
       'team_seasons': [
-        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 24 },
-        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 20 },
+        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 0.24 },
+        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 0.2 },
       ],
       'team_elo_ratings': [
         { team: 'CAR', rating: 1550 },
@@ -2961,7 +2961,9 @@ describe('GET /prediction/analyze', () => {
     expect(body.dataSeason).toBe(20242025)
     const promptSent = aiPrompt(globalThis.fetch)[0].content
     expect(promptSent).not.toMatch(/PK%/)
-    expect(promptSent).toMatch(/CAR last season \(20242025\)/)
+    // team_seasons.pp_pct is a 0-1 fraction; it used to print as "PP%: 0.2%".
+    expect(promptSent).toMatch(/CAR last season \(20242025\): 100 pts, GF\/GA per game: 3\.00 \/ 2\.80, PP%: 24\.0%/)
+    expect(promptSent).toMatch(/BOS last season \(20242025\): .*PP%: 20\.0%/)
   })
 
   it('returns an error rather than guessing when neither team has prior-season team_seasons data', async () => {
@@ -3005,7 +3007,7 @@ describe('GET /prediction/analyze', () => {
       // (backfill_uta_2025_team_stats.py) this test is modeled on.
       'team_seasons': [
         { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: null, shots_for_pg: 28 },
-        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 21, shots_for_pg: 31 },
+        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 0.21, shots_for_pg: 31 },
       ],
       'team_elo_ratings': [
         { team: 'CAR', rating: 1520 },
