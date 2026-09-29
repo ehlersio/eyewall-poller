@@ -115,8 +115,8 @@ function supabaseRows(table, params) {
       ]
     case 'team_seasons':
       return [
-        { team: 'CAR', season: SEASON, games_played: 40, wins: 25, losses: 10, ot_losses: 5, points: 55, goals_for: 130, goals_against: 100, goals_for_pg: 3.25, goals_ag_pg: 2.5, pp_pct: 24.1, pk_pct: 82.3, xgf_pct: 0.55, roster_war_score: 71, corsi_for_pct: 0.54, corsi_for_pct_5v5: 0.55, magic_number: null, tragic_number: null, clinched: false, eliminated: false, hits: 900, penalties: 150 },
-        { team: 'BOS', season: SEASON, games_played: 40, wins: 20, losses: 15, ot_losses: 5, points: 45, goals_for: 115, goals_against: 118, goals_for_pg: 2.9, goals_ag_pg: 2.95, pp_pct: null, pk_pct: 79.1, xgf_pct: 0.49, roster_war_score: 60, corsi_for_pct: 0.49, corsi_for_pct_5v5: null, magic_number: null, tragic_number: null, clinched: false, eliminated: false, hits: 1000, penalties: 170 },
+        { team: 'CAR', season: SEASON, games_played: 40, wins: 25, losses: 10, ot_losses: 5, points: 55, goals_for: 130, goals_against: 100, goals_for_pg: 3.25, goals_ag_pg: 2.5, pp_pct: 0.241, pk_pct: 0.823, xgf_pct: 0.55, roster_war_score: 71, corsi_for_pct: 0.54, corsi_for_pct_5v5: 0.55, magic_number: null, tragic_number: null, clinched: false, eliminated: false, hits: 900, penalties: 150 },
+        { team: 'BOS', season: SEASON, games_played: 40, wins: 20, losses: 15, ot_losses: 5, points: 45, goals_for: 115, goals_against: 118, goals_for_pg: 2.9, goals_ag_pg: 2.95, pp_pct: null, pk_pct: 0.791, xgf_pct: 0.49, roster_war_score: 60, corsi_for_pct: 0.49, corsi_for_pct_5v5: null, magic_number: null, tragic_number: null, clinched: false, eliminated: false, hits: 1000, penalties: 170 },
       ]
     case 'power_rankings_narratives':
       return [{ narrative: 'Carolina keeps rolling.', rank: 3, prior_rank: 5, generated_date: '2026-01-14' }]

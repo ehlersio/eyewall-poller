@@ -2895,8 +2895,8 @@ describe('GET /prediction/analyze', () => {
     })
     mockSupabaseByTable({
       'team_seasons': [
-        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 24, shots_for_pg: 28 },
-        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 20, shots_for_pg: 31 },
+        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 0.24, shots_for_pg: 28 },
+        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 0.2, shots_for_pg: 31 },
       ],
       'team_elo_ratings': [
         { team: 'CAR', rating: 1550 },
@@ -2925,6 +2925,45 @@ describe('GET /prediction/analyze', () => {
     // regime: 'preseason' assertion together with the in-season happy-path
     // test's regime: 'in-season' assertion below are mutually exclusive by
     // construction, not just by reading the source.
+  })
+
+  it('routes to the preseason fallback when standings are on the current season but a team has 0 games played (Opening Night)', async () => {
+    // Real shape of /standings/now on 2026-09-29: seasonId already flipped
+    // to the new season, every team at 0 GP with null PP%/PK%. The in-season
+    // branch used to render that as "PK%: 0.0%" in the AI prompt.
+    const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, seasonId: 20252026, gamesPlayed: 0, wins: 0, losses: 0, otLosses: 0, points: 0, goalFor: 0, goalAgainst: 0, powerPlayPct: null, penaltyKillPct: null },
+      { teamAbbrev: { default: 'BOS' }, seasonId: 20252026, gamesPlayed: 0, wins: 0, losses: 0, otLosses: 0, points: 0, goalFor: 0, goalAgainst: 0, powerPlayPct: null, penaltyKillPct: null },
+    ]
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
+    })
+    mockSupabaseByTable({
+      'team_seasons': [
+        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 0.24 },
+        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 0.2 },
+      ],
+      'team_elo_ratings': [
+        { team: 'CAR', rating: 1550 },
+        { team: 'BOS', rating: 1480 },
+      ],
+    }, 'Preseason take.')
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.regime).toBe('preseason')
+    expect(body.dataSeason).toBe(20242025)
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).not.toMatch(/PK%/)
+    // team_seasons.pp_pct is a 0-1 fraction; it used to print as "PP%: 0.2%".
+    expect(promptSent).toMatch(/CAR last season \(20242025\): 100 pts, GF\/GA per game: 3\.00 \/ 2\.80, PP%: 24\.0%/)
+    expect(promptSent).toMatch(/BOS last season \(20242025\): .*PP%: 20\.0%/)
   })
 
   it('returns an error rather than guessing when neither team has prior-season team_seasons data', async () => {
@@ -2968,7 +3007,7 @@ describe('GET /prediction/analyze', () => {
       // (backfill_uta_2025_team_stats.py) this test is modeled on.
       'team_seasons': [
         { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: null, shots_for_pg: 28 },
-        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 21, shots_for_pg: 31 },
+        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 0.21, shots_for_pg: 31 },
       ],
       'team_elo_ratings': [
         { team: 'CAR', rating: 1520 },
