@@ -2927,22 +2927,22 @@ describe('GET /prediction/analyze', () => {
     // construction, not just by reading the source.
   })
 
-  it('routes to the preseason fallback when standings are on the current season but a team has 0 games played (Opening Night)', async () => {
+  it('routes to the preseason fallback when standings are on the current season but neither team has played (Opening Night)', async () => {
     // Real shape of /standings/now on 2026-09-29: seasonId already flipped
-    // to the new season, every team at 0 GP with null PP%/PK%. The in-season
-    // branch used to render that as "PK%: 0.0%" in the AI prompt.
+    // to the new season, every team at 0 GP. The in-season branch used to
+    // render that as "PK%: 0.0%" in the AI prompt.
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [
-      { teamAbbrev: { default: 'CAR' }, seasonId: 20252026, gamesPlayed: 0, wins: 0, losses: 0, otLosses: 0, points: 0, goalFor: 0, goalAgainst: 0, powerPlayPct: null, penaltyKillPct: null },
-      { teamAbbrev: { default: 'BOS' }, seasonId: 20252026, gamesPlayed: 0, wins: 0, losses: 0, otLosses: 0, points: 0, goalFor: 0, goalAgainst: 0, powerPlayPct: null, penaltyKillPct: null },
+      { teamAbbrev: { default: 'CAR' }, seasonId: 20252026, gamesPlayed: 0, wins: 0, losses: 0, otLosses: 0, points: 0, goalFor: 0, goalAgainst: 0 },
+      { teamAbbrev: { default: 'BOS' }, seasonId: 20252026, gamesPlayed: 0, wins: 0, losses: 0, otLosses: 0, points: 0, goalFor: 0, goalAgainst: 0 },
     ]
     const env = makeEnv({
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
     })
     mockSupabaseByTable({
       'team_seasons': [
-        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 0.24 },
-        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 0.2 },
+        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 0.24, pk_pct: 0.812 },
+        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 0.2, pk_pct: 0.79 },
       ],
       'team_elo_ratings': [
         { team: 'CAR', rating: 1550 },
@@ -2960,12 +2960,11 @@ describe('GET /prediction/analyze', () => {
     expect(body.regime).toBe('preseason')
     expect(body.dataSeason).toBe(20242025)
     const promptSent = aiPrompt(globalThis.fetch)[0].content
-    expect(promptSent).not.toMatch(/PK%/)
-    // team_seasons.pp_pct is a 0-1 fraction; it used to print as "PP%: 0.2%".
-    expect(promptSent).toMatch(/CAR last season \(20242025\): 100 pts, GF\/GA per game: 3\.00 \/ 2\.80, PP%: 24\.0%/)
-    expect(promptSent).toMatch(/BOS last season \(20242025\): .*PP%: 20\.0%/)
+    // team_seasons.pp_pct/pk_pct are 0-1 fractions; PP% used to print as "0.2%".
+    expect(promptSent).toMatch(/CAR last season \(20242025\): 100 pts, GF\/GA per game: 3\.00 \/ 2\.80, PP%: 24\.0%, PK%: 81\.2%/)
+    expect(promptSent).toMatch(/BOS last season \(20242025\): .*PP%: 20\.0%, PK%: 79\.0%/)
+    expect(promptSent).not.toMatch(/[^\d.]0\.0%/)
   })
-
   it('returns an error rather than guessing when neither team has prior-season team_seasons data', async () => {
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [
@@ -2985,15 +2984,9 @@ describe('GET /prediction/analyze', () => {
     expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
-  it('defaults a missing prior-season pp_pct to league-average (22%) in the AI prompt text', async () => {
-    // Regression for a real bug: the prompt text used to default a missing
-    // pp_pct to 0 (`?? 0`) while scoring separately defaulted to 22 (`?? 22`)
-    // -- same missing-data case, two different silent defaults, so the old
-    // scorecard scored a team as league-average while telling the AI
-    // narrative generator it was shut out on the power play. Both paths
-    // resolve the default once (PP_PCT_DEFAULT) and share it -- PP% no
-    // longer feeds carWinPct at all (that's Elo now), but this default
-    // still matters for what the AI narrative is told.
+  it('says "not available" for a missing prior-season pp_pct instead of inventing a value', async () => {
+    // pp_pct used to fall back to a hardcoded 22% "league average" here
+    // (and to 0 before that). Neither was real data.
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [
       { teamAbbrev: { default: 'CAR' }, seasonId: 20242025, gamesPlayed: 82, points: 100 },
@@ -3006,8 +2999,8 @@ describe('GET /prediction/analyze', () => {
       // CAR's pp_pct is missing entirely -- the UTA-shaped gap
       // (backfill_uta_2025_team_stats.py) this test is modeled on.
       'team_seasons': [
-        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: null, shots_for_pg: 28 },
-        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 0.21, shots_for_pg: 31 },
+        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: null, pk_pct: 0.8 },
+        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 0.21, pk_pct: 0.78 },
       ],
       'team_elo_ratings': [
         { team: 'CAR', rating: 1520 },
@@ -3021,18 +3014,43 @@ describe('GET /prediction/analyze', () => {
     )
 
     expect(res.status).toBe(200)
-    const body = await res.json()
     // CAR home (1520+35) vs BOS away (1500): 1/(1+10^((1500-1555)/400))
-    // = 0.5786... -> rounds to 58. Unaffected by the pp_pct default --
-    // that's the point of this test now (see prompt-text assertion below).
-    expect(body.carWinPct).toBe(58)
-    // Prompt text: both teams' PP% lines use the same 22.0% default CAR's
-    // missing value resolved to -- not a separate, disagreeing 0.0%.
+    // = 0.5786... -> rounds to 58.
+    expect((await res.json()).carWinPct).toBe(58)
     const promptSent = aiPrompt(globalThis.fetch)[0].content
-    expect(promptSent).toMatch(/CAR last season \(\d+\): 100 pts, GF\/GA per game: 3\.00 \/ 2\.80, PP%: 22\.0%/)
-    expect(promptSent).not.toMatch(/CAR.*PP%: 0\.0%/)
+    expect(promptSent).toMatch(/CAR last season \(20242025\): 100 pts, GF\/GA per game: 3\.00 \/ 2\.80, PP%: not available, PK%: 80\.0%/)
+    expect(promptSent).not.toMatch(/22\.0%|PP%: 0\.0%/)
+    expect(promptSent).toMatch(/Don't cite any stat marked "not available"/)
   })
 
+  it('adds a league-average PP%/PK% line computed from every team\'s prior-season row', async () => {
+    const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, seasonId: 20242025, gamesPlayed: 82, points: 100 },
+      { teamAbbrev: { default: 'BOS' }, seasonId: 20242025, gamesPlayed: 82, points: 90 },
+    ]
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
+    })
+    // 32 teams: CAR 0.25/0.85, BOS 0.15/0.75, 30 others at 0.20/0.80 --
+    // mean PP% 20.0%, PK% 80.0%.
+    const others = Array.from({ length: 30 }, (_, i) => ({ team: `T${i}`, pp_pct: 0.2, pk_pct: 0.8 }))
+    mockSupabaseByTable({
+      'team_seasons': [
+        { team: 'CAR', points: 100, goals_for_pg: 3.0, goals_ag_pg: 2.8, pp_pct: 0.25, pk_pct: 0.85 },
+        { team: 'BOS', points: 95, goals_for_pg: 3.1, goals_ag_pg: 2.9, pp_pct: 0.15, pk_pct: 0.75 },
+        ...others,
+      ],
+    }, 'Preseason take.')
+
+    await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).toMatch(/League average \(2024-25, mean of 32 teams\): PP% 20\.0% · PK% 80\.0%/)
+  })
   it('does not treat a standings feed with no seasonId as stale (e.g. a test stub)', async () => {
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [
@@ -3053,30 +3071,28 @@ describe('GET /prediction/analyze', () => {
     expect((await res.json()).narrative).toBe('CAR should win this one comfortably.')
   })
 
+  // In-season team_seasons rows: this season (20252026) and last (20242025).
+  const tsRow = (team, season, games_played, fields = {}) => ({ team, season, games_played, ...fields })
+
   it('generates and caches a prediction for a game with standings on both sides, falling back to the SOG-share proxy when team_seasons has no Corsi data', async () => {
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [
-      { teamAbbrev: { default: 'CAR' }, gamesPlayed: 10, wins: 7, losses: 3, otLosses: 0, points: 14, goalFor: 35, goalAgainst: 25, powerPlayPct: 24, penaltyKillPct: 80, shotsForPerGame: 32, shotsAgainstPerGame: 28, streakCode: 'W', streakCount: 3 },
-      { teamAbbrev: { default: 'BOS' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 28, goalAgainst: 30, powerPlayPct: 18, penaltyKillPct: 76, shotsForPerGame: 29, shotsAgainstPerGame: 31, streakCode: 'L', streakCount: 1 },
+      { teamAbbrev: { default: 'CAR' }, gamesPlayed: 40, wins: 25, losses: 15, otLosses: 0, points: 50, goalFor: 140, goalAgainst: 100, streakCode: 'W', streakCount: 3 },
+      { teamAbbrev: { default: 'BOS' }, gamesPlayed: 40, wins: 20, losses: 20, otLosses: 0, points: 40, goalFor: 112, goalAgainst: 120, streakCode: 'L', streakCount: 1 },
     ]
     const env = makeEnv({
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
     })
-    // team_seasons has no rows for either team yet (e.g. before the
-    // Session 52 Corsi rollup has run for this season) — route must fall
-    // back to the SOG-share proxy rather than erroring. team_elo_ratings
-    // gets CAR/BOS ratings; both requests share one mock fetch, matched by
-    // URL substring.
-    globalThis.fetch = vi.fn((url) => {
-      const u = String(url)
-      if (u.includes('openrouter.ai')) {
-        return Promise.resolve({ ok: true, json: async () => ({ choices: [{ message: { content: 'CAR should win this one comfortably.' } }] }) })
-      }
-      if (u.includes('team_elo_ratings')) {
-        return Promise.resolve({ ok: true, json: async () => [{ team: 'CAR', rating: 1600 }, { team: 'BOS', rating: 1400 }] })
-      }
-      return Promise.resolve({ ok: true, json: async () => [] })
-    })
+    // No Corsi on either team's rows (e.g. before moneypuck.py's rollup
+    // has run) — the route falls back to a shots-on-goal share from
+    // team_seasons' shot rates rather than erroring.
+    mockSupabaseByTable({
+      'team_seasons': [
+        tsRow('CAR', 20252026, 40, { shots_for_pg: 32, shots_ag_pg: 28 }),
+        tsRow('BOS', 20252026, 40, { shots_for_pg: 29, shots_ag_pg: 31 }),
+      ],
+      'team_elo_ratings': [{ team: 'CAR', rating: 1600 }, { team: 'BOS', rating: 1400 }],
+    }, 'CAR should win this one comfortably.')
 
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
@@ -3094,8 +3110,7 @@ describe('GET /prediction/analyze', () => {
     expect(body.corsiForPct).toEqual({ car: 50.8, opp: expect.any(Number) })
     expect(body.corsiCaveat).toMatch(/shots-on-goal share only/i)
     // CAR home (1600+35) vs BOS away (1400): 1/(1+10^((1400-1635)/400))
-    // = 0.7910... -> rounds to 79 -- a concrete demonstration Elo is wired
-    // in, not just present in the source.
+    // = 0.7910... -> rounds to 79.
     expect(body.carWinPct).toBe(79)
     expect(body.regime).toBe('in-season')
     expect(body.correction).toBe('elo')
@@ -3104,22 +3119,58 @@ describe('GET /prediction/analyze', () => {
     expect(cached.narrative).toBe('CAR should win this one comfortably.')
   })
 
-  it('defaults a missing in-season powerPlayPct to league-average (22%) in the AI prompt text', async () => {
-    // Same disagreement bug as buildPreseasonFallback's pp_pct default
-    // (see the sibling test above): powerPlayPct used to default to 22 for
-    // scoring but 0 in the prompt text. PP% no longer feeds carWinPct at
-    // all (that's Elo now, from team_elo_ratings) -- this test now only
-    // covers the prompt-text default, which still matters for what the AI
-    // narrative is told.
+  it('reads PP%/PK% from team_seasons and says "not available" when a team has none, instead of 0.0% or a made-up 22%', async () => {
+    // The NHL standings feed has no powerPlayPct/penaltyKillPct fields at
+    // all -- this route used to read them from there, so every in-season
+    // prompt said "PP%: 22.0% · PK%: 0.0%".
     const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [
-      { teamAbbrev: { default: 'CAR' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 30, goalAgainst: 30, powerPlayPct: null, penaltyKillPct: 80, shotsForPerGame: 30, shotsAgainstPerGame: 30 },
-      { teamAbbrev: { default: 'BOS' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 30, goalAgainst: 30, powerPlayPct: 21, penaltyKillPct: 76, shotsForPerGame: 30, shotsAgainstPerGame: 30 },
+      { teamAbbrev: { default: 'CAR' }, gamesPlayed: 40, wins: 20, losses: 20, otLosses: 0, points: 40, goalFor: 120, goalAgainst: 120 },
+      { teamAbbrev: { default: 'BOS' }, gamesPlayed: 40, wins: 20, losses: 20, otLosses: 0, points: 40, goalFor: 120, goalAgainst: 120 },
     ]
     const env = makeEnv({
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
     })
-    mockFetchWithAI('In-season take.', () => Promise.resolve({ ok: true, json: async () => [] }))
+    mockSupabaseByTable({
+      'team_seasons': [
+        tsRow('CAR', 20252026, 40, { pp_pct: null, pk_pct: null }),
+        tsRow('BOS', 20252026, 40, { pp_pct: 0.215, pk_pct: 0.784 }),
+      ],
+    }, 'In-season take.')
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+
+    expect(res.status).toBe(200)
+    expect((await res.json()).regime).toBe('in-season')
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).toMatch(/CAR stats:[\s\S]*- PP%: not available\n- PK%: not available/)
+    expect(promptSent).toMatch(/BOS stats:[\s\S]*- PP%: 21\.5%\n- PK%: 78\.4%/)
+    expect(promptSent).not.toMatch(/22\.0%|[^\d.]0\.0%/)
+    // 40 GP clears every blend threshold -- no early-season note.
+    expect(promptSent).not.toMatch(/early-season/)
+  })
+
+  it('blends an early-season stat with last season\'s by games played and tells the AI it\'s an estimate', async () => {
+    const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, gamesPlayed: 3, wins: 1, losses: 2, otLosses: 0, points: 2, goalFor: 6, goalAgainst: 12 },
+      { teamAbbrev: { default: 'BOS' }, gamesPlayed: 3, wins: 2, losses: 1, otLosses: 0, points: 4, goalFor: 9, goalAgainst: 9 },
+    ]
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
+    })
+    mockSupabaseByTable({
+      'team_seasons': [
+        // CAR: 0-for-3-ish PK so far (66.7%) vs 81.2% last season.
+        tsRow('CAR', 20252026, 3, { pk_pct: 0.667 }),
+        tsRow('CAR', 20242025, 82, { pk_pct: 0.812, goals_for_pg: 3.5, goals_ag_pg: 2.9 }),
+        tsRow('BOS', 20252026, 3, { pk_pct: 0.8 }),
+        tsRow('BOS', 20242025, 82, { pk_pct: 0.79, goals_for_pg: 3.0, goals_ag_pg: 3.0 }),
+      ],
+    }, 'Early take.')
 
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
@@ -3129,30 +3180,95 @@ describe('GET /prediction/analyze', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.regime).toBe('in-season')
-    // Both teams' ratings default to 1500 (no team_elo_ratings mock here) --
-    // home advantage alone decides it, unaffected by the pp_pct default.
-    expect(body.carWinPct).toBeGreaterThan(50)
     const promptSent = aiPrompt(globalThis.fetch)[0].content
-    expect(promptSent).toMatch(/CAR stats:[\s\S]*PP%: 22\.0%/)
-    expect(promptSent).not.toMatch(/CAR stats:[\s\S]{0,120}PP%: 0\.0%/)
+    // PK% (k=30): (3*66.7 + 30*81.2) / 33 = 79.88 -> 79.9%
+    expect(promptSent).toContain('- PK%: 79.9% early-season estimate (66.7% in 3 GP this season, blended with 81.2% in 2024-25)')
+    // GF/GP (k=20): this season 6/3 = 2.00; (3*2.00 + 20*3.50) / 23 = 3.30
+    expect(promptSent).toContain('- GF per game: 3.30 early-season estimate (2.00 in 3 GP this season, blended with 3.50 in 2024-25)')
+    expect(promptSent).toMatch(/Note: it's early in the season/)
+    // Expected score uses the blended rates, not 3 games' worth:
+    // CAR GF 3.30 vs BOS GA (3*3.00+20*3.00)/23 = 3.00 -> sqrt(9.9)+0.12 = 3.27 -> 3.3
+    expect(body.expCar).toBe(3.3)
+  })
+
+  it('stays in-season when only one team has played, showing last season\'s numbers for the team that hasn\'t', async () => {
+    const schedule = [
+      { id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' },
+      // A September exhibition between the same teams -- not head-to-head.
+      { id: 9, gameType: 1, homeTeam: { abbrev: 'BOS', score: 2 }, awayTeam: { abbrev: 'CAR', score: 5 }, gameState: 'OFF' },
+    ]
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, gamesPlayed: 0, wins: 0, losses: 0, otLosses: 0, points: 0, goalFor: 0, goalAgainst: 0 },
+      { teamAbbrev: { default: 'BOS' }, gamesPlayed: 1, wins: 1, losses: 0, otLosses: 0, points: 2, goalFor: 4, goalAgainst: 1 },
+    ]
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
+    })
+    mockSupabaseByTable({
+      'team_seasons': [
+        // A 0-GP row can still carry preseason-game Corsi -- ignored.
+        tsRow('CAR', 20252026, 0, { corsi_for_pct_5v5: 0.4 }),
+        tsRow('CAR', 20242025, 82, { pk_pct: 0.805, goals_for_pg: 3.55, goals_ag_pg: 2.88, corsi_for_pct_5v5: 0.59 }),
+        tsRow('BOS', 20252026, 1, { pk_pct: 1.0, corsi_for_pct_5v5: 0.52 }),
+        tsRow('BOS', 20242025, 82, { pk_pct: 0.79, goals_for_pg: 3.0, goals_ag_pg: 3.0, corsi_for_pct_5v5: 0.5 }),
+      ],
+    }, 'Take.')
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.regime).toBe('in-season')
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).toContain('- PK%: 80.5% (2024-25; none this season yet)')
+    expect(promptSent).toContain('- GF per game: 3.55 (2024-25; none this season yet)')
+    // CAR's 0-GP preseason Corsi (40.0%) is ignored for last season's 59.0%.
+    expect(body.carCF).toBe('59.0')
+    expect(body.h2hRecord).toBe('no prior meetings')
+    expect(promptSent).not.toMatch(/[^\d.]0\.0%/)
+  })
+
+  it('fetches standings live when the KV entry has lapsed instead of 404ing', async () => {
+    // poll() refills 'standings' only after its 5-min TTL lapses and it
+    // next runs; a request in that gap used to get "Team standings not found".
+    const schedule = [{ id: 123, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
+    const standings = [
+      { teamAbbrev: { default: 'CAR' }, seasonId: 20252026, gamesPlayed: 40, wins: 20, losses: 20, otLosses: 0, points: 40, goalFor: 120, goalAgainst: 120 },
+      { teamAbbrev: { default: 'BOS' }, seasonId: 20252026, gamesPlayed: 40, wins: 20, losses: 20, otLosses: 0, points: 40, goalFor: 120, goalAgainst: 120 },
+    ]
+    const env = makeEnv({
+      CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule }),
+    })
+    mockSupabaseByTable({ 'standings/now': { standings } }, 'Take.')
+
+    const res = await handleNHL(
+      makeRequest('/prediction/analyze?gameId=123'), env, makeCtx(),
+      new URL('https://example.com/prediction/analyze?gameId=123')
+    )
+
+    expect(res.status).toBe(200)
+    expect((await res.json()).regime).toBe('in-season')
+    expect(JSON.parse(await env.CACHE.get('standings'))).toHaveLength(2)
   })
 
   it('uses real 5v5 Corsi from team_seasons when both teams have it, instead of the SOG-share proxy', async () => {
     const schedule = [{ id: 124, gameType: 2, homeTeam: { abbrev: 'CAR', score: null }, awayTeam: { abbrev: 'BOS', score: null }, gameState: 'FUT' }]
     const standings = [
-      { teamAbbrev: { default: 'CAR' }, gamesPlayed: 10, wins: 7, losses: 3, otLosses: 0, points: 14, goalFor: 35, goalAgainst: 25, powerPlayPct: 24, penaltyKillPct: 80, shotsForPerGame: 32, shotsAgainstPerGame: 28, streakCode: 'W', streakCount: 3 },
-      { teamAbbrev: { default: 'BOS' }, gamesPlayed: 10, wins: 5, losses: 5, otLosses: 0, points: 10, goalFor: 28, goalAgainst: 30, powerPlayPct: 18, penaltyKillPct: 76, shotsForPerGame: 29, shotsAgainstPerGame: 31, streakCode: 'L', streakCount: 1 },
+      { teamAbbrev: { default: 'CAR' }, gamesPlayed: 40, wins: 25, losses: 15, otLosses: 0, points: 50, goalFor: 140, goalAgainst: 100 },
+      { teamAbbrev: { default: 'BOS' }, gamesPlayed: 40, wins: 20, losses: 20, otLosses: 0, points: 40, goalFor: 112, goalAgainst: 120 },
     ]
     const env = makeEnv({
       CACHE: makeFakeCache({ 'schedule:CAR:20252026': schedule, standings }),
     })
-    mockFetchWithAI('CAR has the possession edge.', () => Promise.resolve({
-      ok: true,
-      json: async () => [
-        { team: 'CAR', corsi_for_pct: 0.55, corsi_for_pct_5v5: 0.592 },
-        { team: 'BOS', corsi_for_pct: 0.47, corsi_for_pct_5v5: 0.431 },
+    mockSupabaseByTable({
+      'team_seasons': [
+        tsRow('CAR', 20252026, 40, { corsi_for_pct: 0.55, corsi_for_pct_5v5: 0.592, shots_for_pg: 32, shots_ag_pg: 28 }),
+        tsRow('BOS', 20252026, 40, { corsi_for_pct: 0.47, corsi_for_pct_5v5: 0.431, shots_for_pg: 29, shots_ag_pg: 31 }),
       ],
-    }))
+    }, 'CAR has the possession edge.')
 
     const res = await handleNHL(
       makeRequest('/prediction/analyze?gameId=124'), env, makeCtx(),

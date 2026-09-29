@@ -165,6 +165,24 @@ async function scheduleWithFetch(env, abbr, season) {
   }
 }
 
+// League standings, fetching live and caching on a miss. poll() refreshes
+// the 'standings' key only once its 5-min TTL has lapsed and it next runs,
+// so a reader can land in the gap between expiry and refill -- seen live
+// 2026-09-29 as /prediction/analyze returning "Team standings not found".
+async function standingsWithFetch(env) {
+  const cached = await kvGet(env, 'standings');
+  if (cached?.length) return cached;
+  try {
+    const data = await nhlGet(`${NHL_BASE}/standings/now`);
+    const rows = data?.standings || [];
+    if (rows.length) await kvPut(env, 'standings', rows, 300);
+    return rows;
+  } catch (e) {
+    console.warn(`standingsWithFetch: ${e.message}`);
+    return [];
+  }
+}
+
 // Server-side Supabase REST read, for the /player-analytics etc. proxy
 // routes below. Takes a table path and throws on failure (the message names
 // the status and path, and several routes pass it through in their 502) --
@@ -189,18 +207,88 @@ async function sbRowsOrThrow(path) {
 // calibration step needed (Elo's logistic formula is calibrated by
 // construction).
 
-// League-average PP% -- the one shared fallback value for a missing
-// team_seasons.pp_pct in buildPreseasonFallback (used identically by both
-// the AI prompt text there and the in-season branch's own PP% display;
-// see PP_PCT_BACKFILL_GAP_INVESTIGATION.md).
-const PP_PCT_DEFAULT = 22;
-
 // e.g. 20252026 -> 20242025. Mirrors rapm.py's prior_season() exactly —
 // keep in sync if that ever changes.
 function priorSeason(season) {
   const endYear = season % 10000;
   const startYear = Math.floor(season / 10000);
   return (startYear - 1) * 10000 + (endYear - 1);
+}
+
+// 20252026 -> "2025-26", for prompt text.
+function seasonLabel(season) {
+  return `${Math.floor(season / 10000)}-${String(season % 100).padStart(2, '0')}`;
+}
+
+// Early-season blending for the /prediction/analyze prompt. A few games say
+// little about a team -- one bad night is a 0-for-3 PK, "0.0%" -- so while
+// a stat's sample is small it's shrunk toward the same team's last-season
+// number: (gp * thisSeason + k * lastSeason) / (gp + k). k is how many
+// games of this season it takes to count as much as last season; from k
+// games on, this season's number stands alone. Shot volume and share
+// settle quickly, goal rates slower, special teams (a few chances a
+// night) slowest.
+const EARLY_SEASON_K = { shots: 10, goals: 20, specialTeams: 30 };
+
+// { value, cur, gp, prior, k }, or null when neither season has the stat
+// -- a missing stat is never replaced with a made-up number.
+function blendStat(cur, gp, prior, k) {
+  const hasCur = cur != null && gp > 0;
+  const hasPrior = prior != null;
+  if (!hasCur && !hasPrior) return null;
+  if (!hasCur) return { value: prior, cur: null, gp: 0, prior, k };
+  if (!hasPrior || gp >= k) return { value: cur, cur, gp, prior, k };
+  return { value: (gp * cur + k * prior) / (gp + k), cur, gp, prior, k };
+}
+
+// Prompt text for a blendStat() result: says where the number came from
+// whenever it isn't simply this season's.
+function describeStat(label, s, priorLabel, fmt) {
+  if (!s) return `${label}: not available`;
+  if (s.cur == null) return `${label}: ${fmt(s.value)} (${priorLabel}; none this season yet)`;
+  if (s.gp >= s.k) return `${label}: ${fmt(s.value)}`;
+  if (s.prior == null) return `${label}: ${fmt(s.value)} (${s.gp} GP this season, small sample)`;
+  return `${label}: ${fmt(s.value)} early-season estimate (${fmt(s.cur)} in ${s.gp} GP this season, blended with ${fmt(s.prior)} in ${priorLabel})`;
+}
+
+const fmtPct = v => `${v.toFixed(1)}%`;
+const fmtRate = v => v.toFixed(2);
+
+// team_seasons stores pp_pct/pk_pct/corsi as 0-1 fractions (0.249 = 24.9%).
+const asPct = v => (v != null ? v * 100 : null);
+
+// League-average PP%/PK% for one season: the mean of every team's
+// team_seasons value, as percentages -- real data, never a stand-in. Null
+// (and left out of the prompt) until at least LEAGUE_AVG_MIN_TEAMS teams
+// have the stat, so a handful of rows never passes for the league.
+const LEAGUE_AVG_MIN_TEAMS = 24;
+function leagueSpecialTeams(rows) {
+  const mean = key => {
+    const vals = rows.map(r => r[key]).filter(v => v != null);
+    return vals.length >= LEAGUE_AVG_MIN_TEAMS ? { value: asPct(vals.reduce((a, b) => a + b, 0) / vals.length), teams: vals.length } : null;
+  };
+  return { pp: mean('pp_pct'), pk: mean('pk_pct') };
+}
+
+function leagueAverageLine(avg, season) {
+  const parts = [];
+  if (avg.pp) parts.push(`PP% ${fmtPct(avg.pp.value)}`);
+  if (avg.pk) parts.push(`PK% ${fmtPct(avg.pk.value)}`);
+  if (!parts.length) return null;
+  const teams = Math.max(avg.pp?.teams ?? 0, avg.pk?.teams ?? 0);
+  return `League average (${seasonLabel(season)}, mean of ${teams} teams): ${parts.join(' · ')}`;
+}
+
+// Pythagorean expected score, as "3.1"-style strings, or nulls when either
+// team's goal rates are unavailable.
+function expectedScore(carGf, carGa, oppGf, oppGa, isHome) {
+  if ([carGf, carGa, oppGf, oppGa].some(v => v == null)) return { expCar: null, expOpp: null };
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const homeAdj = isHome ? 0.12 : -0.12;
+  return {
+    expCar: clamp(Math.sqrt(Math.max(carGf, 0.5) * Math.max(oppGa, 0.5)) + homeAdj, 1.5, 5.0).toFixed(1),
+    expOpp: clamp(Math.sqrt(Math.max(oppGf, 0.5) * Math.max(carGa, 0.5)) - homeAdj, 1.5, 5.0).toFixed(1),
+  };
 }
 
 // Elo win probability -- see eyewall-pipeline/docs/elo_prediction_model_results.md
@@ -252,11 +340,13 @@ function eloWinProb(carRating, oppRating, isHome, neutral = false) {
 async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey, neutral = false, locale = 'en') {
   const prior = priorSeason(tc.season);
 
+  // Every team's prior-season row, not just these two -- the rest feed the
+  // league-average PP%/PK% line.
   let teamSeasonRows, eloRatings;
   try {
     [teamSeasonRows, eloRatings] = await Promise.all([
-      sbRowsOrThrow(`team_seasons?team=in.(${tc.abbr},${oppAbbr})&season=eq.${prior}&game_type=eq.2` +
-        `&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,corsi_for_pct,corsi_for_pct_5v5`),
+      sbRowsOrThrow(`team_seasons?season=eq.${prior}&game_type=eq.2` +
+        `&select=team,points,goals_for_pg,goals_ag_pg,pp_pct,pk_pct,corsi_for_pct,corsi_for_pct_5v5`),
       fetchEloRatings(tc, oppAbbr),
     ]);
   } catch (e) {
@@ -269,21 +359,14 @@ async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameI
     return errorJson(404, { error: `No prior-season (${prior}) data available for ${tc.abbr} or ${oppAbbr} — cannot generate a preseason estimate yet.` });
   }
 
-  const carGpg = carRow.goals_for_pg ?? 0;
-  const oppGpg = oppRow.goals_for_pg ?? 0;
-  const carGag = carRow.goals_ag_pg ?? 0;
-  const oppGag = oppRow.goals_ag_pg ?? 0;
-
-  // League-average default (22%) when a team's prior-season pp_pct is
-  // missing from team_seasons -- only feeds the narrative text now (the
-  // win% no longer comes from a scorecard that also needed this default),
-  // kept so the prompt never silently prints a bare 0%.
-  if (carRow.pp_pct == null) console.error(`buildPreseasonFallback: ${tc.abbr} ${prior} pp_pct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
-  if (oppRow.pp_pct == null) console.error(`buildPreseasonFallback: ${oppAbbr} ${prior} pp_pct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
-  // team_seasons.pp_pct is a 0-1 fraction (0.249 = 24.9%), same as its
-  // corsi/xgf columns -- scale it before printing it as a percentage.
-  const carPP = carRow.pp_pct != null ? carRow.pp_pct * 100 : PP_PCT_DEFAULT;
-  const oppPP = oppRow.pp_pct != null ? oppRow.pp_pct * 100 : PP_PCT_DEFAULT;
+  // A stat missing from team_seasons is "not available" in the prompt --
+  // never a stand-in like 0 or a hardcoded league average.
+  const orNA = (v, fmt) => (v != null ? fmt(v) : 'not available');
+  const seasonLine = (abbr, row) =>
+    `${abbr} last season (${prior}): ${row.points ?? '—'} pts, ` +
+    `GF/GA per game: ${orNA(row.goals_for_pg, fmtRate)} / ${orNA(row.goals_ag_pg, fmtRate)}, ` +
+    `PP%: ${orNA(asPct(row.pp_pct), fmtPct)}, PK%: ${orNA(asPct(row.pk_pct), fmtPct)}`;
+  const leagueLine = leagueAverageLine(leagueSpecialTeams(teamSeasonRows), prior);
 
   const carWinPct = Math.round(eloWinProb(eloRatings.car, eloRatings.opp, isHome, neutral) * 100);
 
@@ -303,23 +386,21 @@ async function buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameI
     ? `${corsiSource === '5v5' ? '5-on-5' : 'All-situations'} shot-attempt share from ${prior}, ${tc.displayName}'s last completed season — not this season's form.`
     : `Real Corsi data unavailable for ${prior}.`;
 
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  const homeAdj = isHome ? 0.12 : -0.12;
-  const expCar = clamp(Math.sqrt(Math.max(carGpg, 0.5) * Math.max(oppGag, 0.5)) + homeAdj, 1.5, 5.0).toFixed(1);
-  const expOpp = clamp(Math.sqrt(Math.max(oppGpg, 0.5) * Math.max(carGag, 0.5)) - homeAdj, 1.5, 5.0).toFixed(1);
+  const { expCar, expOpp } = expectedScore(
+    carRow.goals_for_pg, carRow.goals_ag_pg, oppRow.goals_for_pg, oppRow.goals_ag_pg, isHome
+  );
 
-  const prompt = `You are EyeWall Analytics, a ${tc.displayName} hockey analytics assistant. Write a sharp, data-driven PRESEASON analysis for ${tc.displayName} fans — no games have been played yet this season. The win probability below is from a live-updated Elo rating (carries over from last season, so it already reflects each team's recent trajectory); everything else is last season's (${prior}) final numbers for context. 2-3 sentences only. Be specific about the numbers and be clear this is a preseason estimate, not current form. No filler. No "In this matchup" opener.
+  const prompt = `You are EyeWall Analytics, a ${tc.displayName} hockey analytics assistant. Write a sharp, data-driven PRESEASON analysis for ${tc.displayName} fans — no games have been played yet this season. The win probability below is from a live-updated Elo rating (carries over from last season, so it already reflects each team's recent trajectory); everything else is last season's (${prior}) final numbers for context. 2-3 sentences only. Be specific about the numbers and be clear this is a preseason estimate, not current form. Don't cite any stat marked "not available". No filler. No "In this matchup" opener.
 
 Game: ${tc.abbr} (${isHome ? 'HOME' : 'AWAY'}) vs ${oppAbbr}
 Context: Preseason estimate
 
-${tc.abbr} last season (${prior}): ${carRow.points ?? '—'} pts, GF/GA per game: ${carGpg.toFixed(2)} / ${carGag.toFixed(2)}, PP%: ${carPP.toFixed(1)}%
-${oppAbbr} last season (${prior}): ${oppRow.points ?? '—'} pts, GF/GA per game: ${oppGpg.toFixed(2)} / ${oppGag.toFixed(2)}, PP%: ${oppPP.toFixed(1)}%
-
-Expected score (Pythagorean, from last season's rates): ${tc.abbr} ${expCar} - ${oppAbbr} ${expOpp}
+${seasonLine(tc.abbr, carRow)}
+${seasonLine(oppAbbr, oppRow)}${leagueLine ? `\n${leagueLine}` : ''}
+${expCar != null ? `\nExpected score (Pythagorean, from last season's rates): ${tc.abbr} ${expCar} - ${oppAbbr} ${expOpp}` : ''}
 Model win probability (Elo): ${tc.abbr} ${carWinPct}%
 
-Write the analysis now. Mention the single most decisive factor from last season and a concrete expected-score range.`;
+Write the analysis now. Mention the single most decisive factor from last season${expCar != null ? ' and a concrete expected-score range' : ''}.`;
 
   let aiResponse;
   try {
@@ -339,8 +420,8 @@ Write the analysis now. Mention the single most decisive factor from last season
     isHome,
     isPlayoff,
     carWinPct,
-    expCar: parseFloat(expCar),
-    expOpp: parseFloat(expOpp),
+    expCar: expCar != null ? parseFloat(expCar) : null,
+    expOpp: expOpp != null ? parseFloat(expOpp) : null,
     narrative,
     h2hRecord: 'no games played yet this season',
     carStreak: 'N/A (preseason)',
@@ -3385,8 +3466,6 @@ Only reference the two teams named above and the numbers given -- no player name
       if (cached) return json(cached);
     }
 
-    // Fetch standings for both teams
-    const standings = await kvGet(env, 'standings') || [];
     const schedule  = await scheduleWithFetch(env, tc.abbr, tc.season);
 
     // Find this game
@@ -3397,6 +3476,8 @@ Only reference the two teams named above and the numbers given -- no player name
     const oppAbbr   = isHome ? game.awayTeam?.abbrev : game.homeTeam?.abbrev;
     const isPlayoff = game.gameType === 3;
     const neutral   = !!game.neutralSite;
+
+    const standings = await standingsWithFetch(env);
 
     // NHL's /standings/now stays pinned to last season's final standings
     // until real games exist for the new one (confirmed live) — the
@@ -3425,77 +3506,94 @@ Only reference the two teams named above and the numbers given -- no player name
     if (!carTeam || !oppTeam) return errorJson(404, { error: 'Team standings not found' });
 
     // Standings flip to the new seasonId on Opening Night before any game
-    // is played (seen live 2026-09-29): every team at gamesPlayed 0 with
-    // null PP%/PK%/shot rates. The seasonId check above passes, so without
-    // this the in-season prompt told the AI "PK%: 0.0%", "GF/GA 0.00" and
-    // it wrote them up as real weaknesses. A team with no games yet has no
-    // current-season numbers to describe -- use last season's instead.
-    if (carTeam.gamesPlayed === 0 || oppTeam.gamesPlayed === 0) {
+    // is played (seen live 2026-09-29), every team at gamesPlayed 0. With
+    // neither team having played, this season has nothing to add -- the
+    // preseason fallback's last-season view is the whole picture. Once
+    // either has played, the in-season branch below blends each team's
+    // numbers with last season's by games played (a team still at 0 GP
+    // just shows last season's).
+    if (carTeam.gamesPlayed === 0 && oppTeam.gamesPlayed === 0) {
       return buildPreseasonFallback(env, tc, oppAbbr, isHome, isPlayoff, gameId, kvKey, neutral, locale);
     }
 
-    // Calculate key metrics
-    const carGp  = carTeam.gamesPlayed || 1;
-    const oppGp  = oppTeam.gamesPlayed || 1;
-    const carGpg = (carTeam.goalFor ?? 0) / carGp;
-    const oppGpg = (oppTeam.goalFor ?? 0) / oppGp;
-    const carGag = (carTeam.goalAgainst ?? 0) / carGp;
-    const oppGag = (oppTeam.goalAgainst ?? 0) / oppGp;
-    const carSF  = carTeam.shotsForPerGame  || 0;
-    const oppSF  = oppTeam.shotsForPerGame  || 0;
-    const carSA  = carTeam.shotsAgainstPerGame || 0;
-    const oppSA  = oppTeam.shotsAgainstPerGame || 0;
-
-    // Real Corsi (shot-attempt share: goals+shots+blocked+missed), from
-    // team_seasons — replaces the SOG-share-only proxy this route used to
-    // compute inline (Session 52; that proxy ignored blocked/missed shots
-    // entirely). Prefers the 5v5-filtered column over all-situations, over
-    // the old SOG-share proxy as a last resort — unlike PWHL's own
-    // /pwhl/prediction (pwhl.js), which is still all-situations only since
-    // PWHL's strength-state reconstruction is a separate, harder problem
-    // (see eyewall-pipeline's pwhl_strength_state.py); NHL's shot_events
-    // already carries a real situation_code natively, so 5v5 costs nothing
-    // extra here. team_seasons.corsi_for_pct[_5v5] are stored as 0-1
-    // fractions, same convention as this table's existing xgf_pct column
-    // — scaled to a percentage below like every frontend xgf_pct reader
-    // already does (see LeagueView.jsx).
-    let carCF = null, oppCF = null, corsiSource = 'sog_share_proxy';
+    // Season stats beyond record and goals come from team_seasons (written
+    // nightly by eyewall-pipeline's nhl_stats.py/moneypuck.py): the NHL
+    // standings feed has no PP%, PK% or shots-per-game fields at all, which
+    // is how every in-season prompt used to say "PK%: 0.0%". This season's
+    // rows for both teams, plus every team's last-season row -- last
+    // season's numbers for these two teams anchor the early-season blend,
+    // and all of them feed the league-average line.
+    const prior = priorSeason(tc.season);
+    const priorLabel = seasonLabel(prior);
+    let seasonRows = [];
     try {
-      const season = await resolveNHLSeason(env);
-      const teamRows = await sbRowsOrThrow(
-        `team_seasons?team=in.(${tc.abbr},${oppAbbr})&season=eq.${season}&game_type=eq.2` +
-        `&select=team,corsi_for_pct,corsi_for_pct_5v5`
+      seasonRows = await sbRowsOrThrow(
+        `team_seasons?season=in.(${tc.season},${prior})&game_type=eq.2` +
+        `&select=team,season,games_played,goals_for_pg,goals_ag_pg,pp_pct,pk_pct,shots_for_pg,shots_ag_pg,corsi_for_pct,corsi_for_pct_5v5`
       );
-      const carRow = teamRows.find(r => r.team === tc.abbr);
-      const oppRow = teamRows.find(r => r.team === oppAbbr);
-      if (carRow?.corsi_for_pct_5v5 != null && oppRow?.corsi_for_pct_5v5 != null) {
-        carCF = (carRow.corsi_for_pct_5v5 * 100).toFixed(1);
-        oppCF = (oppRow.corsi_for_pct_5v5 * 100).toFixed(1);
-        corsiSource = '5v5';
-      } else if (carRow?.corsi_for_pct != null && oppRow?.corsi_for_pct != null) {
-        carCF = (carRow.corsi_for_pct * 100).toFixed(1);
-        oppCF = (oppRow.corsi_for_pct * 100).toFixed(1);
-        corsiSource = 'all_situations';
-      }
     } catch (e) {
-      console.error('team_seasons Corsi fetch failed, falling back to SOG-share proxy:', e);
+      console.error('prediction/analyze team_seasons fetch failed; season stats beyond standings will read "not available":', e);
     }
-    if (carCF === null || oppCF === null) {
-      // Fallback: team_seasons rows/columns not populated yet for this
-      // season (e.g. before moneypuck.py's nightly Corsi rollup has run,
-      // or before docs/session52_new_columns.sql has been applied).
-      carCF = carSF + oppSA > 0 ? (carSF / (carSF + oppSA) * 100).toFixed(1) : null;
-      oppCF = oppSF + carSA > 0 ? (oppSF / (oppSF + carSA) * 100).toFixed(1) : null;
+    const rowFor = (abbr, season) => seasonRows.find(r => r.team === abbr && String(r.season) === String(season)) || {};
+    const priorRows = seasonRows.filter(r => String(r.season) === String(prior));
+    const currentRows = seasonRows.filter(r => String(r.season) === String(tc.season));
+
+    // Blend each stat with the same team's last-season number while this
+    // season's sample is small (see blendStat()). Goals come from the live
+    // standings; everything else from this season's team_seasons row,
+    // weighted by that row's own games_played -- it can lag the standings
+    // by a night, and preseason games can leave Corsi on a 0-GP row, which
+    // a 0 weight correctly ignores.
+    const teamStats = (team, abbr) => {
+      const cur = rowFor(abbr, tc.season);
+      const last = rowFor(abbr, prior);
+      const gp = team.gamesPlayed || 0;
+      const rowGp = cur.games_played || 0;
+      return {
+        gf: blendStat(gp > 0 ? (team.goalFor ?? 0) / gp : null, gp, last.goals_for_pg ?? null, EARLY_SEASON_K.goals),
+        ga: blendStat(gp > 0 ? (team.goalAgainst ?? 0) / gp : null, gp, last.goals_ag_pg ?? null, EARLY_SEASON_K.goals),
+        pp: blendStat(asPct(cur.pp_pct), rowGp, asPct(last.pp_pct), EARLY_SEASON_K.specialTeams),
+        pk: blendStat(asPct(cur.pk_pct), rowGp, asPct(last.pk_pct), EARLY_SEASON_K.specialTeams),
+        sf: blendStat(cur.shots_for_pg ?? null, rowGp, last.shots_for_pg ?? null, EARLY_SEASON_K.shots),
+        sa: blendStat(cur.shots_ag_pg ?? null, rowGp, last.shots_ag_pg ?? null, EARLY_SEASON_K.shots),
+        cf5: blendStat(asPct(cur.corsi_for_pct_5v5), rowGp, asPct(last.corsi_for_pct_5v5), EARLY_SEASON_K.shots),
+        cfAll: blendStat(asPct(cur.corsi_for_pct), rowGp, asPct(last.corsi_for_pct), EARLY_SEASON_K.shots),
+      };
+    };
+    const car = teamStats(carTeam, tc.abbr);
+    const opp = teamStats(oppTeam, oppAbbr);
+
+    // Shot-attempt share: 5v5 when both teams have it, else all-situations,
+    // else a shots-on-goal share built from the two teams' shot rates.
+    let carCorsi = null, oppCorsi = null, corsiSource = 'unavailable';
+    if (car.cf5 && opp.cf5) {
+      carCorsi = car.cf5; oppCorsi = opp.cf5; corsiSource = '5v5';
+    } else if (car.cfAll && opp.cfAll) {
+      carCorsi = car.cfAll; oppCorsi = opp.cfAll; corsiSource = 'all_situations';
+    } else if (car.sf && car.sa && opp.sf && opp.sa) {
       corsiSource = 'sog_share_proxy';
+    }
+    let carCF = null, oppCF = null;
+    if (corsiSource === 'sog_share_proxy') {
+      carCF = (car.sf.value / (car.sf.value + opp.sa.value) * 100).toFixed(1);
+      oppCF = (opp.sf.value / (opp.sf.value + car.sa.value) * 100).toFixed(1);
+    } else if (carCorsi) {
+      carCF = carCorsi.value.toFixed(1);
+      oppCF = oppCorsi.value.toFixed(1);
     }
     const corsiCaveat = corsiSource === '5v5'
       ? '5-on-5 shot-attempt share (goals+shots+blocked+missed).'
       : corsiSource === 'all_situations'
         ? 'All-situations shot-attempt share (goals+shots+blocked+missed), not 5-on-5 filtered.'
-        : 'Shots-on-goal share only (blocked/missed shots not counted) — real Corsi data unavailable for this team/season yet.';
+        : corsiSource === 'sog_share_proxy'
+          ? 'Shots-on-goal share only (blocked/missed shots not counted) — real Corsi data unavailable for this team/season yet.'
+          : 'Shot-share data unavailable for this matchup.';
     const corsiLabel = corsiSource === 'sog_share_proxy' ? 'Corsi proxy (SOG share)' : 'Corsi (real shot-attempt share)';
-
-    // PDO proxy
+    const corsiLine = (s, cf) => {
+      if (corsiSource === 'unavailable') return `${corsiLabel}: not available`;
+      if (corsiSource === 'sog_share_proxy') return `${corsiLabel}: ${cf}%`;
+      return describeStat(corsiLabel, s, priorLabel, fmtPct);
+    };
 
     // Recent form
     const carStreak = carTeam.streakCode && carTeam.streakCount
@@ -3505,10 +3603,12 @@ Only reference the two teams named above and the numbers given -- no player name
       ? `${oppTeam.streakCode}${oppTeam.streakCount}`
       : 'unknown';
 
-    // Head-to-head this season from schedule
+    // Head-to-head this season from schedule. Preseason games (gameType 1)
+    // are in the same schedule feed and don't count -- two September
+    // exhibitions used to show up here as a real "1-1" season series.
     const h2h = schedule.filter(g => {
       const isCompleted = ['OFF','FINAL','F','FINAL_OVERTIME','FINAL_SHOOTOUT'].includes(g.gameState);
-      if (!isCompleted) return false;
+      if (!isCompleted || g.gameType === 1) return false;
       const teams = [g.homeTeam?.abbrev, g.awayTeam?.abbrev];
       return teams.includes(tc.abbr) && teams.includes(oppAbbr);
     });
@@ -3520,18 +3620,16 @@ Only reference the two teams named above and the numbers given -- no player name
     }).length;
     const h2hRecord = h2h.length > 0 ? `${h2hCarWins}-${h2h.length - h2hCarWins}` : 'no prior meetings';
 
-    // Pythagorean expected goals
-    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-    const homeAdj = isHome ? 0.12 : -0.12;
-    const expCar  = clamp(Math.sqrt(Math.max(carGpg,0.5) * Math.max(oppGag,0.5)) + homeAdj, 1.5, 5.0).toFixed(1);
-    const expOpp  = clamp(Math.sqrt(Math.max(oppGpg,0.5) * Math.max(carGag,0.5)) - homeAdj, 1.5, 5.0).toFixed(1);
+    // Pythagorean expected goals, from the (blended) goal rates
+    const { expCar, expOpp } = expectedScore(car.gf?.value, car.ga?.value, opp.gf?.value, opp.ga?.value, isHome);
 
-    // powerPlayPct still needed below for the AI prompt's descriptive
-    // stats, even though it no longer feeds a win% calculation directly.
-    if (carTeam.powerPlayPct == null) console.error(`prediction/analyze in-season: ${tc.abbr} powerPlayPct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
-    if (oppTeam.powerPlayPct == null) console.error(`prediction/analyze in-season: ${oppAbbr} powerPlayPct missing, defaulting to league-average ${PP_PCT_DEFAULT}%`);
-    const carPP = carTeam.powerPlayPct ?? PP_PCT_DEFAULT;
-    const oppPP = oppTeam.powerPlayPct ?? PP_PCT_DEFAULT;
+    // League-average PP%/PK%: this season's once every team has a
+    // special-teams-sized sample, last season's until then.
+    const currentSettled = currentRows.length > 0 &&
+      currentRows.every(r => (r.games_played || 0) >= EARLY_SEASON_K.specialTeams);
+    const leagueLine = currentSettled
+      ? leagueAverageLine(leagueSpecialTeams(currentRows), tc.season)
+      : leagueAverageLine(leagueSpecialTeams(priorRows), prior);
 
     // Win probability -- see eyewall-pipeline/docs/elo_prediction_model_results.md
     // for the backtest this replaces the former hand-tuned scorecard +
@@ -3547,34 +3645,40 @@ Only reference the two teams named above and the numbers given -- no player name
     }
     const carWinPct = Math.round(eloWinProb(eloRatings.car, eloRatings.opp, isHome, neutral) * 100);
 
+    // Any number that isn't simply this season's (blended, or last
+    // season's for a team yet to play) gets the early-season note below.
+    const early = [car, opp].some(t => Object.values(t).some(s =>
+      s && s.prior != null && (s.cur == null || s.gp < s.k)
+    ));
+    const statBlock = (abbr, team, s, streak, cf) => [
+      `${abbr} stats:`,
+      `- Record: ${team.wins}-${team.losses}-${team.otLosses} (${team.points} pts, ${team.gamesPlayed} GP)`,
+      `- ${describeStat('GF per game', s.gf, priorLabel, fmtRate)}`,
+      `- ${describeStat('GA per game', s.ga, priorLabel, fmtRate)}`,
+      `- ${describeStat('PP%', s.pp, priorLabel, fmtPct)}`,
+      `- ${describeStat('PK%', s.pk, priorLabel, fmtPct)}`,
+      `- ${describeStat('SOG for per game', s.sf, priorLabel, v => v.toFixed(1))}`,
+      `- ${describeStat('SOG against per game', s.sa, priorLabel, v => v.toFixed(1))}`,
+      `- ${corsiLine(corsiSource === 'all_situations' ? s.cfAll : s.cf5, cf)}`,
+      ...(streak !== 'unknown' ? [`- Current streak: ${streak}`] : []),
+    ].join('\n');
+
     const prompt = `You are EyeWall Analytics, a ${tc.displayName} hockey analytics assistant. Write a sharp, data-driven pre-game analysis for ${tc.displayName} fans. 2-3 sentences only. Be specific about the numbers. No filler. No "In this matchup" opener.
 
 Game: ${tc.abbr} (${isHome ? 'HOME' : 'AWAY'}) vs ${oppAbbr}
 Context: ${isPlayoff ? 'PLAYOFFS' : 'Regular Season'}
 
-${tc.abbr} stats:
-- Record: ${carTeam.wins}-${carTeam.losses}-${carTeam.otLosses} (${carTeam.points} pts)
-- GF/GA per game: ${carGpg.toFixed(2)} / ${carGag.toFixed(2)}
-- PP%: ${carPP.toFixed(1)}% · PK%: ${(carTeam.penaltyKillPct ?? 0).toFixed(1)}%
-- SOG/GP: ${carSF.toFixed(1)} for / ${carSA.toFixed(1)} against
-- ${corsiLabel}: ${carCF ?? '—'}%
-- Current streak: ${carStreak}
+${statBlock(tc.abbr, carTeam, car, carStreak, carCF)}
 
-${oppAbbr} stats:
-- Record: ${oppTeam.wins}-${oppTeam.losses}-${oppTeam.otLosses} (${oppTeam.points} pts)
-- GF/GA per game: ${oppGpg.toFixed(2)} / ${oppGag.toFixed(2)}
-- PP%: ${oppPP.toFixed(1)}% · PK%: ${(oppTeam.penaltyKillPct ?? 0).toFixed(1)}%
-- SOG/GP: ${oppSF.toFixed(1)} for / ${oppSA.toFixed(1)} against
-- ${corsiLabel}: ${oppCF ?? '—'}%
-- Current streak: ${oppStreak}
-
+${statBlock(oppAbbr, oppTeam, opp, oppStreak, oppCF)}
+${leagueLine ? `\n${leagueLine}\n` : ''}
 Head-to-head this season: ${tc.abbr} ${h2hRecord}
-Expected score (Pythagorean): ${tc.abbr} ${expCar} - ${oppAbbr} ${expOpp}
-Model win probability: ${tc.abbr} ${carWinPct}%${isPlayoff ? '\n\nNote: This is a playoff game. Ignore regular season points — focus on possession, goaltending, and recent form.' : ''}
+${expCar != null ? `Expected score (Pythagorean): ${tc.abbr} ${expCar} - ${oppAbbr} ${expOpp}\n` : ''}Model win probability: ${tc.abbr} ${carWinPct}%${isPlayoff ? '\n\nNote: This is a playoff game. Ignore regular season points — focus on possession, goaltending, and recent form.' : ''}
 
-${corsiSource === 'sog_share_proxy' ? 'Note: the Corsi figure above is a shots-on-goal-only proxy (real shot-attempt data unavailable) — describe it as "shot share," not "Corsi" or "possession," in your analysis.' : `Note: the Corsi figure above is ${corsiCaveat} Describe it as "shot-attempt share" or "Corsi," accurately reflecting that scope.`}
+${corsiSource === 'sog_share_proxy' ? 'Note: the Corsi figure above is a shots-on-goal-only proxy (real shot-attempt data unavailable) — describe it as "shot share," not "Corsi" or "possession," in your analysis.' : corsiSource === 'unavailable' ? 'Note: shot-share data is unavailable for this matchup — don\'t discuss possession numbers.' : `Note: the Corsi figure above is ${corsiCaveat} Describe it as "shot-attempt share" or "Corsi," accurately reflecting that scope.`}
+${early ? `\nNote: it's early in the season. A stat marked "early-season estimate" blends this season's small sample with last season, weighted by games played — treat the estimate as the team's level, and don't call anything a strength or weakness from this season's small sample alone. A stat marked "none this season yet" is last season's number.\n` : ''}Don't cite any stat marked "not available".
 
-Write the analysis now. Mention the single most decisive factor, one risk or concern, and a concrete expected-score range.`;
+Write the analysis now. Mention the single most decisive factor, one risk or concern${expCar != null ? ', and a concrete expected-score range' : ''}.`;
 
     let aiResponse;
     try {
@@ -3594,8 +3698,8 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       isHome,
       isPlayoff,
       carWinPct,
-      expCar:    parseFloat(expCar),
-      expOpp:    parseFloat(expOpp),
+      expCar:    expCar != null ? parseFloat(expCar) : null,
+      expOpp:    expOpp != null ? parseFloat(expOpp) : null,
       narrative,
       h2hRecord,
       carStreak,
