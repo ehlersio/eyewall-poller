@@ -2638,9 +2638,9 @@ describe('poll() — multi-team dual broadcast', () => {
       homeTeam: { id: 12, abbrev: 'CAR', score: 0 },
       awayTeam: { id: 13, abbrev: 'FLA', score: 0 },
     }
-    const play = (eventId, typeDescKey, details = {}) =>
-      ({ eventId, typeDescKey, periodDescriptor: { number: 2 }, details })
-    const interference = play(635, 'penalty', { eventOwnerTeamId: 13, duration: 2, descKey: 'interference-goalkeeper' })
+    const play = (eventId, typeDescKey, details = {}, timeInPeriod = '08:00') =>
+      ({ eventId, typeDescKey, periodDescriptor: { number: 2 }, timeInPeriod, details })
+    const interference = play(635, 'penalty', { eventOwnerTeamId: 13, duration: 2, descKey: 'interference-goalkeeper' }, '08:12')
     const pollWith = async plays => {
       sendPushMock.mockClear()
       mockScoreboardAndPbp({ liveGames: [liveGame], pbpByGameId: { '2026020001': { periodDescriptor: { number: 2 }, plays } } })
@@ -2660,9 +2660,61 @@ describe('poll() — multi-team dual broadcast', () => {
     // The next penalty still goes out.
     const next = await pollWith([
       play(630, 'faceoff'), play(633, 'shot-on-goal'), interference, play(637, 'faceoff'),
-      play(643, 'penalty', { eventOwnerTeamId: 13, duration: 2, descKey: 'roughing' }),
+      play(643, 'penalty', { eventOwnerTeamId: 13, duration: 2, descKey: 'roughing' }, '08:36'),
     ])
     expect(next.map(p => p.body)).toEqual(['FLA — 2 min roughing'])
+  })
+
+  it('sends no power-play push for offsetting penalties, misconducts or penalty shots', async () => {
+    const env = makeEnv({
+      VAPID_PRIVATE_KEY: 'fake-key-for-test',
+      CACHE: makeFakeCache({
+        'push:subs': [subFor('CAR', 'https://push.example/car-fan'), subFor('FLA', 'https://push.example/fla-fan')],
+        'push:gamestate:2026020001': { homeScore: 0, awayScore: 0, playCount: 0, started: true, period: 1, goalScorers: {} },
+      }),
+    })
+    const liveGame = {
+      id: 2026020001, gameState: 'LIVE', gameType: 2,
+      homeTeam: { id: 12, abbrev: 'CAR', score: 0 },
+      awayTeam: { id: 13, abbrev: 'FLA', score: 0 },
+    }
+    const pen = (eventId, teamId, typeCode, duration, descKey, timeInPeriod) => ({
+      eventId, typeDescKey: 'penalty', periodDescriptor: { number: 1 }, timeInPeriod,
+      details: { eventOwnerTeamId: teamId, typeCode, duration, descKey },
+    })
+    const plays = []
+    const pollWith = async (...added) => {
+      plays.push(...added)
+      sendPushMock.mockClear()
+      mockScoreboardAndPbp({ liveGames: [liveGame], pbpByGameId: { '2026020001': { periodDescriptor: { number: 1 }, plays: [...plays] } } })
+      await poll(env, makeCtx())
+      return sendPushMock.mock.calls.map(([, payload]) => payload)
+        .filter(p => p.title.endsWith('Power Play!')).map(p => `${p.title} ${p.body}`)
+    }
+
+    // Fighting majors posted together (CAR-FLA, 2026-09-29, 18:01 of P1).
+    expect(await pollWith(
+      pen(27, 13, 'MAJ', 5, 'fighting', '18:01'),
+      pen(30, 12, 'MAJ', 5, 'fighting', '18:01'),
+    )).toEqual([])
+
+    // Matching minors -- the second posting a poll after the first. Only
+    // the first half, alone at that point, can go out.
+    expect(await pollWith(pen(40, 12, 'MIN', 2, 'slashing', '19:10'))).toEqual(['⚡ FLA Power Play! CAR — 2 min slashing'])
+    expect(await pollWith(pen(41, 13, 'MIN', 2, 'cross-checking', '19:10'))).toEqual([])
+
+    // Misconduct and penalty shot alone.
+    expect(await pollWith(pen(50, 13, 'MIS', 10, 'misconduct', '19:30'))).toEqual([])
+    expect(await pollWith(pen(51, 12, 'PS', 0, 'ps-hooking-on-breakaway', '19:40'))).toEqual([])
+
+    // Two minors to one, one to the other: the difference is a power play.
+    expect(await pollWith(
+      pen(60, 13, 'MIN', 2, 'roughing', '19:50'),
+      pen(61, 13, 'MIN', 2, 'roughing', '19:50'),
+      pen(62, 12, 'MIN', 2, 'roughing', '19:50'),
+    )).toEqual(['⚡ CAR Power Play! FLA — 2 min roughing'])
+    // ... announced once, even as a further FLA minor at it posts late.
+    expect(await pollWith(pen(63, 13, 'MIN', 2, 'unsportsmanlike-conduct', '19:50'))).toEqual([])
   })
 
   it('dual-broadcasts game-over win/loss for a game involving neither team as this app\'s own default team', async () => {

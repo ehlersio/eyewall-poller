@@ -509,6 +509,10 @@ export function oppGoalBody(scoringAbbr, scoringScore, otherScore, scoringScoreB
   return `${scoringAbbr} takes the lead. Time to push back!`;
 }
 
+// Penalty typeCodes that put no one short-handed: misconduct, game
+// misconduct, and a penalty shot (awarded instead of a power play).
+const NO_PP_PENALTY_TYPES = new Set(['MIS', 'GAM', 'PS']);
+
 // ── Event detection ───────────────────────────────────────────
 // Broadcasts to BOTH teams playing in `game`, each framed from their own
 // perspective — mirrors pollPWHLGame's dual-broadcast pattern in pwhl.js.
@@ -668,15 +672,39 @@ async function detectAndNotify(env, game, pbp) {
   // append-only -- plays get inserted ahead of a posted penalty and its
   // details revised -- so the same penalty landed past the old playCount
   // again and alerted on 2-3 polls in a row (CAR-FLA, 2026-09-29).
-  const penaltyKey = p => String(p.eventId ?? `${p.periodDescriptor?.number}-${p.timeInPeriod}`);
+  //
+  // Everything called at one stoppage is netted first, since that's how
+  // it's served: equal minutes offset (a fight's two majors, matching
+  // minors at 4-on-4) and put no one on the power play, and misconducts
+  // and penalty shots never do. Both teams were penalized at the same
+  // stoppage 121 times in 200 games of 2025-26, 97 of them evenly; those
+  // used to send "Power Play!" (CAR-FLA's fight did, to both sides).
+  const penaltyKey  = p => String(p.eventId ?? `${p.periodDescriptor?.number}-${p.timeInPeriod}`);
+  const stoppageKey = p => `${p.periodDescriptor?.number}-${p.timeInPeriod}`;
   const penaltiesSent = new Set(lastState.penaltiesSent || []);
-  const newPenalties  = newPlays.filter(p => p.typeDescKey === 'penalty');
-  const penalty = newPenalties.find(p => !penaltiesSent.has(penaltyKey(p)));
+  const ppSent        = new Set(lastState.ppSent || []); // `${stoppage}-${ppAbbr}`
+  const newPenalties  = newPlays.filter(p => p.typeDescKey === 'penalty' && !penaltiesSent.has(penaltyKey(p)));
   newPenalties.forEach(p => penaltiesSent.add(penaltyKey(p)));
-  if (penalty) {
-    const penTeamId = penalty.details?.eventOwnerTeamId;
+  for (const stoppage of new Set(newPenalties.map(stoppageKey))) {
+    // Every penalty at this stoppage, not just the new ones: its offsetting
+    // half can post a poll after the first.
+    const served = pbp.plays.filter(p => p.typeDescKey === 'penalty' && stoppageKey(p) === stoppage
+      && !NO_PP_PENALTY_TYPES.has(p.details?.typeCode));
+    const minutes = teamId => served
+      .filter(p => p.details?.eventOwnerTeamId === teamId)
+      .reduce((sum, p) => sum + (p.details?.duration || 2), 0);
+    const homeMins = minutes(homeId), awayMins = minutes(awayId);
+    if (homeMins === awayMins) continue;
+
+    const penTeamId = homeMins > awayMins ? homeId : awayId;
     const ppAbbr    = penTeamId === homeId ? awayAbbr : homeAbbr;
     const penAbbr   = penTeamId === homeId ? homeAbbr : awayAbbr;
+    // One alert per power play: a second penalty to the same side at the
+    // same stoppage (a double minor posted as two plays) extends it.
+    if (ppSent.has(`${stoppage}-${ppAbbr}`)) continue;
+    ppSent.add(`${stoppage}-${ppAbbr}`);
+
+    const penalty = served.find(p => p.details?.eventOwnerTeamId === penTeamId);
     const dur  = penalty.details?.duration || 2;
     const desc = penalty.details?.descKey?.replace(/-/g, ' ') || 'penalty';
     await notify(ppAbbr, {
@@ -694,6 +722,7 @@ async function detectAndNotify(env, game, pbp) {
     goalScorers,
     periodEndSent: Math.max(periodEndSent, endedPeriod || 0),
     penaltiesSent: [...penaltiesSent],
+    ppSent: [...ppSent],
   }, 24 * 3600);
 }
 
