@@ -1040,6 +1040,36 @@ describe('POST /pwhl/summary/narrative', () => {
     expect((await res.json()).error).toMatch(/empty/i)
     expect(await env.CACHE.get('pwhl:narrative:1:210:BOS')).toBeNull()
   })
+
+  it('names the goalie in net from goalieNames, labelled with the team', async () => {
+    const env = makeEnv()
+    mockFetchWithAI('Game summary text.')
+    await handlePWHL(
+      makeRequest('/pwhl/summary/narrative?gameId=210&period=game&carAbbr=MIN', {
+        method: 'POST',
+        body: { carAbbr: 'MIN', oppAbbr: 'TOR', carName: 'Minnesota Frost', oppName: 'Toronto Sceptres', goalieNames: ['Maddie Rooney'], goals: [] },
+      }),
+      env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=game&carAbbr=MIN')
+    )
+    expect(aiPrompt(globalThis.fetch)[0].content).toMatch(/Minnesota Frost goalie in net: Maddie Rooney/)
+  })
+
+  it('ignores the legacy primaryGoalieName, which older clients took from the three stars (often the other team)', async () => {
+    // Real case, game 210: MIN's summary was handed TOR's Raygan Kirk, the
+    // only goalie among the three stars.
+    const env = makeEnv()
+    mockFetchWithAI('Game summary text.')
+    await handlePWHL(
+      makeRequest('/pwhl/summary/narrative?gameId=210&period=game&carAbbr=MIN', {
+        method: 'POST',
+        body: { carAbbr: 'MIN', oppAbbr: 'TOR', carName: 'Minnesota Frost', oppName: 'Toronto Sceptres', primaryGoalieName: 'Raygan Kirk', goals: [] },
+      }),
+      env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=game&carAbbr=MIN')
+    )
+    const promptSent = aiPrompt(globalThis.fetch)[0].content
+    expect(promptSent).not.toMatch(/Kirk/)
+    expect(promptSent).not.toMatch(/goalie in net/i)
+  })
 })
 
 describe('GET /pwhl/summary', () => {
@@ -1115,6 +1145,40 @@ describe('GET /pwhl/summary', () => {
     ])
     expect(body.coaches.home).toEqual({ firstName: 'Steve', lastName: "O'Rourke" })
     expect(body.coaches.away).toEqual({ firstName: 'Troy', lastName: 'Ryan' })
+  })
+
+  it("passes through each team's goalie stints, tagged with the team", async () => {
+    // Shape from a real view=gameSummary pull (game_id=210): one row per
+    // stint, so a goalie pulled for an extra attacker appears again.
+    const payload = gameSummaryPayload()
+    const stint = (id, firstName, lastName, from, to) => ({
+      info: { id, firstName, lastName, position: 'G' }, stats: { saves: 0 },
+      periodStart: { id: from, shortName: from, longName: '' }, timeStart: '0:00',
+      periodEnd: { id: to, shortName: to, longName: '' }, timeEnd: '20:00',
+    })
+    payload.homeTeam.info = { id: 2 }
+    payload.homeTeam.goalieLog = [stint(123, 'Maddie', 'Rooney', '1', '3')]
+    payload.visitingTeam.info = { id: 6 }
+    payload.visitingTeam.goalieLog = [stint(211, 'Raygan', 'Kirk', '1', '2'), stint(211, 'Raygan', 'Kirk', '2', '3')]
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(payload) })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/summary?gameId=261'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/summary?gameId=261')
+    )
+
+    expect((await res.json()).goalieLog).toEqual([
+      { teamId: 2, id: 123, firstName: 'Maddie', lastName: 'Rooney', periodStart: 1, periodEnd: 3 },
+      { teamId: 6, id: 211, firstName: 'Raygan', lastName: 'Kirk', periodStart: 1, periodEnd: 2 },
+      { teamId: 6, id: 211, firstName: 'Raygan', lastName: 'Kirk', periodStart: 2, periodEnd: 3 },
+    ])
+  })
+
+  it('goalieLog is empty when the feed has none', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(gameSummaryPayload()) })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/summary?gameId=261'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/summary?gameId=261')
+    )
+    expect((await res.json()).goalieLog).toEqual([])
   })
 
   it('coaches are null when a team has no Head Coach entry, venue is null when details is missing', async () => {

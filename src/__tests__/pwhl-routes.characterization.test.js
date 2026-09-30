@@ -192,6 +192,8 @@ function hockeytechPayload(view) {
           stats: { goals: 3, shots: 30, hits: 14, faceoffWinPercentage: 55 },
           skaters: [{ info: { id: String(SKATER_ID), firstName: 'Alex', lastName: 'Skater' }, stats: { faceoffWins: '6', faceoffAttempts: '10' } }],
           goalies: [{ info: { id: '7003', firstName: 'Home', lastName: 'Goalie' }, stats: { saves: '26', shotsAgainst: '28', goalsAgainst: '2', timeOnIce: '60:00' } }],
+          info: { id: String(TEAM_A) },
+          goalieLog: [{ info: { id: '7003', firstName: 'Home', lastName: 'Goalie' }, periodStart: { id: '1' }, periodEnd: { id: '3' } }],
         },
         visitingTeam: {
           coaches: [],
@@ -316,7 +318,7 @@ const NARRATIVE_BODY = {
   carAbbr: 'BOS', oppAbbr: 'MIN', carName: 'Boston Fleet', oppName: 'Minnesota Frost', periodLabel: '1st Period',
   corsiForPct: 54.2, carSOG: 30, oppSOG: 28, carGoals: 3, oppGoals: 2, carHits: 14, carFOPct: 55, carHDCF: 9, oppHDCF: 6,
   penaltyCount: 5, carPenaltyCount: 2, bestPeriod: { period: 1, corsiForPct: 61 }, worstPeriod: { period: 3, corsiForPct: 44 },
-  primaryGoalieName: 'Home Goalie',
+  goalieNames: ['Home Goalie'],
   goals: [
     { isCar: true, scorerName: 'Alex Skater', time: '5:00', period: 1, strength: 'pp' },
     { isCar: false, time: '12:00', period: 2, strength: 'ev' },
