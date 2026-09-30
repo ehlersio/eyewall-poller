@@ -2625,6 +2625,46 @@ describe('poll() — multi-team dual broadcast', () => {
     expect(tags).not.toContain('period-end-2025020556-1')
   })
 
+  it('sends one power-play push per penalty, even when the feed inserts plays ahead of it', async () => {
+    const env = makeEnv({
+      VAPID_PRIVATE_KEY: 'fake-key-for-test',
+      CACHE: makeFakeCache({
+        'push:subs': [subFor('CAR', 'https://push.example/car-fan')],
+        'push:gamestate:2026020001': { homeScore: 0, awayScore: 0, playCount: 1, started: true, period: 2, goalScorers: {} },
+      }),
+    })
+    const liveGame = {
+      id: 2026020001, gameState: 'LIVE', gameType: 2,
+      homeTeam: { id: 12, abbrev: 'CAR', score: 0 },
+      awayTeam: { id: 13, abbrev: 'FLA', score: 0 },
+    }
+    const play = (eventId, typeDescKey, details = {}) =>
+      ({ eventId, typeDescKey, periodDescriptor: { number: 2 }, details })
+    const interference = play(635, 'penalty', { eventOwnerTeamId: 13, duration: 2, descKey: 'interference-goalkeeper' })
+    const pollWith = async plays => {
+      sendPushMock.mockClear()
+      mockScoreboardAndPbp({ liveGames: [liveGame], pbpByGameId: { '2026020001': { periodDescriptor: { number: 2 }, plays } } })
+      await poll(env, makeCtx())
+      return sendPushMock.mock.calls.map(([, payload]) => payload).filter(p => p.title === '⚡ CAR Power Play!')
+    }
+
+    const first = await pollWith([play(630, 'faceoff'), interference])
+    expect(first).toHaveLength(1)
+    expect(first[0].body).toBe('FLA — 2 min interference goalkeeper')
+    expect(first[0].tag).toBe('pp-2026020001-635')
+
+    // A late-posted shot lands ahead of the penalty, pushing it past last
+    // poll's play count -- it used to be announced again here.
+    expect(await pollWith([play(630, 'faceoff'), play(633, 'shot-on-goal'), interference, play(637, 'faceoff')])).toHaveLength(0)
+
+    // The next penalty still goes out.
+    const next = await pollWith([
+      play(630, 'faceoff'), play(633, 'shot-on-goal'), interference, play(637, 'faceoff'),
+      play(643, 'penalty', { eventOwnerTeamId: 13, duration: 2, descKey: 'roughing' }),
+    ])
+    expect(next.map(p => p.body)).toEqual(['FLA — 2 min roughing'])
+  })
+
   it('dual-broadcasts game-over win/loss for a game involving neither team as this app\'s own default team', async () => {
     const env = makeEnv({
       VAPID_PRIVATE_KEY: 'fake-key-for-test',

@@ -663,7 +663,16 @@ async function detectAndNotify(env, game, pbp) {
   }
 
   // ── Penalty — notify whichever team gets the power play ──────────────
-  const penalty = newPlays.find(p => p.typeDescKey === 'penalty');
+  // Once per penalty, by its own eventId (as pwhl.js keys on
+  // game_penalty_id). newPlays alone isn't enough: the NHL feed isn't
+  // append-only -- plays get inserted ahead of a posted penalty and its
+  // details revised -- so the same penalty landed past the old playCount
+  // again and alerted on 2-3 polls in a row (CAR-FLA, 2026-09-29).
+  const penaltyKey = p => String(p.eventId ?? `${p.periodDescriptor?.number}-${p.timeInPeriod}`);
+  const penaltiesSent = new Set(lastState.penaltiesSent || []);
+  const newPenalties  = newPlays.filter(p => p.typeDescKey === 'penalty');
+  const penalty = newPenalties.find(p => !penaltiesSent.has(penaltyKey(p)));
+  newPenalties.forEach(p => penaltiesSent.add(penaltyKey(p)));
   if (penalty) {
     const penTeamId = penalty.details?.eventOwnerTeamId;
     const ppAbbr    = penTeamId === homeId ? awayAbbr : homeAbbr;
@@ -673,7 +682,7 @@ async function detectAndNotify(env, game, pbp) {
     await notify(ppAbbr, {
       title: `⚡ ${ppAbbr} Power Play!`,
       body:  `${penAbbr} — ${dur} min ${desc}`,
-      tag:   `pp-${liveId}-${lastPlayIdx}`,
+      tag:   `pp-${liveId}-${penaltyKey(penalty)}`,
       url:   '/',
     }, 'penalty');
   }
@@ -684,6 +693,7 @@ async function detectAndNotify(env, game, pbp) {
     started: true,
     goalScorers,
     periodEndSent: Math.max(periodEndSent, endedPeriod || 0),
+    penaltiesSent: [...penaltiesSent],
   }, 24 * 3600);
 }
 
