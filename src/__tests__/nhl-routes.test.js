@@ -39,7 +39,7 @@ vi.mock('../shared.js', async (importOriginal) => {
   return { ...actual, sendPush: sendPushMock, sendLiveActivityPush: sendLiveActivityPushMock }
 })
 
-import { handleNHL, poll, refreshPPUnits, oppGoalBody, periodIsOver, scoreboardBroadcasts, liveActivityState, startLiveActivities } from '../nhl.js'
+import { handleNHL, poll, refreshPPUnits, oppGoalBody, periodIsOver, scoreboardBroadcasts, liveActivityState, startLiveActivities, applyScoreboardStates, scoreboardStates } from '../nhl.js'
 import { resolveNHLSeason } from '../seasons.js'
 
 beforeEach(() => {
@@ -2437,7 +2437,7 @@ describe('poll() — multi-team dual broadcast', () => {
     return { endpoint, keys: { p256dh: 'x', auth: 'y' }, teamAbbr: `NHL:${teamAbbr}` }
   }
 
-  function mockScoreboardAndPbp({ liveGames = [], completedGames = [], pbpByGameId = {} }) {
+  function mockScoreboardAndPbp({ liveGames = [], completedGames = [], pbpByGameId = {}, scheduleGames = [] }) {
     globalThis.fetch = vi.fn().mockImplementation((url) => {
       const u = String(url)
       if (u.includes('/score/now')) {
@@ -2448,7 +2448,7 @@ describe('poll() — multi-team dual broadcast', () => {
         return Promise.resolve({ ok: true, json: async () => pbpByGameId[gid] || { plays: [] } })
       }
       if (u.includes('club-schedule-season')) {
-        return Promise.resolve({ ok: true, json: async () => ({ games: [] }) })
+        return Promise.resolve({ ok: true, json: async () => ({ games: scheduleGames }) })
       }
       // boxscore, standings, team/summary, odds, news — not under test here
       return Promise.resolve({ ok: true, json: async () => ({}) })
@@ -2784,6 +2784,82 @@ describe('poll() — multi-team dual broadcast', () => {
 
     expect(polledUrls().some(u => u.includes('/standings/now'))).toBe(true)
     expect(polledUrls().some(u => u.includes('/team/summary'))).toBe(false)
+  })
+
+  // Shot map live lag (2026-09-30): the app reads a game as live from its
+  // team's cached schedule, which for any team but CAR sat on a 10-minute
+  // TTL after the Game Starting push had already gone out.
+  describe('scoreboard states on cached schedules', () => {
+    const season = () => { const y = new Date().getFullYear() + 2; return `${y - 1}${y}` }
+    const schedGame = (gameState, homeScore, awayScore) => ({
+      id: 2026020006, gameState,
+      homeTeam: { abbrev: 'PHI', ...(homeScore != null && { score: homeScore }) },
+      awayTeam: { abbrev: 'PIT', ...(awayScore != null && { score: awayScore }) },
+    })
+    const live = { id: 2026020006, gameState: 'LIVE', gameType: 2, homeTeam: { id: 4, abbrev: 'PHI', score: 0 }, awayTeam: { id: 5, abbrev: 'PIT', score: 1 } }
+    const read = (env, key) => JSON.parse(env.CACHE._store.get(key))
+
+    it('marks a game live on both teams\' cached schedules the tick puck drop shows on the scoreboard', async () => {
+      const env = makeEnv({ CACHE: makeFakeCache({
+        [`schedule:PIT:${season()}`]: [schedGame('FUT')],
+        [`schedule:PHI:${season()}`]: [schedGame('PRE')],
+      }) })
+      mockScoreboardAndPbp({ liveGames: [live] })
+
+      await poll(env, makeCtx())
+
+      for (const abbr of ['PIT', 'PHI']) {
+        const [g] = read(env, `schedule:${abbr}:${season()}`)
+        expect(g.gameState).toBe('LIVE')
+        expect([g.homeTeam.score, g.awayTeam.score]).toEqual([0, 1])
+        expect(g.homeTeam.abbrev).toBe('PHI')
+      }
+    })
+
+    it('writes no schedule for a team nobody has loaded', async () => {
+      const env = makeEnv({ CACHE: makeFakeCache() })
+      mockScoreboardAndPbp({ liveGames: [live] })
+
+      await poll(env, makeCtx())
+
+      expect(env.CACHE._store.has(`schedule:PIT:${season()}`)).toBe(false)
+    })
+
+    it('keeps the stamp on CAR\'s schedule when the next tick\'s refetch still says FUT', async () => {
+      const carLive = { ...live, homeTeam: { id: 12, abbrev: 'CAR', score: 0 } }
+      const env = makeEnv({ CACHE: makeFakeCache() })
+      mockScoreboardAndPbp({ liveGames: [carLive], scheduleGames: [{ ...schedGame('FUT'), homeTeam: { abbrev: 'CAR' } }] })
+
+      await poll(env, makeCtx())
+      await poll(env, makeCtx())
+
+      expect(read(env, `schedule:CAR:${season()}`)[0].gameState).toBe('LIVE')
+    })
+  })
+})
+
+describe('applyScoreboardStates()', () => {
+  const g = (gameState, home = 0, away = 0) => ({ id: 1, gameState, homeTeam: { abbrev: 'A', score: home }, awayTeam: { abbrev: 'B', score: away } })
+  const states = (gameState, homeScore = 0, awayScore = 0) => ({ 1: { gameState, homeScore, awayScore } })
+
+  it('never moves a game backwards', () => {
+    const games = [g('OFF', 3, 2)]
+    expect(applyScoreboardStates(games, states('LIVE', 2, 2))).toBe(games)
+  })
+
+  it('takes a new score within the same state', () => {
+    expect(applyScoreboardStates([g('LIVE', 0, 0)], states('LIVE', 1, 0))[0].homeTeam.score).toBe(1)
+  })
+
+  it('returns the same array when nothing changed, and leaves games off the scoreboard alone', () => {
+    const games = [g('LIVE', 1, 0), { ...g('FUT'), id: 2 }]
+    expect(applyScoreboardStates(games, states('LIVE', 1, 0))).toBe(games)
+    expect(applyScoreboardStates(games, null)).toBe(games)
+  })
+
+  it('reads scoreboardStates() output', () => {
+    const s = scoreboardStates([{ id: 1, gameState: 'CRIT', homeTeam: { score: 2 }, awayTeam: { score: 2 } }])
+    expect(applyScoreboardStates([g('FUT')], s)[0]).toMatchObject({ gameState: 'CRIT', homeTeam: { score: 2 }, awayTeam: { score: 2 } })
   })
 })
 
