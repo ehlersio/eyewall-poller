@@ -365,24 +365,27 @@ export async function handleRequest(request, env, ctx) {
     const locale = url.searchParams.get('locale') === 'fr' ? 'fr' : 'en';
 
     const today  = new Date().toISOString().slice(0, 10);
-    const kvKey  = `trivia:${today}:${sport}:${team || 'ALL'}:${locale}`;
+    // v2: entries cached under the old key could hold empty easy/medium
+    // for a whole day (see the TTL below); a new key leaves them behind.
+    const kvKey  = `trivia:v2:${today}:${sport}:${team || 'ALL'}:${locale}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
-    // fallback=true swaps the exact-date match for "most recent row on or
-    // before today" — used for the hard tier only. Easy/medium are
-    // AI-generated fresh every night for both leagues, so an exact-date
-    // miss there means "not published yet" and should show the empty
-    // state. Hard is hand-curated with no admin UI (see
-    // trivia_questions.py's docstring) — Matt adds rows in batches, not
-    // nightly, so an exact-date match would go silent on every day between
-    // batches. Falling back to the latest past row means the tier only
-    // goes empty if literally zero hard rows exist yet for that sport, not
-    // every day content hasn't been added since the last batch.
+    // Every tier takes the most recent row on or before today, not an
+    // exact-date match.
+    // - Hard is hand-curated with no admin UI (see trivia_questions.py's
+    //   docstring) and added in batches, so it falls back to any past row.
+    // - Easy/medium are generated nightly, but "today" is the UTC date and
+    //   the pipeline publishes around 13:00 UTC: from 8pm ET until then an
+    //   exact match came back empty, which is exactly when North American
+    //   fans open the app. They fall back to yesterday's at most, so a
+    //   pipeline that stops publishing still shows the empty state rather
+    //   than an ever-older question.
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     async function fetchTier(tier, teamFilter, { fallback = false } = {}) {
       const dateFilter = fallback
         ? `question_date=lte.${today}&order=question_date.desc`
-        : `question_date=eq.${today}`;
+        : `question_date=lte.${today}&question_date=gte.${yesterday}&order=question_date.desc`;
       const filter = `?${dateFilter}&tier=eq.${tier}&sport=eq.${sport}&team=eq.${teamFilter}&locale=eq.${locale}&limit=1`;
       const r = await fetch(`${SB_URL}/rest/v1/trivia_questions${filter}`, { headers: sbHeaders() });
       if (!r.ok) return null;
@@ -397,11 +400,13 @@ export async function handleRequest(request, env, ctx) {
     ]);
 
     const result = { easy, medium, hard };
-    // Short TTL when nothing (or only some tiers) came back — don't pin an
-    // incomplete pre-publish snapshot in KV for a full day (same guard
-    // /draft/picks uses for its own "has the nightly pipeline actually
-    // finished publishing yet" gap).
-    const ttl = (easy || medium || hard) ? 24 * 3600 : 60;
+    // A full day in KV only once today's easy (and medium, for a team) are
+    // published. Before, any one tier was enough -- and hard always has a
+    // row, so a request before the nightly publish pinned easy/medium as
+    // empty for the rest of the UTC day.
+    const published = q => q?.question_date === today;
+    const complete = published(easy) && (!team || published(medium));
+    const ttl = complete ? 24 * 3600 : 300;
     await kvPut(env, kvKey, result, ttl);
     return json(result);
   }

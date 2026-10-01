@@ -229,7 +229,7 @@ describe('GET /trivia/today', () => {
     })
   }
 
-  it('queries easy/medium with an exact question_date match and hard with a lte/order-desc fallback', async () => {
+  it('queries easy/medium for today or yesterday, newest first, and hard for any past date', async () => {
     const seen = []
     mockSupabaseFetch((u) => {
       seen.push(u)
@@ -242,10 +242,48 @@ describe('GET /trivia/today', () => {
     const mediumCall = seen.find((u) => u.includes('tier=eq.medium'))
     const hardCall = seen.find((u) => u.includes('tier=eq.hard'))
 
-    expect(easyCall).toContain('question_date=eq.2026-08-12')
-    expect(mediumCall).toContain('question_date=eq.2026-08-12')
+    for (const call of [easyCall, mediumCall]) {
+      expect(call).toContain('question_date=lte.2026-08-12')
+      expect(call).toContain('question_date=gte.2026-08-11')
+      expect(call).toContain('order=question_date.desc')
+    }
     expect(hardCall).toContain('question_date=lte.2026-08-12')
+    expect(hardCall).not.toContain('question_date=gte.')
     expect(hardCall).toContain('order=question_date.desc')
+  })
+
+  // Overnight in North America is before the nightly publish in UTC: a
+  // request then got empty easy/medium, and -- since hard always has a
+  // row -- cached that for the rest of the UTC day.
+  describe('KV TTL', () => {
+    const row = (tier, question_date) => ({ id: 1, tier, question_date, question_text: '?', options: [], correct_index: 0 })
+    async function ttlFor(rows) {
+      const puts = []
+      const env = makeEnv({ CACHE: { get: async () => null, put: async (key, value, opts) => { puts.push(opts) } } })
+      mockSupabaseFetch((u) => {
+        const tier = u.match(/tier=eq\.(\w+)/)[1]
+        return Promise.resolve({ ok: true, json: async () => (rows[tier] ? [rows[tier]] : []) })
+      })
+      const res = await worker.fetch(makeRequest('/trivia/today?sport=nhl&team=CAR'), env, makeCtx())
+      return { body: await res.json(), ttl: puts[0]?.expirationTtl }
+    }
+
+    it("serves yesterday's easy/medium before today's are published, briefly cached", async () => {
+      const { body, ttl } = await ttlFor({ easy: row('easy', '2026-08-11'), medium: row('medium', '2026-08-11'), hard: row('hard', '2026-08-12') })
+      expect(body.easy.question_date).toBe('2026-08-11')
+      expect(body.medium.question_date).toBe('2026-08-11')
+      expect(ttl).toBe(300)
+    })
+
+    it('does not hold an empty easy/medium for the day just because hard has a row', async () => {
+      const { ttl } = await ttlFor({ hard: row('hard', '2026-08-12') })
+      expect(ttl).toBe(300)
+    })
+
+    it("caches for a day once today's easy and medium are both published", async () => {
+      const { ttl } = await ttlFor({ easy: row('easy', '2026-08-12'), medium: row('medium', '2026-08-12'), hard: row('hard', '2026-08-01') })
+      expect(ttl).toBe(24 * 3600)
+    })
   })
 
   it('falls back to the most recent past hard-tier row when none matches today exactly', async () => {
