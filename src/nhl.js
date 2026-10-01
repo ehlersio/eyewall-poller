@@ -2137,6 +2137,21 @@ export async function refreshPPUnits(env, { force = false, season, gameType = '2
 }
 
 
+// id -> name from the players table for a set of NHL player ids, in
+// chunks short enough for a GET URL. A Response when Supabase errors.
+const PLAYER_NAME_CHUNK = 150;
+export async function playerNames(ids) {
+  const unique = [...new Set(ids.filter(id => id != null))];
+  const names = new Map();
+  for (let i = 0; i < unique.length; i += PLAYER_NAME_CHUNK) {
+    const chunk = unique.slice(i, i + PLAYER_NAME_CHUNK);
+    const rows = await sbRows(`${SB_URL}/rest/v1/players?id=in.(${chunk.join(',')})&select=id,name`);
+    if (rows instanceof Response) return rows;
+    for (const r of rows) if (r.name) names.set(r.id, r.name);
+  }
+  return names;
+}
+
 export async function handleNHL(request, env, ctx, url) {
 
   // One goal's player and puck tracking for the app's goal replay
@@ -2422,6 +2437,10 @@ export async function handleNHL(request, env, ctx, url) {
   // Season-wide shots for the shot map's "All N" chip -- both teams' shots
   // from every game `team` played, matching what extractShotEvents(pbp)
   // already returns for a single game (not just `team`'s own shots).
+  // Each row carries its shooter and goalie, ids and names (2026-10): the
+  // shot popup said "Unknown" for every season dot before, since the rows
+  // had no player at all. Names come from the players table, one lookup
+  // per response; a name it doesn't have stays null.
   //
   // shot_events.car_game only ever means "Carolina played in this game"
   // (see eyewall-pipeline's shot_events.py) -- it can't be used to scope to
@@ -2435,7 +2454,7 @@ export async function handleNHL(request, env, ctx, url) {
   if (url.pathname === '/nhl/shots') {
     const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    return cachedJson(env, `nhl:shots:${team}:${season}`, 3600, async () => {
+    return cachedJson(env, `nhl:shots:v2:${team}:${season}`, 3600, async () => {
       let gameIds;
       try {
         const schedule = await nhlGet(`${NHL_BASE}/club-schedule-season/${team}/${season}`);
@@ -2456,7 +2475,7 @@ export async function handleNHL(request, env, ctx, url) {
           // (/nhl/goal-replay), which is what lets the "All N" view offer
           // them at all. Null on a row whose game predates the column and
           // hasn't been re-processed; the app reads that as "no replay".
-          `&select=game_id,event_id,team,x,y,event_type,period,time_in_period,shot_type&order=game_id.asc`,
+          `&select=game_id,event_id,team,x,y,event_type,period,time_in_period,shot_type,player_id,goalie_id&order=game_id.asc`,
           { 'Range': `${offset}-${offset + PAGE - 1}`, 'Range-Unit': 'items', 'Prefer': 'count=none' }
         );
         if (rows instanceof Response) return rows;
@@ -2464,6 +2483,17 @@ export async function handleNHL(request, env, ctx, url) {
         if (rows.length < PAGE) break;
         offset += PAGE;
       }
+
+      // Names are extra: if the lookup fails the dots still go out, just
+      // unnamed and uncached (a Response skips cachedJson's cache), so the
+      // next request tries the names again.
+      const names = await playerNames(allRows.flatMap(r => [r.player_id, r.goalie_id]));
+      const named = !(names instanceof Response);
+      for (const r of allRows) {
+        r.shooter_name = named ? names.get(r.player_id) ?? null : null;
+        r.goalie_name = named ? names.get(r.goalie_id) ?? null : null;
+      }
+      if (!named) return json(allRows);
 
       console.log(`NHL shots: team=${team} season=${season} games=${gameIds.length} total=${allRows.length}`);
       return allRows;

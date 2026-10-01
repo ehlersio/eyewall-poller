@@ -1931,7 +1931,69 @@ describe('GET /nhl/shots', () => {
     )
 
     expect(shotQuery).toContain('event_id')
-    expect(await res.json()).toEqual([row])
+    expect(await res.json()).toEqual([{ ...row, shooter_name: null, goalie_name: null }])
+  })
+
+  // The popup said "Unknown" for every season dot: the rows had no player.
+  it('names each row\'s shooter and goalie from the players table', async () => {
+    const env = makeEnv()
+    const rows = [
+      { game_id: 2026020001, event_id: 190, team: 'FLA', x: 81, y: 6, event_type: 'missed-shot', period: 1, time_in_period: '08:56', shot_type: 'tip-in', player_id: 8479314, goalie_id: 8483548 },
+      { game_id: 2026020001, event_id: 200, team: 'CAR', x: -70, y: 2, event_type: 'shot-on-goal', period: 1, time_in_period: '10:00', shot_type: 'wrist', player_id: 8478427, goalie_id: 9999999 },
+    ]
+    let shotQuery = ''
+    let playersQuery = ''
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('club-schedule-season')) {
+        return Promise.resolve({ ok: true, json: async () => ({ games: [{ id: 2026020001, gameState: 'OFF' }] }) })
+      }
+      if (u.includes('/rest/v1/players')) {
+        playersQuery = u
+        return Promise.resolve({ ok: true, json: async () => [
+          { id: 8479314, name: 'Matthew Tkachuk' },
+          { id: 8483548, name: 'Brandon Bussi' },
+          { id: 8478427, name: 'Sebastian Aho' },
+        ] })
+      }
+      shotQuery = u
+      return Promise.resolve({ ok: true, json: async () => rows })
+    })
+
+    const res = await handleNHL(
+      makeRequest('/nhl/shots?team=CAR&season=20262027'), env, makeCtx(),
+      new URL('https://example.com/nhl/shots?team=CAR&season=20262027')
+    )
+
+    expect(shotQuery).toContain('player_id,goalie_id')
+    // one lookup, each id once
+    expect(playersQuery).toContain('id=in.(8479314,8483548,8478427,9999999)')
+    const body = await res.json()
+    expect(body[0]).toMatchObject({ shooter_name: 'Matthew Tkachuk', goalie_name: 'Brandon Bussi' })
+    // an id the players table doesn't have stays null, never a guess
+    expect(body[1]).toMatchObject({ shooter_name: 'Sebastian Aho', goalie_name: null })
+  })
+
+  it('still serves the dots, unnamed and uncached, when the name lookup fails', async () => {
+    const env = makeEnv()
+    const put = vi.spyOn(env.CACHE, 'put')
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('club-schedule-season')) {
+        return Promise.resolve({ ok: true, json: async () => ({ games: [{ id: 2026020001, gameState: 'OFF' }] }) })
+      }
+      if (u.includes('/rest/v1/players')) return Promise.resolve({ ok: false, status: 503, json: async () => ({}) })
+      return Promise.resolve({ ok: true, json: async () => [{ game_id: 2026020001, event_id: 1, team: 'CAR', x: 1, y: 1, event_type: 'goal', period: 1, time_in_period: '01:00', shot_type: 'wrist', player_id: 8478427, goalie_id: 8479314 }] })
+    })
+
+    const res = await handleNHL(
+      makeRequest('/nhl/shots?team=CAR&season=20262027'), env, makeCtx(),
+      new URL('https://example.com/nhl/shots?team=CAR&season=20262027')
+    )
+
+    expect(res.status).toBe(200)
+    expect((await res.json())[0]).toMatchObject({ event_id: 1, shooter_name: null, goalie_name: null })
+    expect(put).not.toHaveBeenCalledWith(expect.stringContaining('nhl:shots'), expect.anything(), expect.anything())
   })
 
   it('returns an empty array without querying Supabase when the team has no completed games', async () => {
