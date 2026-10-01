@@ -17,8 +17,10 @@ export async function kvPut(env, key, value, ttl) {
   await env.CACHE.put(key, JSON.stringify(value), { expirationTtl: ttl });
 }
 
-export async function kvGet(env, key) {
-  const raw = await env.CACHE.get(key);
+// cacheTtl: how long this location may serve its edge copy before
+// re-reading KV (Cloudflare's default is 60s, its minimum 30s).
+export async function kvGet(env, key, { cacheTtl } = {}) {
+  const raw = cacheTtl ? await env.CACHE.get(key, { cacheTtl }) : await env.CACHE.get(key);
   return raw ? JSON.parse(raw) : null;
 }
 

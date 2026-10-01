@@ -92,6 +92,73 @@ function scheduleKey(abbr, season) {
   return `schedule:${abbr}:${season}`;
 }
 
+// The app decides a game is live from its team's cached schedule, but
+// pushes fire off /score/now, which flips first -- and only CAR's schedule
+// was refetched every tick; any other team's sat on CURRENT_SCHEDULE_TTL,
+// so its shot map could go live up to 10 minutes after the Game Starting
+// push. poll() now keeps the scoreboard's state + score per game here and
+// stamps it onto every cached current-season schedule, on each change and
+// on every fresh schedule write.
+const SCOREBOARD_STATES_KEY = 'scoreboard:states';
+const GAME_STATE_RANK = {
+  FUT: 0, PRE: 1, LIVE: 2, CRIT: 2,
+  FINAL: 3, F: 3, FINAL_OVERTIME: 3, FINAL_SHOOTOUT: 3, OFF: 4,
+};
+
+export function scoreboardStates(games) {
+  const out = {};
+  for (const g of games) {
+    out[g.id] = {
+      gameState: g.gameState,
+      homeScore: g.homeTeam?.score ?? null,
+      awayScore: g.awayTeam?.score ?? null,
+    };
+  }
+  return out;
+}
+
+// Never moves a game backwards (a scoreboard snapshot from earlier in the
+// day can't undo a schedule that's already further along). Returns the
+// same array when nothing changed, so callers can skip the write.
+export function applyScoreboardStates(games, states) {
+  if (!states || !Array.isArray(games)) return games;
+  let changed = false;
+  const out = games.map(g => {
+    const s = states[g.id];
+    if (!s) return g;
+    if ((GAME_STATE_RANK[s.gameState] ?? -1) < (GAME_STATE_RANK[g.gameState] ?? -1)) return g;
+    const homeScore = s.homeScore ?? g.homeTeam?.score;
+    const awayScore = s.awayScore ?? g.awayTeam?.score;
+    if (s.gameState === g.gameState && homeScore === g.homeTeam?.score && awayScore === g.awayTeam?.score) return g;
+    changed = true;
+    return {
+      ...g,
+      gameState: s.gameState,
+      homeTeam: homeScore == null ? g.homeTeam : { ...g.homeTeam, score: homeScore },
+      awayTeam: awayScore == null ? g.awayTeam : { ...g.awayTeam, score: awayScore },
+    };
+  });
+  return changed ? out : games;
+}
+
+// Every current-season schedule write goes through here, so a copy fetched
+// while club-schedule-season still lags the scoreboard is stamped anyway.
+async function putCurrentSchedule(env, abbr, season, games, states) {
+  const s = states === undefined ? await kvGet(env, SCOREBOARD_STATES_KEY) : states;
+  const stamped = applyScoreboardStates(games, s);
+  await kvPut(env, scheduleKey(abbr, season), stamped, CURRENT_SCHEDULE_TTL);
+  return stamped;
+}
+
+// A team's cached schedule, re-stamped in place. Nothing cached, nothing to
+// do: the next read fetches (and stamps) a fresh copy.
+async function stampCachedSchedule(env, abbr, season, states) {
+  const cached = await kvGet(env, scheduleKey(abbr, season));
+  if (!cached) return;
+  const stamped = applyScoreboardStates(cached, states);
+  if (stamped !== cached) await kvPut(env, scheduleKey(abbr, season), stamped, CURRENT_SCHEDULE_TTL);
+}
+
 // Only a season *before* the current one is finished. The next season is
 // requested before the Worker flips to it (the frontend resolves the new
 // season on its own, and the look-ahead in seasons.js only flips once its
@@ -156,9 +223,7 @@ async function scheduleWithFetch(env, abbr, season) {
   if (cached) return cached;
   try {
     const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${abbr}/${season}`);
-    const games = data?.games || [];
-    await kvPut(env, scheduleKey(abbr, season), games, CURRENT_SCHEDULE_TTL);
-    return games;
+    return await putCurrentSchedule(env, abbr, season, data?.games || []);
   } catch (e) {
     console.warn(`scheduleWithFetch(${abbr}, ${season}): ${e.message}`);
     return [];
@@ -1860,9 +1925,11 @@ export async function poll(env, _ctx) {
   // Pre-warms its cache; every other team's schedule is fetched on-demand
   // by its own /schedule request already (getTeamConfig() resolves a real
   // per-request team), so this doesn't need to become a 32-team loop.
+  // Stamped with last tick's scoreboard, or this raw refetch would undo it
+  // whenever club-schedule-season lags /score/now.
+  const prevStates   = (await kvGet(env, SCOREBOARD_STATES_KEY)) || {};
   const scheduleData = await nhlGet(`${NHL_BASE}/club-schedule-season/${TEAM_ABBR}/${season}`);
-  const games = scheduleData?.games || [];
-  await kvPut(env, scheduleKey(TEAM_ABBR, season), games, CURRENT_SCHEDULE_TTL);
+  const games = await putCurrentSchedule(env, TEAM_ABBR, season, scheduleData?.games || [], prevStates);
 
   // 2. League-wide scoreboard — one call covers every team's game today,
   // live or finished, the same way pollPWHLGame() (pwhl.js) gets all of
@@ -1880,6 +1947,22 @@ export async function poll(env, _ctx) {
   // game specifically, not the full league-wide set computed above.
   const ownLiveGame = liveGames.find(g => g.homeTeam?.abbrev === TEAM_ABBR || g.awayTeam?.abbrev === TEAM_ABBR);
   await kvPut(env, 'live:gameId', ownLiveGame?.id || null, 60);
+
+  // Each game that changed since last tick (puck drop, a goal, the final)
+  // goes onto both teams' cached schedules before any push for it is sent,
+  // so an app opened from that push already reads it as live.
+  const states  = scoreboardStates(todaysGames);
+  const changed = todaysGames.filter(g => JSON.stringify(states[g.id]) !== JSON.stringify(prevStates[g.id]));
+  if (changed.length) {
+    await kvPut(env, SCOREBOARD_STATES_KEY, states, 24 * 3600);
+    const teams = new Set(changed.flatMap(g => [g.homeTeam?.abbrev, g.awayTeam?.abbrev]));
+    for (const abbr of teams) {
+      if (!TEAM_CONFIGS[abbr]) continue;
+      await stampCachedSchedule(env, abbr, season, states).catch(e =>
+        console.warn(`Schedule stamp ${abbr}: ${e.message}`)
+      );
+    }
+  }
 
   // 3. Live PBP + boxscore + push notifications, once per live game.
   // TTL is three cron ticks, not one: at 60s (the cron's own interval) a
@@ -2125,8 +2208,7 @@ export async function handleNHL(request, env, ctx, url) {
     ctx.waitUntil((async () => {
       try {
         const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${season}`);
-        const games = data?.games || [];
-        await kvPut(env, scheduleKey(tc.abbr, season), games, CURRENT_SCHEDULE_TTL);
+        const games = await putCurrentSchedule(env, tc.abbr, season, data?.games || []);
         console.log(`Schedule bg fetch: ${tc.abbr} season ${season} (${games.length} games)`);
       } catch (e) {
         console.warn(`Schedule bg fetch ${tc.abbr} season ${season}: ${e.message}`);
@@ -3116,7 +3198,9 @@ Only reference the two teams named above and the numbers given -- no player name
   // so the next request gets real data without a frontend change.
   if (url.pathname.startsWith('/cache/')) {
     const key = decodeURIComponent(url.pathname.slice('/cache/'.length));
-    const val = await kvGet(env, key);
+    // A schedule is how the app tells a game went live (see
+    // SCOREBOARD_STATES_KEY), so its edge copy is held as briefly as KV allows.
+    const val = await kvGet(env, key, key.startsWith('schedule:') ? { cacheTtl: 30 } : undefined);
     if (val === null) {
       // Background-populate schedule for non-CAR teams (or historical
       // seasons) on cache miss. Key shape is now `schedule:{abbr}:{season}`
@@ -3132,8 +3216,8 @@ Only reference the two teams named above and the numbers given -- no player name
               const season = requestedSeason || currentSeason;
               const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${season}`);
               const games = data?.games || [];
-              const ttl   = isPastSeason(season, currentSeason) ? HISTORICAL_SCHEDULE_TTL : CURRENT_SCHEDULE_TTL;
-              await kvPut(env, scheduleKey(tc.abbr, season), games, ttl);
+              if (isPastSeason(season, currentSeason)) await kvPut(env, scheduleKey(tc.abbr, season), games, HISTORICAL_SCHEDULE_TTL);
+              else await putCurrentSchedule(env, tc.abbr, season, games);
               console.log(`Schedule bg fetch (cache miss): ${tc.abbr} season ${season} (${games.length} games)`);
             } catch (e) {
               console.warn(`Schedule bg fetch ${abbr}: ${e.message}`);
