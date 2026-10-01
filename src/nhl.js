@@ -7,6 +7,7 @@
 
 import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
+import { handleEdge } from './edge.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { fetchTradeTree } from './trades.js';
@@ -2142,6 +2143,12 @@ export async function handleNHL(request, env, ctx, url) {
   // (Video | Tracking) -- see goalReplay.js.
   if (url.pathname.startsWith('/nhl/goal-replay/') && request.method === 'GET') {
     return handleGoalReplay(request, env, url);
+  }
+
+  // One player's NHL EDGE tracking stats for the player Analytics tab --
+  // see edge.js.
+  if (url.pathname.startsWith('/nhl/edge/') && request.method === 'GET') {
+    return handleEdge(request, env, url);
   }
 
   // Manual news refresh (protected)
