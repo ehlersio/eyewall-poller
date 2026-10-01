@@ -593,7 +593,7 @@ async function detectAndNotify(env, game, pbp) {
         title: `🔔 End of ${periodLabel(endedPeriod)}`,
         body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr} after ${periodLabel(endedPeriod)}`,
         tag:   `period-end-${liveId}-${endedPeriod}`,
-        url:   summaryUrl(liveId, endedPeriod),
+        url:   summaryUrl(liveId, endedPeriod, abbr),
       }, 'periodEnd');
     }
   }
@@ -743,9 +743,12 @@ export function periodIsOver(pbp, period, game, homeScore, awayScore) {
 
 // Where tapping an end-of-period or final notification lands: the game
 // view, which opens that period's summary (or the game's, for 'game') --
-// eyewall-analytics' utils/summaryLink.js reads these params.
-export function summaryUrl(gameId, period) {
-  return `/?summary=${encodeURIComponent(period)}&game=${encodeURIComponent(gameId)}`;
+// eyewall-analytics' utils/summaryLink.js reads these params. `team` is the
+// side it was sent to: a followed team's game isn't in the favorite's view,
+// so the app opens it from that team's side instead.
+export function summaryUrl(gameId, period, abbr) {
+  const team = abbr ? `&team=${encodeURIComponent(abbr)}` : '';
+  return `/?summary=${encodeURIComponent(period)}&game=${encodeURIComponent(gameId)}${team}`;
 }
 
 async function notifyGameOver(env, game) {
@@ -767,12 +770,12 @@ async function notifyGameOver(env, game) {
       title: `🏆 ${abbr} Win! ${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
       body:  TEAM_CONFIGS[abbr]?.winCopy || 'Final score — great win!',
       tag:   `win-${game.id}-${abbr}`,
-      url:   summaryUrl(game.id, 'game'),
+      url:   summaryUrl(game.id, 'game', abbr),
     } : {
       title: `Final: ${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
       body:  TEAM_CONFIGS[abbr]?.lossCopy || 'Final score.',
       tag:   `final-${game.id}-${abbr}`,
-      url:   summaryUrl(game.id, 'game'),
+      url:   summaryUrl(game.id, 'game', abbr),
     }, `NHL:${abbr}`, won ? 'win' : 'loss', [`NHL:${homeAbbr}`, `NHL:${awayAbbr}`]);
   }
 
