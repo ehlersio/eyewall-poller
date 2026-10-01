@@ -365,7 +365,9 @@ export async function handleRequest(request, env, ctx) {
     const locale = url.searchParams.get('locale') === 'fr' ? 'fr' : 'en';
 
     const today  = new Date().toISOString().slice(0, 10);
-    const kvKey  = `trivia:${today}:${sport}:${team || 'ALL'}:${locale}`;
+    // v2: entries cached under the old key could hold empty easy/medium
+    // for a whole day (see the TTL below); a new key leaves them behind.
+    const kvKey  = `trivia:v2:${today}:${sport}:${team || 'ALL'}:${locale}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
