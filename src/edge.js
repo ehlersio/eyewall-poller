@@ -2,6 +2,7 @@
 // GET /nhl/edge/skater/:playerId/:season/:gameType
 // GET /nhl/edge/goalie/:playerId/:season/:gameType
 // GET /nhl/edge/team/:teamId/:season/:gameType
+// GET /nhl/edge/leaders/:season/:gameType   (see handleEdgeLeaders below)
 //
 // One player's NHL EDGE tracking stats (skating speed, distance, shot speed,
 // zone time; for goalies, save rates the NHL computes from tracking), trimmed
@@ -211,6 +212,7 @@ async function build(kind, playerId, season, gameType) {
 }
 
 export async function handleEdge(request, env, url) {
+  if (url.pathname.startsWith('/nhl/edge/leaders/')) return handleEdgeLeaders(request, env, url);
   const m = url.pathname.match(ROUTE) || url.pathname.match(TEAM_ROUTE);
   if (!m) return errorJson(400, { error: 'expected /nhl/edge/(skater|goalie)/:playerId/:season/:gameType or /nhl/edge/team/:teamId/:season/:gameType (2 or 3)' });
   const [, kind, id, season, gt] = m;
@@ -239,6 +241,107 @@ export async function handleEdge(request, env, url) {
   }
 
   const body = { available: true, ...ids, ...data };
+  await kvPut(env, key, body, isPast ? TTL_PAST : TTL_CURRENT);
+  return json(body);
+}
+
+// ── League leaders ────────────────────────────────────────────────
+// GET /nhl/edge/leaders/:season/:gameType -- the NHL's own EDGE top 10s
+// for the League view's leaders: fastest skating speed, hardest shot,
+// distance skated (season total) and offensive-zone time (%), all
+// positions. Each row:
+//   { playerId, firstName, lastName, team, position, headshot, ...value }
+// speed / shot / distance rows carry { imperial, metric }, offensive-zone
+// rows { value }. Speed and shot rows also carry `moment`, when the NHL
+// clocked it: { date, away, home, period, periodType, time }.
+// The NHL's top-10 rows have no player id field; it's the number at the
+// end of their `slug` ("beck-malenstyn-8479359").
+// 404 { available: false } when none of the four has data; a category
+// the NHL 404s on its own comes back as []. Cache as for players.
+
+const LEADER_ROUTE = /^\/nhl\/edge\/leaders\/(\d{8})\/([23])$/;
+
+const LEADER_LISTS = {
+  speed: { path: 'skater-speed-top-10/all/max', field: 'maxSpeed', kind: 'measure', moment: true },
+  shotSpeed: { path: 'skater-shot-speed-top-10/all/max', field: 'hardestShot', kind: 'measure', moment: true },
+  distance: { path: 'skater-distance-top-10/all/all/total', field: 'distanceTotal', kind: 'measure', moment: false },
+  offensiveZoneTime: { path: 'skater-zone-time-top-10/all/all/offensive', field: 'offensiveZoneTime', kind: 'share', moment: false },
+};
+
+export function playerIdFromSlug(slug) {
+  const m = /-(\d{7})$/.exec(slug || '');
+  return m ? Number(m[1]) : null;
+}
+
+function momentOf(o) {
+  if (!o?.gameDate) return null;
+  return {
+    date: o.gameDate,
+    away: o.awayTeam?.abbrev ?? null,
+    home: o.homeTeam?.abbrev ?? null,
+    period: num(o.periodDescriptor?.number),
+    periodType: o.periodDescriptor?.periodType ?? null,
+    time: o.timeInPeriod ?? null,
+  };
+}
+
+export function leaderRow(entry, list) {
+  const p = entry?.player;
+  const v = entry?.[list.field];
+  if (!p) return null;
+  const row = {
+    playerId: playerIdFromSlug(p.slug),
+    firstName: p.firstName?.default ?? null,
+    lastName: p.lastName?.default ?? null,
+    team: p.team?.abbrev ?? null,
+    position: p.position ?? null,
+    headshot: p.headshot ?? null,
+  };
+  if (list.kind === 'share') {
+    if (typeof v !== 'number') return null;
+    return { ...row, value: v };
+  }
+  if (typeof v?.imperial !== 'number' || typeof v?.metric !== 'number') return null;
+  return {
+    ...row,
+    imperial: v.imperial,
+    metric: v.metric,
+    ...(list.moment ? { moment: momentOf(v.overlay) } : {}),
+  };
+}
+
+export async function handleEdgeLeaders(request, env, url) {
+  const m = url.pathname.match(LEADER_ROUTE);
+  if (!m) return errorJson(400, { error: 'expected /nhl/edge/leaders/:season/:gameType (2 or 3)' });
+  const [, season, gt] = m;
+  const gameType = Number(gt);
+  const key = `nhl:edge:v2:leaders:${season}:${gameType}`;
+
+  const cached = await kvGet(env, key);
+  if (cached) return cached.available ? json(cached) : errorJson(404, cached);
+
+  const isPast = Number(season) < Number(await resolveNHLSeason(env));
+  const ids = { kind: 'leaders', season, gameType };
+
+  let lists;
+  try {
+    lists = await Promise.all(Object.values(LEADER_LISTS).map(l => edgeGet(`${l.path}/${season}/${gameType}`, { optional: true })));
+  } catch (e) {
+    return errorJson(502, { error: e.message });
+  }
+
+  const categories = {};
+  Object.entries(LEADER_LISTS).forEach(([name, list], i) => {
+    categories[name] = (Array.isArray(lists[i]) ? lists[i] : []).map(e => leaderRow(e, list)).filter(Boolean);
+  });
+
+  if (Object.values(categories).every(rows => rows.length === 0)) {
+    const body = { available: false, ...ids };
+    await kvPut(env, key, body, isPast ? TTL_NONE_PAST : TTL_NONE_CURRENT);
+    return errorJson(404, body);
+  }
+
+  const body = { available: true, ...ids, categories };
   await kvPut(env, key, body, isPast ? TTL_PAST : TTL_CURRENT);
   return json(body);
 }
