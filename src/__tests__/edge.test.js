@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { makeFakeCache } from './route-harness.js'
 import {
-  handleEdge, skaterMetrics, goalieMetrics, goalieAreas, measured, counted,
+  handleEdge, skaterMetrics, goalieMetrics, goalieAreas, teamMetrics, measured, counted,
   TTL_CURRENT, TTL_PAST, TTL_NONE_CURRENT, TTL_NONE_PAST,
 } from '../edge.js'
 
@@ -44,6 +44,9 @@ const goalieDetail = {
     { locationCode: 'long', savePctg: 0.981, savePctgPercentile: 0.61, savePctgLeagueAvg: 0.975 },
   ],
 }
+// Carolina 2025-26 (team-detail), trimmed
+const teamDetail = {"team": {"id": 12, "abbrev": "CAR", "gamesPlayed": 82}, "shotSpeed": {"shotAttemptsOver90": {"value": 78, "rank": 7}, "topShotSpeed": {"imperial": 99.4, "metric": 159.9688, "rank": 15, "leagueAvg": {"imperial": 99.6925, "metric": 160.4395}}}, "skatingSpeed": {"burstsOver22": {"value": 103, "rank": 8}, "burstsOver20": {"value": 1787, "rank": 11, "leagueAvg": {"value": 1762}}, "speedMax": {"imperial": 23.5969, "metric": 37.9754, "rank": 22, "leagueAvg": {"imperial": 23.8027, "metric": 38.3066}}}, "distanceSkated": {"total": {"imperial": 3764.1643, "metric": 6057.5396, "rank": 9, "leagueAvg": {"imperial": 3727.0127, "metric": 5997.7528}}}, "sogSummary": [{"locationCode": "all", "shots": 2637, "shotsRank": 2, "shotsLeagueAvg": 2282.25, "shootingPctg": 0.1104, "shootingPctgRank": 18, "shootingPctgLeagueAvg": 0.1107, "goals": 291, "goalsRank": 2, "goalsLeagueAvg": 252.6875}, {"locationCode": "high", "shots": 723, "shotsRank": 2, "shotsLeagueAvg": 648.7813, "shootingPctg": 0.1867, "shootingPctgRank": 20, "shootingPctgLeagueAvg": 0.1941, "goals": 135, "goalsRank": 8, "goalsLeagueAvg": 125.9375}], "zoneTimeDetails": {"offensiveZonePctg": 0.4554579, "offensiveZoneRank": 1, "offensiveZoneLeagueAvg": 0.4154386, "offensiveZoneEvPctg": 0.4551603, "offensiveZoneEvRank": 1, "offensiveZoneEvLeagueAvg": 0.4099338, "neutralZonePctg": 0.1836144, "neutralZoneRank": 4, "neutralZoneLeagueAvg": 0.1691227, "defensiveZonePctg": 0.3609277, "defensiveZoneRank": 1, "defensiveZoneLeagueAvg": 0.4154386}}
+
 const goalieShotLocation = {
   shotLocationDetails: [
     { area: 'Low Slot', shotsAgainst: 240, saves: 204, goalsAgainst: 36, savePctg: 0.85, savePctgPercentile: 0.6102 },
@@ -92,6 +95,21 @@ describe('metric trimming', () => {
     })
     expect(goalieAreas(null)).toBeNull()
     expect(goalieAreas({ shotLocationDetails: [] })).toBeNull()
+  })
+
+  it('maps a team, with the NHL\'s rank among the 32 in place of a percentile', () => {
+    const m = teamMetrics(teamDetail)
+    expect(m.offensiveZoneTime).toEqual({ value: 0.4554579, rank: 1, avg: 0.4154386 })
+    // rank 1 is the LEAST defensive-zone time -- the NHL ranks best first
+    expect(m.defensiveZoneTime).toEqual({ value: 0.3609277, rank: 1, avg: 0.4154386 })
+    expect(m.highDangerShots).toEqual({ value: 723, rank: 2, avg: 648.7813 })
+    expect(m.highDangerShootingPctg).toEqual({ value: 0.1867, rank: 20, avg: 0.1941 })
+    expect(m.topSpeed).toEqual({ imperial: 23.5969, metric: 37.9754, rank: 22, avg: { imperial: 23.8027, metric: 38.3066 } })
+    expect(m.burstsOver20).toEqual({ value: 1787, rank: 11, avg: 1762 })
+    // no league average given for this one: null, never made up
+    expect(m.burstsOver22).toEqual({ value: 103, rank: 8, avg: null })
+    expect(m.shotAttemptsOver90).toEqual({ value: 78, rank: 7, avg: null })
+    expect(Object.values(teamMetrics({})).every(v => v === null)).toBe(true)
   })
 
   it('leaves a metric null when the payload lacks it, never a default', () => {
@@ -204,6 +222,23 @@ describe('GET /nhl/edge/:kind/:playerId/:season/:gameType', () => {
     globalThis.fetch = vi.fn(async () => { throw new Error('network down') })
     expect((await call('/nhl/edge/skater/8478402/20252026/2')).status).toBe(502)
     expect(env.CACHE.put).not.toHaveBeenCalled()
+  })
+
+  it('serves a team by its NHL team id', async () => {
+    mockEdge({ 'team-detail': teamDetail })
+    const res = await call('/nhl/edge/team/12/20252026/2')
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({ available: true, kind: 'team', teamId: 12, season: '20252026', gameType: 2, gamesPlayed: 82 })
+    expect(body.playerId).toBeUndefined()
+    expect(body.metrics.offensiveZoneTime.rank).toBe(1)
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('/v1/edge/team-detail/12/20252026/2')
+  })
+
+  it('404s a team the NHL has no EDGE data for, and 400s a bad team id', async () => {
+    mockEdge({ 'team-detail': 404 })
+    expect((await call('/nhl/edge/team/12/20202021/2')).status).toBe(404)
+    expect((await call('/nhl/edge/team/123/20252026/2')).status).toBe(400)
   })
 
   it('is reachable through handleNHL', async () => {
