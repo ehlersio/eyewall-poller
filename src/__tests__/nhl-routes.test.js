@@ -1931,7 +1931,7 @@ describe('GET /nhl/shots', () => {
     )
 
     expect(shotQuery).toContain('event_id')
-    expect(await res.json()).toEqual([{ ...row, shooter_name: null, goalie_name: null }])
+    expect(await res.json()).toEqual([{ ...row, shooter_name: null, goalie_name: null, assist1_name: null, assist2_name: null, blocker_name: null }])
   })
 
   // The popup said "Unknown" for every season dot: the rows had no player.
@@ -1972,6 +1972,40 @@ describe('GET /nhl/shots', () => {
     expect(body[0]).toMatchObject({ shooter_name: 'Matthew Tkachuk', goalie_name: 'Brandon Bussi' })
     // an id the players table doesn't have stays null, never a guess
     expect(body[1]).toMatchObject({ shooter_name: 'Sebastian Aho', goalie_name: null })
+  })
+
+  it('names a goal\'s assists and a blocked shot\'s blocker', async () => {
+    const env = makeEnv()
+    const rows = [
+      { game_id: 2026020001, event_id: 1, team: 'FLA', x: 85, y: 0, event_type: 'goal', period: 1, time_in_period: '04:00', shot_type: 'wrist', player_id: 8479314, goalie_id: 8483548, assist1_id: 8477493, assist2_id: 8478366, blocker_id: null },
+      { game_id: 2026020001, event_id: 2, team: 'FLA', x: 60, y: 5, event_type: 'blocked-shot', period: 1, time_in_period: '06:00', shot_type: null, player_id: 8479314, goalie_id: null, assist1_id: null, assist2_id: null, blocker_id: 8478427 },
+    ]
+    let shotQuery = ''
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('club-schedule-season')) {
+        return Promise.resolve({ ok: true, json: async () => ({ games: [{ id: 2026020001, gameState: 'OFF' }] }) })
+      }
+      if (u.includes('/rest/v1/players')) {
+        return Promise.resolve({ ok: true, json: async () => [
+          { id: 8479314, name: 'Matthew Tkachuk' }, { id: 8483548, name: 'Brandon Bussi' },
+          { id: 8477493, name: 'Aleksander Barkov' }, { id: 8478366, name: 'Sam Reinhart' },
+          { id: 8478427, name: 'Sebastian Aho' },
+        ] })
+      }
+      shotQuery = u
+      return Promise.resolve({ ok: true, json: async () => rows })
+    })
+
+    const res = await handleNHL(
+      makeRequest('/nhl/shots?team=CAR&season=20262027'), env, makeCtx(),
+      new URL('https://example.com/nhl/shots?team=CAR&season=20262027')
+    )
+
+    expect(shotQuery).toContain('assist1_id,assist2_id,blocker_id')
+    const [goal, block] = await res.json()
+    expect(goal).toMatchObject({ assist1_name: 'Aleksander Barkov', assist2_name: 'Sam Reinhart', blocker_name: null })
+    expect(block).toMatchObject({ shooter_name: 'Matthew Tkachuk', blocker_name: 'Sebastian Aho', assist1_name: null })
   })
 
   it('still serves the dots, unnamed and uncached, when the name lookup fails', async () => {

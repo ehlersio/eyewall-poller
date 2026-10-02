@@ -3540,6 +3540,9 @@ exports[`nhl/shots > response, upstream requests and KV writes; repeat call 1`] 
 {
   "body": [
     {
+      "assist1_name": null,
+      "assist2_name": null,
+      "blocker_name": null,
       "event_type": "goal",
       "game_id": 2025020498,
       "goalie_name": null,
@@ -3552,6 +3555,9 @@ exports[`nhl/shots > response, upstream requests and KV writes; repeat call 1`] 
       "y": -10,
     },
     {
+      "assist1_name": null,
+      "assist2_name": null,
+      "blocker_name": null,
       "event_type": "shot-on-goal",
       "game_id": 2025020498,
       "goalie_name": null,
@@ -3566,7 +3572,7 @@ exports[`nhl/shots > response, upstream requests and KV writes; repeat call 1`] 
   ],
   "kvWrites": [
     {
-      "key": "nhl:shots:v2:CAR:20252026",
+      "key": "nhl:shots:v3:CAR:20252026",
       "ttl": 3600,
     },
   ],
@@ -3577,7 +3583,7 @@ exports[`nhl/shots > response, upstream requests and KV writes; repeat call 1`] 
     },
     {
       "range": "0-999",
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/shot_events?game_id=in.(2025020498,2025020499)&season=eq.20252026&select=game_id,event_id,team,x,y,event_type,period,time_in_period,shot_type,player_id,goalie_id&order=game_id.asc",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/shot_events?game_id=in.(2025020498,2025020499)&season=eq.20252026&select=game_id,event_id,team,x,y,event_type,period,time_in_period,shot_type,player_id,goalie_id,assist1_id,assist2_id,blocker_id&order=game_id.asc",
     },
   ],
 }
