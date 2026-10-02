@@ -29,7 +29,7 @@ vi.mock('../seasons.js', () => ({
 
 import { getAllPWHLSeasonTypes, getPWHLScheduleSeasonIds, resolvePWHLSeason } from '../seasons.js'
 
-import { handlePWHL, fetchPWHLNews } from '../pwhl.js'
+import { handlePWHL, fetchPWHLNews, pwhlLeagueAverages } from '../pwhl.js'
 import { FRENCH_INSTRUCTION } from '../shared.js'
 
 beforeEach(() => {
@@ -2110,6 +2110,83 @@ describe('GET /pwhl/goalie/percentiles', () => {
     )
 
     expect(res.status).toBe(502)
+  })
+})
+
+describe('GET /pwhl/league-averages', () => {
+  // The PWHL Team page's Advanced tab compares a team against these, in
+  // place of a hardcoded table of "2025-26 approximations".
+  const TEAMS = [
+    { team_id: 1, gp: 30, goals_for: 74, goals_against: 45, pp_goals: 13, pp_opportunities: 93, pk_goals_against: 7, times_shorthanded: 83 },
+    { team_id: 2, gp: 30, goals_for: 46, goals_against: 75, pp_goals: 17, pp_opportunities: 87, pk_goals_against: 18, times_shorthanded: 97 },
+  ]
+  const SKATERS = [{ goals: 70, shots: 800 }, { goals: 44, shots: 700 }, { goals: null, shots: null }]
+  const GOALIES = [{ saves: 1400, goals_against: 110 }, { saves: 50, goals_against: 8 }]
+
+  function mockTables({ teams = TEAMS, skaters = SKATERS, goalies = GOALIES } = {}) {
+    globalThis.fetch = vi.fn(async url => {
+      const rows = url.includes('pwhl_team_seasons') ? teams : url.includes('pwhl_player_seasons') ? skaters : goalies
+      return { ok: true, json: async () => rows }
+    })
+  }
+  const get = (env = makeEnv()) => handlePWHL(
+    makeRequest('/pwhl/league-averages?season=8'), env, makeCtx(),
+    new URL('https://example.com/pwhl/league-averages?season=8')
+  )
+
+  it('sums every team, skater and goalie in the regular season', async () => {
+    mockTables()
+    const res = await get()
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({ season: 8, teams: 2, gamesPlayed: 60 })
+    expect(body.goalsForPerGame).toBeCloseTo(120 / 60)
+    expect(body.goalsAgainstPerGame).toBeCloseTo(120 / 60)
+    expect(body.shotsForPerGame).toBeCloseTo(1500 / 60)
+    expect(body.shotsAgainstPerGame).toBeCloseTo(1568 / 60)
+    expect(body.shPct).toBeCloseTo(114 / 1500)
+    expect(body.svPct).toBeCloseTo(1450 / 1568)
+    expect(body.pdo).toBeCloseTo((114 / 1500 + 1450 / 1568) * 100)
+    // Weighted by chances, not an average of the teams' percentages
+    expect(body.ppPct).toBeCloseTo(30 / 180)
+    expect(body.pkPct).toBeCloseTo(1 - 25 / 180)
+    for (const call of globalThis.fetch.mock.calls) {
+      expect(call[0]).toContain('season_id=eq.8')
+      expect(call[0]).toContain('season_type=eq.regular')
+    }
+  })
+
+  it('caches for an hour', async () => {
+    mockTables()
+    const puts = []
+    await get(makeEnv({ CACHE: { async get() { return null }, async put(key, _v, opts) { puts.push({ key, ttl: opts?.expirationTtl }) } } }))
+    expect(puts).toEqual([{ key: 'pwhl:league-averages:8', ttl: 3600 }])
+  })
+
+  it('returns 404 when the season has no team rows', async () => {
+    mockTables({ teams: [] })
+    expect((await get()).status).toBe(404)
+  })
+
+  it('returns 502 when Supabase fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+    expect((await get()).status).toBe(502)
+  })
+})
+
+describe('pwhlLeagueAverages()', () => {
+  it('leaves out what it has no data for instead of defaulting it', () => {
+    const avg = pwhlLeagueAverages([{ gp: 10, goals_for: 30, goals_against: 25 }], [], [])
+    expect(avg).toMatchObject({ goalsForPerGame: 3, goalsAgainstPerGame: 2.5 })
+    for (const k of ['shotsForPerGame', 'shotsAgainstPerGame', 'shPct', 'svPct', 'pdo', 'ppPct', 'pkPct']) {
+      expect(avg[k]).toBeNull()
+    }
+  })
+
+  it('returns null when no team has played', () => {
+    expect(pwhlLeagueAverages([{ gp: 0 }])).toBeNull()
+    expect(pwhlLeagueAverages([])).toBeNull()
   })
 })
 
