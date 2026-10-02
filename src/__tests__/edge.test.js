@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { makeFakeCache } from './route-harness.js'
 import {
   handleEdge, skaterMetrics, goalieMetrics, goalieAreas, teamMetrics, measured, counted,
+  playerIdFromSlug, leaderRow,
   TTL_CURRENT, TTL_PAST, TTL_NONE_CURRENT, TTL_NONE_PAST,
 } from '../edge.js'
 
@@ -247,5 +248,66 @@ describe('GET /nhl/edge/:kind/:playerId/:season/:gameType', () => {
     const url = new URL('https://w.test/nhl/edge/skater/8478402/20252026/2')
     const res = await handleNHL(new Request(url), env, { waitUntil() {} }, url)
     expect(res.status).toBe(200)
+  })
+})
+
+// Rows cut down from the NHL's 2025-26 top 10s (skater-speed-top-10 etc.)
+const speedTop = [{
+  player: { firstName: { default: 'Beck' }, lastName: { default: 'Malenstyn' }, slug: 'beck-malenstyn-8479359', headshot: 'h.png', position: 'L', sweaterNumber: 29, team: { abbrev: 'BUF' } },
+  maxSpeed: { imperial: 24.9389, metric: 40.1352, overlay: { gameDate: '2026-03-12', awayTeam: { abbrev: 'WSH' }, homeTeam: { abbrev: 'BUF' }, periodDescriptor: { number: 3, periodType: 'REG' }, timeInPeriod: '12:05' } },
+  burstsOver22: 14,
+}]
+const zoneTop = [{
+  player: { firstName: { default: 'Shayne' }, lastName: { default: 'Gostisbehere' }, slug: 'shayne-gostisbehere-8476906', position: 'D', team: { abbrev: 'CAR' } },
+  offensiveZoneTime: 0.49576938,
+}]
+
+describe('EDGE leaders', () => {
+  const realFetch = globalThis.fetch
+  beforeEach(() => {
+    env = { CACHE: makeFakeCache({ 'config:season:nhl': { seasonId: CURRENT } }) }
+    env.CACHE.put = vi.fn(env.CACHE.put)
+  })
+  afterEach(() => { globalThis.fetch = realFetch })
+
+  it('reads the player id off the slug -- the top 10s have no id field', () => {
+    expect(playerIdFromSlug('beck-malenstyn-8479359')).toBe(8479359)
+    expect(playerIdFromSlug('no-id-here')).toBeNull()
+    expect(playerIdFromSlug(undefined)).toBeNull()
+  })
+
+  it('compacts a speed row with when the NHL clocked it', () => {
+    expect(leaderRow(speedTop[0], { field: 'maxSpeed', kind: 'measure', moment: true })).toEqual({
+      playerId: 8479359, firstName: 'Beck', lastName: 'Malenstyn', team: 'BUF', position: 'L', headshot: 'h.png',
+      imperial: 24.9389, metric: 40.1352,
+      moment: { date: '2026-03-12', away: 'WSH', home: 'BUF', period: 3, periodType: 'REG', time: '12:05' },
+    })
+    expect(leaderRow(zoneTop[0], { field: 'offensiveZoneTime', kind: 'share' })).toMatchObject({ playerId: 8476906, value: 0.49576938 })
+    expect(leaderRow({ player: speedTop[0].player }, { field: 'maxSpeed', kind: 'measure' })).toBeNull()
+  })
+
+  it('serves all four lists, a missing one as []', async () => {
+    mockEdge({ 'skater-speed-top-10': speedTop, 'skater-shot-speed-top-10': 404, 'skater-distance-top-10': [], 'skater-zone-time-top-10': zoneTop })
+    const res = await call('/nhl/edge/leaders/20252026/2')
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({ available: true, kind: 'leaders', season: '20252026', gameType: 2 })
+    expect(body.categories.speed[0].playerId).toBe(8479359)
+    expect(body.categories.shotSpeed).toEqual([])
+    expect(body.categories.offensiveZoneTime[0].value).toBe(0.49576938)
+    expect(globalThis.fetch.mock.calls.map(c => String(c[0]))).toContain('https://api-web.nhle.com/v1/edge/skater-speed-top-10/all/max/20252026/2')
+    expect(env.CACHE.put.mock.calls[0][2]).toEqual({ expirationTtl: TTL_PAST })
+  })
+
+  it('404s, cached, when none of the lists has data', async () => {
+    mockEdge({ 'skater-speed-top-10': 404, 'skater-shot-speed-top-10': 404, 'skater-distance-top-10': 404, 'skater-zone-time-top-10': 404 })
+    expect((await call('/nhl/edge/leaders/20202021/2')).status).toBe(404)
+    expect(env.CACHE.put).toHaveBeenCalled()
+  })
+
+  it('502s when the NHL fails, and 400s a bad path', async () => {
+    mockEdge({ 'skater-speed-top-10': 503, 'skater-shot-speed-top-10': speedTop, 'skater-distance-top-10': [], 'skater-zone-time-top-10': zoneTop })
+    expect((await call('/nhl/edge/leaders/20252026/2')).status).toBe(502)
+    expect((await call('/nhl/edge/leaders/2025/2')).status).toBe(400)
   })
 })
