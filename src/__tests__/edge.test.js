@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { makeFakeCache } from './route-harness.js'
 import {
-  handleEdge, skaterMetrics, goalieMetrics, measured, counted,
+  handleEdge, skaterMetrics, goalieMetrics, goalieAreas, measured, counted,
   TTL_CURRENT, TTL_PAST, TTL_NONE_CURRENT, TTL_NONE_PAST,
 } from '../edge.js'
 
@@ -44,6 +44,13 @@ const goalieDetail = {
     { locationCode: 'long', savePctg: 0.981, savePctgPercentile: 0.61, savePctgLeagueAvg: 0.975 },
   ],
 }
+const goalieShotLocation = {
+  shotLocationDetails: [
+    { area: 'Low Slot', shotsAgainst: 240, saves: 204, goalsAgainst: 36, savePctg: 0.85, savePctgPercentile: 0.6102 },
+    { area: 'L Corner', shotsAgainst: 0, saves: 0, goalsAgainst: 0, savePctg: null, savePctgPercentile: null },
+  ],
+  shotLocationTotals: [],
+}
 const goalie5v5 = {
   savePctg5v5Details: { savePctgClose: { value: 0.9101, leagueAvg: 0.909512, percentile: 0.4746 } },
 }
@@ -75,6 +82,16 @@ describe('metric trimming', () => {
       savePctg5v5Close: { value: 0.9101, pct: 47, avg: 0.909512 },
       longRangeSavePctg: { value: 0.981, pct: 61, avg: 0.975 },
     })
+  })
+
+  it('maps a goalie\'s record in each shot area', () => {
+    expect(goalieAreas(goalieShotLocation)).toEqual({
+      'Low Slot': { shots: 240, goals: 36, savePctg: 0.85, pct: 61 },
+      // no shots from there: no save %, no percentile -- never a made-up one
+      'L Corner': { shots: 0, goals: 0, savePctg: null, pct: null },
+    })
+    expect(goalieAreas(null)).toBeNull()
+    expect(goalieAreas({ shotLocationDetails: [] })).toBeNull()
   })
 
   it('leaves a metric null when the payload lacks it, never a default', () => {
@@ -142,10 +159,18 @@ describe('GET /nhl/edge/:kind/:playerId/:season/:gameType', () => {
   })
 
   it('serves a goalie', async () => {
-    mockEdge({ 'goalie-detail': goalieDetail, 'goalie-5v5-detail': goalie5v5 })
+    mockEdge({ 'goalie-detail': goalieDetail, 'goalie-5v5-detail': goalie5v5, 'goalie-shot-location-detail': goalieShotLocation })
     const body = await (await call('/nhl/edge/goalie/8478406/20252026/2')).json()
     expect(body).toMatchObject({ available: true, kind: 'goalie', gamesPlayed: 39 })
     expect(body.metrics.savePctg5v5Close).toEqual({ value: 0.9101, pct: 47, avg: 0.909512 })
+    expect(body.areas['Low Slot']).toEqual({ shots: 240, goals: 36, savePctg: 0.85, pct: 61 })
+  })
+
+  it('serves a goalie without areas when the NHL has none for him', async () => {
+    mockEdge({ 'goalie-detail': goalieDetail, 'goalie-5v5-detail': goalie5v5, 'goalie-shot-location-detail': 404 })
+    const body = await (await call('/nhl/edge/goalie/8478406/20252026/2')).json()
+    expect(body.available).toBe(true)
+    expect(body.areas).toBeNull()
   })
 
   it('404s, cached, when the NHL has no EDGE data -- a past season for a week', async () => {

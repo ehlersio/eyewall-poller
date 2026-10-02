@@ -11,13 +11,20 @@
 //
 // Response (200):
 //   { available: true, kind, playerId, season, gameType, gamesPlayed,
-//     metrics: { [name]: Metric | null } }
+//     metrics: { [name]: Metric | null },
+//     areas (goalies only): { [area]: Area } | null }
 // Metric, for a measured quantity (speed, distance), in both unit systems:
 //   { imperial, metric, pct, avg: { imperial, metric } }
 // and for a count or a rate:
 //   { value, pct, avg }
 // pct is the NHL's percentile as 0-100, avg its league average. A metric is
 // null when the NHL's payload doesn't carry it.
+//
+// `areas` (2026-10) is the goalie's record in each of the NHL's 17 shot
+// areas (react-hockey-rink's SHOT_AREAS, keyed by the NHL's own names):
+//   { shots, goals, savePctg, pct }
+// pct being that save % 's percentile among NHL goalies (0-100). An area
+// he faced no shots from comes back with shots 0 and savePctg/pct null.
 //
 // "No data" and "failed" are told apart, so the app knows whether asking
 // again can help:
@@ -88,6 +95,23 @@ export function skaterMetrics(detail, shotSpeed, distance) {
   };
 }
 
+// The NHL's per-area goalie rows -> { [area]: { shots, goals, savePctg, pct } }
+export function goalieAreas(shotLocation) {
+  const rows = shotLocation?.shotLocationDetails;
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const out = {};
+  for (const r of rows) {
+    if (!r?.area) continue;
+    out[r.area] = {
+      shots: num(r.shotsAgainst) ?? 0,
+      goals: num(r.goalsAgainst) ?? 0,
+      savePctg: num(r.savePctg),
+      pct: pctOf(r.savePctgPercentile),
+    };
+  }
+  return out;
+}
+
 export function goalieMetrics(detail, fiveOnFive) {
   const s = fiveOnFive?.savePctg5v5Details;
   return {
@@ -118,11 +142,16 @@ async function build(kind, playerId, season, gameType) {
     ]);
     return { gamesPlayed: num(detail?.player?.gamesPlayed), metrics: skaterMetrics(detail, shotSpeed, distance) };
   }
-  const [detail, fiveOnFive] = await Promise.all([
+  const [detail, fiveOnFive, shotLocation] = await Promise.all([
     edgeGet(`goalie-detail/${tail}`),
     edgeGet(`goalie-5v5-detail/${tail}`, { optional: true }),
+    edgeGet(`goalie-shot-location-detail/${tail}`, { optional: true }),
   ]);
-  return { gamesPlayed: num(detail?.player?.gamesPlayed), metrics: goalieMetrics(detail, fiveOnFive) };
+  return {
+    gamesPlayed: num(detail?.player?.gamesPlayed),
+    metrics: goalieMetrics(detail, fiveOnFive),
+    areas: goalieAreas(shotLocation),
+  };
 }
 
 export async function handleEdge(request, env, url) {
@@ -131,7 +160,7 @@ export async function handleEdge(request, env, url) {
   const [, kind, id, season, gt] = m;
   const playerId = Number(id);
   const gameType = Number(gt);
-  const key = `nhl:edge:v1:${kind}:${playerId}:${season}:${gameType}`;
+  const key = `nhl:edge:v2:${kind}:${playerId}:${season}:${gameType}`;
 
   const cached = await kvGet(env, key);
   if (cached) return cached.available ? json(cached) : errorJson(404, cached);
