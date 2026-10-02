@@ -1,6 +1,7 @@
 // src/edge.js
 // GET /nhl/edge/skater/:playerId/:season/:gameType
 // GET /nhl/edge/goalie/:playerId/:season/:gameType
+// GET /nhl/edge/team/:teamId/:season/:gameType
 //
 // One player's NHL EDGE tracking stats (skating speed, distance, shot speed,
 // zone time; for goalies, save rates the NHL computes from tracking), trimmed
@@ -19,6 +20,12 @@
 //   { value, pct, avg }
 // pct is the NHL's percentile as 0-100, avg its league average. A metric is
 // null when the NHL's payload doesn't carry it.
+//
+// Teams (2026-10, the Team page's Advanced tab) get `teamId` instead of
+// `playerId`, and each metric carries the NHL's rank among the 32 teams
+// (1 = best: most offensive-zone time, LEAST defensive-zone time) instead
+// of a percentile:
+//   { imperial, metric, rank, avg: { imperial, metric } } | { value, rank, avg }
 //
 // `areas` (2026-10) is the goalie's record in each of the NHL's 17 shot
 // areas (react-hockey-rink's SHOT_AREAS, keyed by the NHL's own names):
@@ -49,6 +56,7 @@ export const TTL_NONE_CURRENT = 3600;
 export const TTL_NONE_PAST = 7 * 24 * 3600;
 
 const ROUTE = /^\/nhl\/edge\/(skater|goalie)\/(\d{7})\/(\d{8})\/([23])$/;
+const TEAM_ROUTE = /^\/nhl\/edge\/(team)\/(\d{1,2})\/(\d{8})\/([23])$/;
 
 class Missing extends Error {}
 
@@ -112,6 +120,50 @@ export function goalieAreas(shotLocation) {
   return out;
 }
 
+// Team metrics: the NHL's rank among the 32 teams in place of a percentile
+const rankOf = (r) => (typeof r === 'number' ? r : null);
+
+export function rankedMeasure(o) {
+  if (!o || typeof o.imperial !== 'number' || typeof o.metric !== 'number') return null;
+  return {
+    imperial: o.imperial,
+    metric: o.metric,
+    rank: rankOf(o.rank),
+    avg: o.leagueAvg ? { imperial: num(o.leagueAvg.imperial), metric: num(o.leagueAvg.metric) } : null,
+  };
+}
+
+export function rankedCount(o) {
+  if (!o || typeof o.value !== 'number') return null;
+  const avg = typeof o.leagueAvg === 'number' ? o.leagueAvg : num(o.leagueAvg?.value);
+  return { value: o.value, rank: rankOf(o.rank), avg };
+}
+
+function rankedFlat(row, field, rankField, avgField) {
+  if (!row || typeof row[field] !== 'number') return null;
+  return { value: row[field], rank: rankOf(row[rankField]), avg: num(row[avgField]) };
+}
+
+export function teamMetrics(detail) {
+  const zone = detail?.zoneTimeDetails;
+  const all = byCode(detail?.sogSummary, 'locationCode', 'all');
+  const high = byCode(detail?.sogSummary, 'locationCode', 'high');
+  return {
+    offensiveZoneTime: rankedFlat(zone, 'offensiveZonePctg', 'offensiveZoneRank', 'offensiveZoneLeagueAvg'),
+    offensiveZoneTimeEv: rankedFlat(zone, 'offensiveZoneEvPctg', 'offensiveZoneEvRank', 'offensiveZoneEvLeagueAvg'),
+    defensiveZoneTime: rankedFlat(zone, 'defensiveZonePctg', 'defensiveZoneRank', 'defensiveZoneLeagueAvg'),
+    shotsOnGoal: rankedFlat(all, 'shots', 'shotsRank', 'shotsLeagueAvg'),
+    highDangerShots: rankedFlat(high, 'shots', 'shotsRank', 'shotsLeagueAvg'),
+    highDangerShootingPctg: rankedFlat(high, 'shootingPctg', 'shootingPctgRank', 'shootingPctgLeagueAvg'),
+    topSpeed: rankedMeasure(detail?.skatingSpeed?.speedMax),
+    burstsOver20: rankedCount(detail?.skatingSpeed?.burstsOver20),
+    burstsOver22: rankedCount(detail?.skatingSpeed?.burstsOver22),
+    distanceTotal: rankedMeasure(detail?.distanceSkated?.total),
+    topShotSpeed: rankedMeasure(detail?.shotSpeed?.topShotSpeed),
+    shotAttemptsOver90: rankedCount(detail?.shotSpeed?.shotAttemptsOver90),
+  };
+}
+
 export function goalieMetrics(detail, fiveOnFive) {
   const s = fiveOnFive?.savePctg5v5Details;
   return {
@@ -134,6 +186,10 @@ async function edgeGet(path, { optional = false } = {}) {
 
 async function build(kind, playerId, season, gameType) {
   const tail = `${playerId}/${season}/${gameType}`;
+  if (kind === 'team') {
+    const detail = await edgeGet(`team-detail/${tail}`);
+    return { gamesPlayed: num(detail?.team?.gamesPlayed), metrics: teamMetrics(detail) };
+  }
   if (kind === 'skater') {
     const [detail, shotSpeed, distance] = await Promise.all([
       edgeGet(`skater-detail/${tail}`),
@@ -155,8 +211,8 @@ async function build(kind, playerId, season, gameType) {
 }
 
 export async function handleEdge(request, env, url) {
-  const m = url.pathname.match(ROUTE);
-  if (!m) return errorJson(400, { error: 'expected /nhl/edge/(skater|goalie)/:playerId/:season/:gameType (2 or 3)' });
+  const m = url.pathname.match(ROUTE) || url.pathname.match(TEAM_ROUTE);
+  if (!m) return errorJson(400, { error: 'expected /nhl/edge/(skater|goalie)/:playerId/:season/:gameType or /nhl/edge/team/:teamId/:season/:gameType (2 or 3)' });
   const [, kind, id, season, gt] = m;
   const playerId = Number(id);
   const gameType = Number(gt);
@@ -166,7 +222,9 @@ export async function handleEdge(request, env, url) {
   if (cached) return cached.available ? json(cached) : errorJson(404, cached);
 
   const isPast = Number(season) < Number(await resolveNHLSeason(env));
-  const ids = { kind, playerId, season, gameType };
+  const ids = kind === 'team'
+    ? { kind, teamId: playerId, season, gameType }
+    : { kind, playerId, season, gameType };
 
   let data;
   try {
