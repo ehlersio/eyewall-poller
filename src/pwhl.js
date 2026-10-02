@@ -1616,6 +1616,34 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
     });
   }
 
+  // GET /pwhl/league-averages?season=8
+  // League averages for the PWHL Team page's Advanced tab (regular season),
+  // from every team's real season totals -- replacing a hardcoded table of
+  // "2025-26 PWHL approximations" (2026-10). Each is computed the same way
+  // the tab computes the team's own number, so they compare like for like:
+  //   per game: totals over team-games (pwhl_team_seasons gp)
+  //   goals: pwhl_team_seasons goals_for / goals_against
+  //   shots for, SH%: every skater's shots and goals (pwhl_player_seasons)
+  //   shots against, SV%: every goalie's saves + goals against
+  //   PP% = pp_goals / pp_opportunities, PK% = 1 - pk_goals_against /
+  //   times_shorthanded (both reproduce the table's own pp_pct / pk_pct)
+  // A part with no data comes back null, never a default. 404 when the
+  // season has no team rows. 1hr cache.
+  if (url.pathname === '/pwhl/league-averages') {
+    const season = await seasonParam(url, env);
+    return cachedJson(env, `pwhl:league-averages:${season}`, 3600, async () => {
+      const [teams, skaters, goalies] = await Promise.all([
+        sbRows(`${SB_URL}/rest/v1/pwhl_team_seasons?season_id=eq.${season}&season_type=eq.regular&select=team_id,gp,goals_for,goals_against,pp_goals,pp_opportunities,pk_goals_against,times_shorthanded&limit=50`),
+        sbRows(`${SB_URL}/rest/v1/pwhl_player_seasons?season_id=eq.${season}&season_type=eq.regular&select=goals,shots&limit=1000`),
+        sbRows(`${SB_URL}/rest/v1/pwhl_goalie_seasons?season_id=eq.${season}&season_type=eq.regular&select=saves,goals_against&limit=500`),
+      ]);
+      for (const r of [teams, skaters, goalies]) if (r instanceof Response) return r;
+      const body = pwhlLeagueAverages(teams, skaters, goalies);
+      if (!body) return errorJson(404, { error: 'No team data for that season' });
+      return { season: Number(season), ...body };
+    });
+  }
+
   // GET /pwhl/league-goalie-shots?season=8
   // Every shot on goal (goals and saves) any PWHL goalie faced in the
   // season, as compact [x, y, isGoal] rows -- what the app needs to work
@@ -2303,4 +2331,34 @@ Write in plain text, no markdown. 1-2 sentences max.`;
   }
 
   return new Response('EyeWall Poller', { status: 200 });
+}
+
+// League averages from every team's season totals -- see /pwhl/league-averages
+export function pwhlLeagueAverages(teams, skaters = [], goalies = []) {
+  const sum = (rows, f) => rows.reduce((t, r) => t + (Number(f(r)) || 0), 0);
+  const ratio = (a, b) => (b > 0 ? a / b : null);
+  if (!teams?.length) return null;
+  const gp = sum(teams, r => r.gp);
+  if (!gp) return null;
+  const shots = sum(skaters, r => r.shots);
+  const skaterGoals = sum(skaters, r => r.goals);
+  const saves = sum(goalies, r => r.saves);
+  const shotsAgainst = saves + sum(goalies, r => r.goals_against);
+  const shPct = ratio(skaterGoals, shots);
+  const svPct = ratio(saves, shotsAgainst);
+  const opps = sum(teams, r => r.pp_opportunities);
+  const timesSh = sum(teams, r => r.times_shorthanded);
+  return {
+    teams: teams.length,
+    gamesPlayed: gp,
+    goalsForPerGame: sum(teams, r => r.goals_for) / gp,
+    goalsAgainstPerGame: sum(teams, r => r.goals_against) / gp,
+    shotsForPerGame: shots ? shots / gp : null,
+    shotsAgainstPerGame: shotsAgainst ? shotsAgainst / gp : null,
+    shPct,
+    svPct,
+    pdo: shPct != null && svPct != null ? (shPct + svPct) * 100 : null,
+    ppPct: ratio(sum(teams, r => r.pp_goals), opps),
+    pkPct: timesSh > 0 ? 1 - sum(teams, r => r.pk_goals_against) / timesSh : null,
+  };
 }
