@@ -14,6 +14,9 @@ import { makeEnv, makeCtx, makeRequest, makeFakeCache, makeFakeRateLimiter, mock
 
 vi.mock('../seasons.js', () => ({
   resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
+  // What the real one answers on 2026-10-01: 8 current, 7 its preseason,
+  // 10 HockeyTech's current (2026-27 preseason), 11 next.
+  getPWHLScheduleSeasonIds: vi.fn().mockResolvedValue([7, 8, 10, 11]),
   getAllPWHLSeasonTypes: vi.fn().mockResolvedValue({ 5: 'regular', 7: 'preseason', 8: 'regular', 9: 'playoffs', 10: 'preseason', 11: 'regular' }),
   // Non-hidden seasons only, like the real one: 10 (preseason) is hidden.
   getAllPWHLSeasons: vi.fn().mockResolvedValue([
@@ -24,7 +27,7 @@ vi.mock('../seasons.js', () => ({
   ]),
 }))
 
-import { getAllPWHLSeasonTypes } from '../seasons.js'
+import { getAllPWHLSeasonTypes, getPWHLScheduleSeasonIds, resolvePWHLSeason } from '../seasons.js'
 
 import { handlePWHL, fetchPWHLNews } from '../pwhl.js'
 import { FRENCH_INSTRUCTION } from '../shared.js'
@@ -895,6 +898,44 @@ describe('GET /pwhl/today', () => {
     expect(body[0]).toMatchObject({ status: 'live', period: 3, endedIn: null })
     expect(body[1]).toMatchObject({ status: 'final', endedIn: 'OT', period: null })
     expect(body[2]).toMatchObject({ status: 'final', endedIn: 'SO' })
+  })
+
+  it('reads every season with games around now for the current season', async () => {
+    globalThis.fetch = rows(
+      { game_id: 353, season_id: 10, game_date: '2026-11-22', home_team_id: 12, away_team_id: 2, home_score: 0, away_score: 0, game_state: '9:50 pm EST' },
+    )
+
+    const body = await (await today()).json()
+
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('season_id=in.(7,8,10,11)')
+    expect(body[0]).toMatchObject({ gameId: 353, seasonId: 10, homeTeamCode: 'LV', awayTeamCode: 'MIN' })
+  })
+
+  it('shows the 2026-27 preseason after the switch to 2026-27 (2026-11-22)', async () => {
+    vi.setSystemTime(new Date('2026-11-22T20:00:00Z')) // 3 pm ET, Nov 22
+    resolvePWHLSeason.mockResolvedValueOnce({ seasonId: 11, seasonType: 'regular', startYear: 2026 })
+    getPWHLScheduleSeasonIds.mockResolvedValueOnce([10, 11])
+    globalThis.fetch = rows(
+      { game_id: 353, season_id: 10, game_date: '2026-11-22', home_team_id: 12, away_team_id: 2, home_score: 0, away_score: 0, game_state: '9:50 pm EST' },
+    )
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/today?season=11'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/today?season=11')
+    )
+    const body = await res.json()
+
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('game_date=gte.2026-11-22&season_id=in.(10,11)')
+    expect(body.map(g => g.gameId)).toEqual([353])
+  })
+
+  it('keeps an explicitly different season to that season alone', async () => {
+    globalThis.fetch = rows()
+
+    await handlePWHL(
+      makeRequest('/pwhl/today?season=5'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/today?season=5')
+    )
+
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('season_id=eq.5&')
   })
 })
 

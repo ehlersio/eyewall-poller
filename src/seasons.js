@@ -314,6 +314,7 @@ export async function resolvePWHLSeason(env) {
       seasonId: Number(chosen.id),
       seasonType: chosen.seasonType,
       startYear: chosen.startYear,
+      startDate: chosen.start_date || null,
       resolvedAt: new Date().toISOString(),
       source: 'live',
     };
@@ -324,6 +325,104 @@ export async function resolvePWHLSeason(env) {
     console.warn(`PWHL season resolve failed: ${e.message} — using fallback`);
     return FALLBACK_PWHL;
   }
+}
+
+// ── PWHL: the seasons around the current one ──────────────────
+// resolvePWHLSeason() answers one question, "which season is current".
+// Two more come from the same bootstrap list:
+//
+//   - next: the regular season after the current one -- the one the
+//     PWHL_LOOKAHEAD_DAYS rule above is still holding back. HockeyTech
+//     lists it (un-hidden) months ahead: on 2026-10-01, season 11
+//     (2026-27, first game 2026-12-05) with season 8 still current. The
+//     pipeline ingests its schedule nightly so the opener is already in
+//     pwhl_game_log when the switch happens, and the app can show it.
+//   - preseason: the preseason that leads into a regular season. Each
+//     preseason has its own season_id (10 = "2026-27 Pre-Season", whose
+//     games run 2026-11-22..30, after the switch to 11 on ~2026-11-20),
+//     and it's usually hidden from standings, so nothing above ever picks
+//     it.
+//
+// "Next" is defined relative to the current season (the earliest
+// non-hidden regular season that starts after it), not to today's date,
+// so it always agrees with whatever resolvePWHLSeason() returned --
+// cached, overridden, or just resolved. Once season 11 becomes current,
+// next is null until HockeyTech lists the 2027-28 season.
+
+function pwhlSeasonMeta(s) {
+  return { seasonId: Number(s.id), seasonType: s.seasonType, startYear: s.startYear, startDate: s.start_date || null };
+}
+
+// The preseason that leads into regular season `regular`: the latest
+// preseason starting on or before it and after the regular season before
+// it. Checked against the real list: 11 -> 10, 8 -> 7, 5 -> 4, 1 -> 2.
+// Hidden preseasons count (10 and 7 are hidden). Dates are YYYY-MM-DD
+// strings, so they compare as strings.
+export function findPWHLPreseasonFor(seasons, regular) {
+  if (!regular?.start_date) return null;
+  const start = regular.start_date;
+  const before = (list) => list
+    .filter(s => s.start_date && s.start_date <= start && s.id !== regular.id)
+    .sort((a, b) => (a.start_date < b.start_date ? 1 : -1));
+  const floor = before(seasons.filter(s => s.seasonType === 'regular'))[0]?.start_date || '';
+  return before(seasons.filter(s => s.seasonType === 'preseason')).find(s => s.start_date > floor) || null;
+}
+
+// Pure: { next, preseason } for current season id `currentSeasonId`, from
+// fetchPWHLBootstrap()'s parsed seasons[]. `next` carries its own
+// preseason; top-level `preseason` is the current season's (only for a
+// regular season -- a playoffs season has none).
+export function pickPWHLSeasonContext(seasons, currentSeasonId) {
+  const currentId = String(currentSeasonId);
+  const current = seasons.find(s => s.id === currentId);
+  let next = null;
+  if (current?.start_date) {
+    const upcoming = seasons
+      .filter(s => s.seasonType === 'regular' && !s.hide_in_standings && s.id !== currentId
+        && s.start_date && s.start_date > current.start_date)
+      .sort((a, b) => (a.start_date < b.start_date ? -1 : 1))[0];
+    if (upcoming) {
+      const pre = findPWHLPreseasonFor(seasons, upcoming);
+      next = { ...pwhlSeasonMeta(upcoming), preseason: pre ? pwhlSeasonMeta(pre) : null };
+    }
+  }
+  const currentPre = current?.seasonType === 'regular' ? findPWHLPreseasonFor(seasons, current) : null;
+  return { next, preseason: currentPre ? pwhlSeasonMeta(currentPre) : null };
+}
+
+// pickPWHLSeasonContext() for the live current season. Never throws:
+// { next: null, preseason: null } when the bootstrap is unavailable --
+// "no upcoming season known", never a guess.
+export async function resolvePWHLSeasonContext(env, current) {
+  try {
+    const cur = current || await resolvePWHLSeason(env);
+    const { seasons } = await fetchPWHLBootstrap(env);
+    return pickPWHLSeasonContext(seasons, cur.seasonId);
+  } catch (e) {
+    console.warn(`PWHL season context resolve failed: ${e.message}`);
+    return { next: null, preseason: null };
+  }
+}
+
+// Every season_id whose games can be on today's Scoreboard: the current
+// season, HockeyTech's own current_season_id (the preseason, while one is
+// running), the current season's preseason, and the next season and its
+// preseason. /pwhl/today used to read only the current season, so after
+// the switch to 2026-27 (~2026-11-20) it would have skipped the 2026-27
+// preseason games of Nov 22-30, which belong to season 10. Falls back to
+// just the current season if the bootstrap is unavailable.
+export async function getPWHLScheduleSeasonIds(env, current) {
+  const cur = current || await resolvePWHLSeason(env);
+  const ids = new Set([Number(cur.seasonId)]);
+  try {
+    const { currentSeasonId, seasons } = await fetchPWHLBootstrap(env);
+    if (currentSeasonId) ids.add(Number(currentSeasonId));
+    const { next, preseason } = pickPWHLSeasonContext(seasons, cur.seasonId);
+    for (const s of [preseason, next, next?.preseason]) if (s) ids.add(s.seasonId);
+  } catch (e) {
+    console.warn(`PWHL schedule season ids: bootstrap unavailable (${e.message}) — current season only`);
+  }
+  return [...ids].filter(Number.isFinite).sort((a, b) => a - b);
 }
 
 // Answers "what type is season N" for ANY season_id HockeyTech's bootstrap
@@ -626,6 +725,11 @@ export async function getAllECHLSeasons(env) {
 
 // ── Combined config endpoint ──────────────────────────────────
 
+// pwhl also carries `next` (the upcoming regular season, with its own
+// `preseason`) and `preseason` (the current season's) -- each
+// {seasonId, seasonType, startYear, startDate} or null. See
+// pickPWHLSeasonContext(). The pipeline ingests their schedules nightly;
+// the app offers the next season's schedule once it has games.
 export async function getSeasonsConfig(env) {
   const [nhl, pwhl, ahl, echl] = await Promise.all([
     resolveNHLSeason(env),
@@ -633,7 +737,8 @@ export async function getSeasonsConfig(env) {
     resolveAHLSeason(env),
     resolveECHLSeason(env),
   ]);
-  return { nhl: { seasonId: nhl }, pwhl, ahl, echl };
+  const { next, preseason } = await resolvePWHLSeasonContext(env, pwhl);
+  return { nhl: { seasonId: nhl }, pwhl: { ...pwhl, next, preseason }, ahl, echl };
 }
 
 // Called from scheduled() (runs every ~60s). This does NOT force a

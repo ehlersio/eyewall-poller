@@ -6037,6 +6037,7 @@ exports[`today > HockeyTech and AI unavailable 1`] = `
       "homeTeamCode": "BOS",
       "homeTeamId": 1,
       "period": null,
+      "seasonId": 8,
       "status": "final",
       "statusDetail": "Final",
     },
@@ -6056,7 +6057,12 @@ exports[`today > Supabase unavailable 1`] = `
   "body": {
     "error": "Supabase 503",
   },
-  "kvWrites": [],
+  "kvWrites": [
+    {
+      "key": "config:season:pwhl:bootstrap",
+      "ttl": 21600,
+    },
+  ],
   "status": 502,
 }
 `;
@@ -6075,11 +6081,16 @@ exports[`today > response, upstream requests and KV writes; repeat call 1`] = `
       "homeTeamCode": "BOS",
       "homeTeamId": 1,
       "period": null,
+      "seasonId": 8,
       "status": "final",
       "statusDetail": "Final",
     },
   ],
   "kvWrites": [
+    {
+      "key": "config:season:pwhl:bootstrap",
+      "ttl": 21600,
+    },
     {
       "key": "pwhl:today:8",
       "ttl": 60,
@@ -6088,7 +6099,11 @@ exports[`today > response, upstream requests and KV writes; repeat call 1`] = `
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=gte.2026-01-15&season_id=eq.8&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date,period,ot,shootout&order=game_date.asc&limit=40",
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=bootstrap&season=&game_id=&pageName=leadersExtended&key=446521baf8c38984&client_code=pwhl&site_id=0&league_id=&league_code=&conference=-1&division=-1&lang=en",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=gte.2026-01-15&season_id=eq.8&select=game_id,season_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date,period,ot,shootout&order=game_date.asc&limit=40",
     },
   ],
 }

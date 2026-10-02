@@ -6,7 +6,7 @@
  */
 
 import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
-import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons } from './seasons.js';
+import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction } from './hockeytechPrediction.js';
 
 // Elo constants for /pwhl/prediction -- match eyewall-pipeline/elo.py.
@@ -1628,10 +1628,25 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
 
   // GET /pwhl/today?season=8
   // Returns all games scheduled for today (Eastern time) with status pre/live/final.
+  // For the current season (the app's Scoreboard), "today" spans every
+  // season with games around now -- the current one plus its preseason
+  // and the next season and its preseason (getPWHLScheduleSeasonIds()).
+  // The 2026-27 preseason (season 10) plays Nov 22-30, after season 11
+  // becomes current; filtering on the current season alone would hide
+  // those games. An explicitly different ?season= stays that season only.
   if (url.pathname === '/pwhl/today') {
-    const season = await seasonParam(url, env);
+    const current = await resolvePWHLSeason(env);
+    const raw = url.searchParams.get('season');
+    const season = raw ? parseInt(raw, 10) : Number(current.seasonId);
     // 60s TTL — status needs to flip quickly when a game goes live
     return cachedJson(env, `pwhl:today:${season}`, 60, async () => {
+      const seasonIds = season === Number(current.seasonId)
+        ? await getPWHLScheduleSeasonIds(env, current)
+        : [season];
+      const seasonFilter = seasonIds.length === 1
+        ? `season_id=eq.${seasonIds[0]}`
+        : `season_id=in.(${seasonIds.join(',')})`;
+
       // Get today's date in Eastern time (games stored as Eastern dates in pwhl_game_log)
       const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
       const todayStr = nowET.toISOString().slice(0, 10); // YYYY-MM-DD
@@ -1640,8 +1655,8 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       // route in hockeytech.js for why (an empty "no games today" is the
       // wrong answer out of season).
       const rows = await sbRows(
-        `${SB_URL}/rest/v1/pwhl_game_log?game_date=gte.${todayStr}&season_id=eq.${season}` +
-        `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date,period,ot,shootout` +
+        `${SB_URL}/rest/v1/pwhl_game_log?game_date=gte.${todayStr}&${seasonFilter}` +
+        `&select=game_id,season_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date,period,ot,shootout` +
         `&order=game_date.asc&limit=40`
       );
       if (rows instanceof Response) return rows;
@@ -1652,6 +1667,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
 
         return {
           gameId:       g.game_id,
+          seasonId:     g.season_id ?? null,
           gameDate:     g.game_date,
           homeTeamId:   g.home_team_id,
           awayTeamId:   g.away_team_id,

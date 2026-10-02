@@ -9,7 +9,7 @@
 // imported kvGet/kvPut, so mocking at that boundary gives full coverage
 // of the actual drift risk without that extra setup cost.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 vi.mock('../shared.js', () => ({
   kvGet: vi.fn(),
@@ -31,6 +31,11 @@ import {
   deriveSeasonType,
   seasonNameKey,
   deriveStartYear,
+  findPWHLPreseasonFor,
+  pickPWHLSeasonContext,
+  resolvePWHLSeasonContext,
+  getPWHLScheduleSeasonIds,
+  getSeasonsConfig,
 } from '../seasons.js'
 
 function isoDaysFromNow(days) {
@@ -482,6 +487,165 @@ describe('resolvePWHLSeason', () => {
     globalThis.fetch.mockRejectedValue(new Error('network down'))
     const result = await resolvePWHLSeason(env)
     expect(result.seasonId).toBe(8)
+  })
+})
+
+// ── PWHL next season / preseasons ─────────────────────────────
+// The full bootstrap seasons[] list as HockeyTech served it on
+// 2026-10-01 (id/name/start_date/hide_in_standings, unchanged).
+const OCT_1_BOOTSTRAP = {
+  current_season_id: '10',
+  seasons: [
+    { id: '11', name: '2026-27 Regular Season', start_date: '2026-12-04', hide_in_standings: false },
+    { id: '10', name: '2026-27 Pre-Season', start_date: '2026-10-01', hide_in_standings: true },
+    { id: '9', name: '2026 Playoffs', start_date: '2026-04-28', hide_in_standings: false },
+    { id: '8', name: '2025-26 Regular Season', start_date: '2025-11-21', hide_in_standings: false },
+    { id: '7', name: '2025-26 Preseason', start_date: '2025-06-01', hide_in_standings: true },
+    { id: '6', name: '2025 Playoffs', start_date: '2025-05-06', hide_in_standings: false },
+    { id: '5', name: '2024-25 Regular Season', start_date: '2024-11-25', hide_in_standings: false },
+    { id: '4', name: '2024-25 Preseason', start_date: '2024-11-01', hide_in_standings: false },
+    { id: '3', name: '2024 Playoffs', start_date: '2024-05-06', hide_in_standings: true },
+    { id: '1', name: '2024 Regular Season', start_date: '2024-01-01', hide_in_standings: false },
+    { id: '2', name: '2024 Preseason', start_date: '2023-11-01', hide_in_standings: false },
+  ],
+}
+// Same shape fetchPWHLBootstrap() caches (and the pure helpers take).
+const PARSED_SEASONS = OCT_1_BOOTSTRAP.seasons.map(s => ({
+  id: s.id,
+  seasonType: deriveSeasonType(s.name),
+  startYear: deriveStartYear(s.start_date, s.name),
+  hide_in_standings: s.hide_in_standings,
+  start_date: s.start_date,
+}))
+const bootstrapResponse = (payload) => ({ ok: true, text: async () => `(${JSON.stringify(payload)})` })
+const byId = (id) => PARSED_SEASONS.find(s => s.id === id)
+
+describe('findPWHLPreseasonFor', () => {
+  it('pairs every regular season with the preseason that leads into it', () => {
+    expect(findPWHLPreseasonFor(PARSED_SEASONS, byId('11'))?.id).toBe('10')
+    expect(findPWHLPreseasonFor(PARSED_SEASONS, byId('8'))?.id).toBe('7')
+    expect(findPWHLPreseasonFor(PARSED_SEASONS, byId('5'))?.id).toBe('4')
+    expect(findPWHLPreseasonFor(PARSED_SEASONS, byId('1'))?.id).toBe('2')
+  })
+
+  it('returns null when no preseason sits between it and the season before', () => {
+    const seasons = PARSED_SEASONS.filter(s => s.id !== '10')
+    expect(findPWHLPreseasonFor(seasons, byId('11'))).toBeNull()
+  })
+})
+
+describe('pickPWHLSeasonContext', () => {
+  it('names 2026-27 as next, with its preseason, while 2025-26 is current', () => {
+    expect(pickPWHLSeasonContext(PARSED_SEASONS, 8)).toEqual({
+      next: {
+        seasonId: 11, seasonType: 'regular', startYear: 2026, startDate: '2026-12-04',
+        preseason: { seasonId: 10, seasonType: 'preseason', startYear: 2026, startDate: '2026-10-01' },
+      },
+      preseason: { seasonId: 7, seasonType: 'preseason', startYear: 2025, startDate: '2025-06-01' },
+    })
+  })
+
+  it('has no next season once 2026-27 is current, and its preseason becomes the current one', () => {
+    expect(pickPWHLSeasonContext(PARSED_SEASONS, 11)).toEqual({
+      next: null,
+      preseason: { seasonId: 10, seasonType: 'preseason', startYear: 2026, startDate: '2026-10-01' },
+    })
+  })
+
+  it('has no next season when HockeyTech lists none after the current one', () => {
+    const seasons = PARSED_SEASONS.filter(s => s.id !== '11')
+    expect(pickPWHLSeasonContext(seasons, 8).next).toBeNull()
+  })
+
+  it('ignores a next regular season that is still hidden', () => {
+    const seasons = PARSED_SEASONS.map(s => (s.id === '11' ? { ...s, hide_in_standings: true } : s))
+    expect(pickPWHLSeasonContext(seasons, 8).next).toBeNull()
+  })
+
+  it('finds the next regular season during the playoffs, with no current preseason', () => {
+    expect(pickPWHLSeasonContext(PARSED_SEASONS, 9)).toMatchObject({ next: { seasonId: 11 }, preseason: null })
+  })
+
+  it('knows nothing about a current season the bootstrap does not list', () => {
+    expect(pickPWHLSeasonContext(PARSED_SEASONS, 99)).toEqual({ next: null, preseason: null })
+  })
+})
+
+describe('resolvePWHLSeasonContext / getSeasonsConfig', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('serves next before the 14-day lookahead lets it become current (2026-10-01)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-01T17:00:00Z'))
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockResolvedValue(bootstrapResponse(OCT_1_BOOTSTRAP))
+    const ctx = await resolvePWHLSeasonContext(env)
+    expect(ctx.next).toMatchObject({ seasonId: 11, startYear: 2026, startDate: '2026-12-04', preseason: { seasonId: 10 } })
+  })
+
+  it('serves no next season after the switch (2026-11-25)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-25T17:00:00Z'))
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockResolvedValue(bootstrapResponse(OCT_1_BOOTSTRAP))
+    const ctx = await resolvePWHLSeasonContext(env)
+    expect(ctx).toEqual({ next: null, preseason: expect.objectContaining({ seasonId: 10 }) })
+  })
+
+  it('agrees with a cached current season rather than recomputing it from the clock', async () => {
+    // A current season cached a few hours before the switch still has 11
+    // as next, even once the lookahead would pick 11 itself.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-21T01:00:00Z'))
+    kvGet.mockImplementation(async (_env, key) => (key === 'config:season:pwhl'
+      ? { seasonId: 8, seasonType: 'regular', startYear: 2025 }
+      : null))
+    globalThis.fetch.mockResolvedValue(bootstrapResponse(OCT_1_BOOTSTRAP))
+    expect((await resolvePWHLSeasonContext(env)).next?.seasonId).toBe(11)
+  })
+
+  it('returns nulls, not a guess, when the bootstrap is unavailable', async () => {
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockRejectedValue(new Error('network down'))
+    expect(await resolvePWHLSeasonContext(env)).toEqual({ next: null, preseason: null })
+  })
+
+  it('adds next and preseason to the pwhl entry of /config/seasons', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-01T17:00:00Z'))
+    kvGet.mockImplementation(async (_env, key) => ({
+      'config:season:nhl': { seasonId: '20262027' },
+      'config:season:ahl': { seasonId: 94, seasonType: 'regular' },
+      'config:season:echl': { seasonId: 80, seasonType: 'regular' },
+    })[key] ?? null)
+    globalThis.fetch.mockResolvedValue(bootstrapResponse(OCT_1_BOOTSTRAP))
+    const config = await getSeasonsConfig(env)
+    expect(config.pwhl).toMatchObject({
+      seasonId: 8, seasonType: 'regular', startYear: 2025, startDate: '2025-11-21',
+      next: { seasonId: 11, seasonType: 'regular', startYear: 2026, startDate: '2026-12-04', preseason: { seasonId: 10 } },
+      preseason: { seasonId: 7 },
+    })
+    expect(config.nhl).toEqual({ seasonId: '20262027' })
+  })
+})
+
+describe('getPWHLScheduleSeasonIds', () => {
+  it('spans the current season, its preseason, HockeyTech\'s current season and the next season with its preseason', async () => {
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockResolvedValue(bootstrapResponse(OCT_1_BOOTSTRAP))
+    expect(await getPWHLScheduleSeasonIds(env, { seasonId: 8 })).toEqual([7, 8, 10, 11])
+  })
+
+  it('keeps the 2026-27 preseason after the switch to 2026-27', async () => {
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockResolvedValue(bootstrapResponse(OCT_1_BOOTSTRAP))
+    expect(await getPWHLScheduleSeasonIds(env, { seasonId: 11 })).toEqual([10, 11])
+  })
+
+  it('falls back to the current season alone when the bootstrap is unavailable', async () => {
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockRejectedValue(new Error('network down'))
+    expect(await getPWHLScheduleSeasonIds(env, { seasonId: 8 })).toEqual([8])
   })
 })
 
