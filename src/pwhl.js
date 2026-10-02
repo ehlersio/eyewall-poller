@@ -1616,6 +1616,39 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
     });
   }
 
+  // GET /pwhl/league-goalie-shots?season=8
+  // Every shot on goal (goals and saves) any PWHL goalie faced in the
+  // season, as compact [x, y, isGoal] rows -- what the app needs to work
+  // out the league's save % in each NHL shot area (react-hockey-rink's
+  // shotArea) and color a goalie's area map against it. Same coordinates as
+  // /pwhl/goalie-shots (attack-direction-normalised, folded to +x). Empty
+  // nets (no goalie_id) are left out. 6hr cache.
+  if (url.pathname === '/pwhl/league-goalie-shots') {
+    const season = await seasonParam(url, env);
+    return cachedJson(env, `pwhl:league-gshots:${season}`, 3600 * 6, async () => {
+      const PAGE = 1000;
+      const rows = [];
+      for (let offset = 0; ; offset += PAGE) {
+        const page = await sbRows(
+          `${SB_URL}/rest/v1/pwhl_shot_events?season_id=eq.${season}&goalie_id=not.is.null` +
+          `&event_type=in.(goal,shot)&select=event_type,x_norm,y_norm&order=id.asc`,
+          { 'Range': `${offset}-${offset + PAGE - 1}`, 'Range-Unit': 'items', 'Prefer': 'count=none' }
+        );
+        if (page instanceof Response) return page;
+        rows.push(...page);
+        if (page.length < PAGE) break;
+      }
+      const shots = [];
+      for (const r of rows) {
+        let x = parseFloat(r.x_norm), y = parseFloat(r.y_norm);
+        if (isNaN(x) || isNaN(y)) continue;
+        if (x < 0) { x = -x; y = -y; }
+        shots.push([Math.round(Math.min(x, 99) * 10) / 10, Math.round(Math.max(-42, Math.min(42, y)) * 10) / 10, r.event_type === 'goal' ? 1 : 0]);
+      }
+      return { season: Number(season), shots };
+    });
+  }
+
   // GET /pwhl/news
   if (url.pathname === '/pwhl/news' && request.method === 'GET') {
     const cached = await kvGet(env, 'pwhl:news');

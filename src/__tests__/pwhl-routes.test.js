@@ -2113,6 +2113,57 @@ describe('GET /pwhl/goalie/percentiles', () => {
   })
 })
 
+describe('GET /pwhl/league-goalie-shots', () => {
+  // The app's PWHL goalie area map is colored against the league's save %
+  // in each NHL shot area, worked out from these rows.
+  it('returns every shot on goal a goalie faced as compact [x, y, isGoal], folded to +x', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { event_type: 'goal', x_norm: 80.33, y_norm: -2.83 },
+        { event_type: 'shot', x_norm: -55, y_norm: 16.72 },
+        { event_type: 'shot', x_norm: null, y_norm: 4 },
+      ],
+    })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/league-goalie-shots?season=8'), makeEnv(), makeCtx(),
+      new URL('https://example.com/pwhl/league-goalie-shots?season=8')
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ season: 8, shots: [[80.3, -2.8, 1], [55, -16.7, 0]] })
+    const call = globalThis.fetch.mock.calls[0][0]
+    expect(call).toContain('season_id=eq.8')
+    expect(call).toContain('goalie_id=not.is.null') // empty nets left out
+    expect(call).toContain('event_type=in.(goal,shot)')
+  })
+
+  it('pages past 1,000 rows', async () => {
+    const page = (n, t) => Array.from({ length: n }, () => ({ event_type: t, x_norm: 70, y_norm: 1 }))
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => page(1000, 'shot') })
+      .mockResolvedValueOnce({ ok: true, json: async () => page(3, 'goal') })
+
+    const res = await handlePWHL(
+      makeRequest('/pwhl/league-goalie-shots?season=8'), makeEnv(), makeCtx(),
+      new URL('https://example.com/pwhl/league-goalie-shots?season=8')
+    )
+
+    expect((await res.json()).shots).toHaveLength(1003)
+    expect(globalThis.fetch.mock.calls[1][1].headers.Range).toBe('1000-1999')
+  })
+
+  it('returns 502 when Supabase fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+    const res = await handlePWHL(
+      makeRequest('/pwhl/league-goalie-shots?season=8'), makeEnv(), makeCtx(),
+      new URL('https://example.com/pwhl/league-goalie-shots?season=8')
+    )
+    expect(res.status).toBe(502)
+  })
+})
+
 describe('GET /pwhl/goalie-shots', () => {
   it('returns 400 when goalieId is missing', async () => {
     const res = await handlePWHL(
