@@ -8,7 +8,8 @@
 import { kvGet, kvPut, json, finalLabel, endedInSuffix, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
-import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
+import { resolveNHLSeason, resolvePWHLSeason, resolveAHLSeason, getAllAHLSeasons } from './seasons.js';
+import { buildCallupWatch, nameKey } from './callupWatch.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { fetchTradeTree } from './trades.js';
 import { summarizeScratches } from './scratches.js';
@@ -2656,6 +2657,110 @@ export async function handleNHL(request, env, ctx, url) {
       }
 
       return rows;
+    });
+  }
+
+  // GET /nhl/callup-watch?team=CAR&ahlTeamId=330
+  // Who's out on the NHL team, by position group, and the affiliate players
+  // next in line -- a ranking, not a probability (see callupWatch.js for
+  // what it can and can't know). `ahlTeamId` is the affiliate's HockeyTech
+  // team id: the NHL->AHL affiliate map lives in the frontend
+  // (teamHistory.js), so the Worker doesn't keep a second copy of it.
+  // Inputs: player_injuries, the NHL roster (KV-shared with /roster) and
+  // /prospects, the affiliate's ahl_players / season stats / game boxes for
+  // this AHL season and the last regular one, and a year of this team's
+  // nhl_transactions. 1hr KV, like /injuries.
+  if (url.pathname === '/nhl/callup-watch') {
+    const team = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const ahlTeamId = parseInt(url.searchParams.get('ahlTeamId') || '0', 10);
+    if (!/^[A-Z]{2,3}$/.test(team)) return badRequest('invalid team');
+    if (!ahlTeamId) return badRequest('ahlTeamId param required');
+
+    return cachedJson(env, `nhl:callup-watch:${team}:${ahlTeamId}`, 3600, async () => {
+      const { seasonId: currentSeason } = await resolveAHLSeason(env);
+      const seasons = (await getAllAHLSeasons(env)) || [];
+      const curStart = seasons.find(s => s.seasonId === Number(currentSeason))?.startDate || '9999';
+      const previousSeason = seasons
+        .filter(s => s.seasonType === 'regular' && s.seasonId !== Number(currentSeason) && (s.startDate || '') < curStart)
+        .sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''))[0]?.seasonId ?? null;
+      const seasonIds = [currentSeason, previousSeason].filter(Boolean).join(',');
+      const yearAgo = new Date(Date.now() - 365 * 86400 * 1000).toISOString().slice(0, 10);
+
+      const rosterP = (async () => {
+        const cached = await kvGet(env, rosterKey(team));
+        if (cached) return cached;
+        const fresh = await nhlGet(`${NHL_BASE}/roster/${team}/current`);
+        await kvPut(env, rosterKey(team), fresh, ROSTER_TTL);
+        return fresh;
+      })().catch(() => ({}));
+      const prospectsP = (async () => {
+        const key = `nhl:prospects:${team}`;
+        const cached = await kvGet(env, key);
+        if (cached) return cached;
+        const fresh = await nhlGet(`${NHL_BASE}/prospects/${team}`);
+        await kvPut(env, key, fresh, 6 * 3600);
+        return fresh;
+      })().catch(() => ({}));
+
+      const sb = path => sbRowsOrThrow(path).catch(() => []);
+      const [injuries, roster, prospectsRaw, ahlPlayers, transactions] = await Promise.all([
+        sb(`player_injuries?team=eq.${team}&select=player_id,player_name,status,injury_type,return_date`),
+        rosterP,
+        prospectsP,
+        sb(`ahl_players?team_id=eq.${ahlTeamId}&select=player_id,first_name,last_name,position,birth_date,jersey_number&limit=200`),
+        sb(`nhl_transactions?team=eq.${team}&tx_date=gte.${yearAgo}&select=tx_date,description,categories,primary_category&order=tx_date.desc&limit=500`),
+      ]);
+
+      const ahlIds = ahlPlayers.map(p => p.player_id);
+      const idList = ahlIds.length ? ahlIds.join(',') : '0';
+      const [skaterSeasons, goalieSeasons, skaterBox, goalieBox] = await Promise.all([
+        sb(`ahl_player_seasons?player_id=in.(${idList})&season_id=in.(${seasonIds})&select=player_id,season_id,gp,goals,assists,points`),
+        sb(`ahl_goalie_seasons?player_id=in.(${idList})&season_id=in.(${seasonIds})&select=player_id,season_id,gp,saves,shots_against,goals_against`),
+        sb(`ahl_skater_game_box?team_id=eq.${ahlTeamId}&season_id=eq.${currentSeason}&select=game_id,player_id,goals,assists,points&order=game_id.desc&limit=1000`),
+        sb(`ahl_goalie_game_box?team_id=eq.${ahlTeamId}&season_id=eq.${currentSeason}&select=game_id,player_id,saves,shots_against,goals_against,toi_seconds&order=game_id.desc&limit=300`),
+      ]);
+
+      // Injured players' positions: the roster first, then players (an
+      // injured-non-roster player isn't on /roster/current).
+      const rosterPlayers = ['forwards', 'defensemen', 'goalies'].flatMap(g => roster?.[g] || []);
+      const nhlPositions = Object.fromEntries(rosterPlayers.map(r => [r.id, r.positionCode]));
+      const missing = injuries.map(i => i.player_id).filter(id => id && !nhlPositions[id]);
+      if (missing.length) {
+        for (const r of await sb(`players?id=in.(${missing.join(',')})&select=id,position`)) nhlPositions[r.id] = r.position;
+      }
+      // ESPN rows whose NHL id didn't resolve (Columbus's Merzlikins,
+      // 2026-10): by name, from the roster and then players.
+      const nhlPositionsByName = Object.fromEntries(rosterPlayers.map(r =>
+        [nameKey(`${r.firstName?.default ?? ''}${r.lastName?.default ?? ''}`), r.positionCode]));
+      const noId = injuries.filter(i => !i.player_id && !nhlPositionsByName[nameKey(i.player_name)]).map(i => i.player_name);
+      if (noId.length) {
+        const list = noId.map(n => `"${n.replace(/"/g, '')}"`).join(',');
+        for (const r of await sb(`players?name=in.(${encodeURIComponent(list)})&select=name,position`)) {
+          nhlPositionsByName[nameKey(r.name)] = r.position;
+        }
+      }
+
+      return {
+        ahlTeamId,
+        seasons: { current: Number(currentSeason), previous: previousSeason },
+        asOf: new Date().toISOString(),
+        ...buildCallupWatch({
+          team,
+          injuries,
+          nhlPositions,
+          nhlPositionsByName,
+          prospects: ['forwards', 'defensemen', 'goalies'].flatMap(g => prospectsRaw?.[g] || []),
+          nhlRoster: rosterPlayers,
+          ahlPlayers,
+          skaterSeasons,
+          goalieSeasons,
+          skaterBox,
+          goalieBox,
+          transactions,
+          currentSeason: Number(currentSeason),
+          previousSeason,
+        }),
+      };
     });
   }
 
