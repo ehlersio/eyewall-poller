@@ -36,7 +36,7 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { buildHockeyTechPrediction } from './hockeytechPrediction.js';
 
 // Elo constants -- match eyewall-pipeline/elo.py (and nhl.js's
@@ -66,8 +66,9 @@ function seasonActive() {
  *                                  -- /prediction's "last regular season"
  * @param {number} cfg.leagueAvgFloor fewest teams /prediction's league-
  *                                  average PP%/PK% may be the mean of
- * @param {object} cfg.ht           { base, key, headers } for HockeyTech;
- *                                  read at call time, never at creation
+ * @param {object} cfg.ht           { base, key, headers, siteId, leagueId }
+ *                                  for HockeyTech; read at call time, never
+ *                                  at creation
  * @returns {{ handle: Function, poll: Function, fetchNews: Function }}
  */
 export function createHockeyTechLeague(cfg) {
@@ -78,6 +79,11 @@ export function createHockeyTechLeague(cfg) {
   const htGameUrl = (view, gameId) =>
     `${cfg.ht.base}?feed=statviewfeed&view=${view}&game_id=${gameId}&key=${cfg.ht.key}&client_code=${key}&lang=en&league_id=`;
   const htFetch = (url) => fetch(url, { headers: cfg.ht.headers });
+  // game_log rows with live status/scores from the scorebar (shared.js).
+  const live = (env, rows) => withLiveScorebar(env, {
+    client: key, base: cfg.ht.base, key: cfg.ht.key,
+    siteId: cfg.ht.siteId, leagueId: cfg.ht.leagueId, headers: cfg.ht.headers,
+  }, rows);
 
   // ?season= param, live-resolving the current season when omitted.
   async function seasonParam(url, env) {
@@ -175,12 +181,13 @@ export function createHockeyTechLeague(cfg) {
       const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
       const todayStr = nowET.toISOString().slice(0, 10);
 
-      const games = await sbRowsOr(
+      const logged = await sbRowsOr(
         `${table('game_log')}?game_date=eq.${todayStr}&season_id=eq.${seasonId}` +
         `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10`,
         []
       );
-      if (!games?.length) return;
+      if (!logged?.length) return;
+      const games = await live(env, logged);
 
       // Live games, plus games that have gone final -- pollGame() sends a
       // final game's game-over push once, then skips it.
@@ -480,9 +487,18 @@ export function createHockeyTechLeague(cfg) {
       const season = await seasonParam(url, env);
       const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
       if (!teamId) return badRequest('teamId param required');
-      return cachedJson(env, `${key}:schedule:${teamId}:${season}`, 1800, () => sbRows(
-        `${table('game_log')}?season_id=eq.${season}&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&order=game_date.asc&limit=150`
-      ));
+      // The 30-min cache holds game_log as written; live status is laid
+      // over it on every read, so a game finishing shows within a minute.
+      const kvKey = `${key}:schedule:${teamId}:${season}`;
+      let rows = await kvGet(env, kvKey);
+      if (!rows) {
+        rows = await sbRows(
+          `${table('game_log')}?season_id=eq.${season}&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&order=game_date.asc&limit=150`
+        );
+        if (rows instanceof Response) return rows;
+        await kvPut(env, kvKey, rows, 1800);
+      }
+      return json(await live(env, rows));
     }
 
     // GET /{league}/roster?teamId=444
@@ -584,7 +600,9 @@ export function createHockeyTechLeague(cfg) {
       const season = await seasonParam(url, env);
       const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
       if (!teamId) return badRequest('teamId param required');
-      return cachedJson(env, `${key}:shots:${teamId}:${season}`, 3600, async () => {
+      // Empty means the season's first games aren't ingested yet (they
+      // land with the next nightly run): check again soon, not in an hour.
+      return cachedJson(env, `${key}:shots:${teamId}:${season}`, (rows) => (rows.length ? 3600 : 300), async () => {
         const PAGE = 1000;
         const allRows = [];
         let offset = 0;
@@ -612,7 +630,10 @@ export function createHockeyTechLeague(cfg) {
       const season = await seasonParam(url, env);
       const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
       if (!teamId) return badRequest('teamId param required');
-      return cachedJson(env, `${key}:team-season-summary:${teamId}:${season}`, 3600, async () => {
+      // A game's shots land with the next nightly run, hours after the
+      // final horn: until then this is all zeros, so don't hold it an hour.
+      const summaryTtl = (d) => (d.sog.car + d.sog.opp > 0 ? 3600 : 300);
+      return cachedJson(env, `${key}:team-season-summary:${teamId}:${season}`, summaryTtl, async () => {
         const gameRows = await sbRows(
           `${table('game_log')}?season_id=eq.${season}&game_state=eq.Final&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&select=game_id`
         );
@@ -625,8 +646,10 @@ export function createHockeyTechLeague(cfg) {
           []
         );
 
-        const empty = { teamId, season, gamesPlayed: gameIds.length, sog: { car: 0, opp: 0 }, ppPct: tsRow?.pp_pct ?? null, pkPct: tsRow?.pk_pct ?? null };
-        if (!gameIds.length) return empty;
+        // The nightly run writes a team_seasons row before opening night,
+        // with pp_pct/pk_pct at 0 -- a 0.0% nobody earned. No finished
+        // game, no percentage.
+        if (!gameIds.length) return { teamId, season, gamesPlayed: 0, sog: { car: 0, opp: 0 }, ppPct: null, pkPct: null };
 
         let sogCar = 0, sogOpp = 0;
         const PAGE = 1000;
@@ -1216,7 +1239,8 @@ Only reference the two teams named above and the numbers given -- no player name
         if (rows instanceof Response) return rows;
 
         const gameDate = rows[0]?.game_date || null;
-        const games = rows.filter(g => g.game_date === gameDate).map(g => {
+        const dayRows = await live(env, rows.filter(g => g.game_date === gameDate));
+        const games = dayRows.map(g => {
           const status = deriveGameStatus(g);
           return {
             gameId:       g.game_id,
@@ -1364,7 +1388,7 @@ Only reference the two teams named above and the numbers given -- no player name
           `${table('game_log')}?game_id=eq.${gameId}&select=home_team_id,away_team_id,game_state,game_status_code&limit=1`,
           []
         ).catch(() => []);
-        const gameRow = gameRows[0] || null;
+        const gameRow = gameRows[0] ? (await live(env, gameRows))[0] : null;
 
         let homeScore = 0, awayScore = 0, gameStatus = 'pre';
         if (gameRow) {
