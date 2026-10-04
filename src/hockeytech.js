@@ -628,6 +628,19 @@ export function createHockeyTechLeague(cfg) {
       });
     }
 
+    // GET /{league}/game-shots?gameId=1029084
+    // Both teams' shots and goals in one game, for the shot map's single-
+    // game view (/shots holds one team's shots only). A game's rows land
+    // with the nightly run after it ends, so an empty answer is re-checked
+    // after 5 minutes, not held an hour.
+    if (url.pathname === `${P}/game-shots`) {
+      const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+      if (!gameId) return badRequest('gameId param required');
+      return cachedJson(env, `${key}:game-shots:${gameId}`, (rows) => (rows.length ? 3600 : 300), () => sbRows(
+        `${table('shot_events')}?game_id=eq.${gameId}&order=period_id.asc,time_seconds.asc&limit=1000`
+      ));
+    }
+
     // GET /{league}/team-season-summary?teamId=444&season=90
     // Season-aggregate SOG for the Shot Map's "All N" summary card, plus
     // PP%/PK% from {league}_team_seasons. Deliberately no hits/blocked/

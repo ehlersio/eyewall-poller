@@ -277,7 +277,8 @@ Key patterns:
 | `ahl:roster:{teamId}` / `echl:roster:{teamId}` | 24hr | Bare roster (name + jersey) — rarely changes |
 | `ahl:players:{teamId}:{season}` / `echl:players:{teamId}:{season}` | 1hr | Roster + skater/goalie season stats, name-enriched |
 | `ahl:leagueplayers:{season}` / `echl:leagueplayers:{season}` | 2hr | All teams' skater + goalie season stats (Leaders tab) |
-| `ahl:shots:{teamId}:{season}` / `echl:shots:{teamId}:{season}` | 1hr | Shot events for team heat map — paginated fetch (1000-row Supabase batches), cached whole |
+| `ahl:shots:{teamId}:{season}` / `echl:shots:{teamId}:{season}` | 1hr / 5min empty | Shot events for team heat map — paginated fetch (1000-row Supabase batches), cached whole |
+| `ahl:game-shots:{gameId}` / `echl:game-shots:{gameId}` | 1hr / 5min empty | One game's shots, both teams. Empty until the nightly run ingests the game |
 | `ahl:team-season-summary:{teamId}:{season}` / `echl:team-season-summary:{teamId}:{season}` | 1hr | Season-aggregate SOG + PP%/PK% — deliberately no hits/faceoff/penalties section (no data source, see [AHL & ECHL](#ahl--echl)) |
 | `ahl:player:landing:{playerId}:{season|'latest'}` / `echl:player:landing:{...}` | 1hr | Player-popup self-fetch: identity + one season's stat line |
 | `ahl:player:career:{playerId}` / `echl:player:career:{playerId}` | 24hr | Career Regular Season/Playoffs totals, live HockeyTech `view=player` proxy |
@@ -423,6 +424,7 @@ Added 2026-08 across 6 phases ([eyewall-poller#69](https://github.com/ehlersio/e
 | `GET` | `/ahl/players?teamId=&season=` | Roster + skater/goalie season stats, name-enriched, jersey-sorted roster list for the Roster tab |
 | `GET` | `/ahl/league-players?season=` | All teams' skater + goalie season stats (Leaders tab) |
 | `GET` | `/ahl/shots?teamId=&season=` | Shot events for team heat map. Only `shot`/`goal` `event_type` rows exist — no `blocked_shot` in this data source |
+| `GET` | `/ahl/game-shots?gameId=` | Both teams' shot events in one game, in game order, for the shot map's single-game view (`/ahl/shots` holds one team's shots only) |
 | `GET` | `/ahl/team-season-summary?teamId=&season=` | Season-aggregate SOG (car vs. opp) + PP%/PK% for the Shot Map's "All N" summary card. Deliberately **no** hits/blocked/faceoff/penalties section, unlike `/pwhl/team-season-summary` — no `ahl_pbp_events` table and no `blocked_shot` event type exist for this league at all; don't fabricate zeros for these fields |
 | `GET` | `/ahl/player/landing?id=&season=` | Player-popup self-fetch: identity + one season's stat line, merged (`ahl_players` + `ahl_player_seasons`/`ahl_goalie_seasons`). Supabase-only, no HockeyTech call needed. `season` can be a regular or playoff `season_id`; omitted, the most recent regular season |
 | `GET` | `/ahl/player/career?id=` | Career Regular Season/Playoffs totals, live proxy of HockeyTech's `view=player` server-computed `careerStats` Total rows — confirmed live to use the identical shape as `/pwhl/player/career`, reuses `shared.js`'s `extractCareerTotal`/`extractRows`/`extractBioPoints`/`extractPhoto` unmodified. No `?season=` param — career totals are season-independent |
@@ -457,6 +459,7 @@ Added 2026-08 across the same 6 phases as AHL ([eyewall-poller#75](https://githu
 | `GET` | `/echl/players?teamId=&season=` | Roster + skater/goalie season stats, name-enriched |
 | `GET` | `/echl/league-players?season=` | All teams' skater + goalie season stats (Leaders tab) |
 | `GET` | `/echl/shots?teamId=&season=` | Shot events for team heat map. Only `shot`/`goal` `event_type` rows exist |
+| `GET` | `/echl/game-shots?gameId=` | Both teams' shot events in one game, in game order, for the shot map's single-game view (`/echl/shots` holds one team's shots only) |
 | `GET` | `/echl/team-season-summary?teamId=&season=` | Season-aggregate SOG + PP%/PK%. Same deliberate omission of hits/blocked/faceoff/penalties as `/ahl/team-season-summary` — no `echl_pbp_events` table, no `blocked_shot` event type |
 | `GET` | `/echl/player/landing?id=&season=` | Player-popup self-fetch: identity + one season's stat line (regular or playoff `season_id`). Added 2026-08-30, same as `/ahl/player/landing` |
 | `GET` | `/echl/player/career?id=` | Career Regular Season/Playoffs totals, live HockeyTech `view=player` proxy — reuses the same generic `shared.js` parsers as AHL/PWHL, confirmed identical shape |
