@@ -298,6 +298,40 @@ describe('GET /ahl/team-season-summary', () => {
   })
 })
 
+describe('GET /ahl/game-shots', () => {
+  const gameShots = async (rows, qs = 'gameId=1029084') => {
+    const puts = []
+    const env = makeEnv({ CACHE: { async get() { return null }, async put(k, v, o) { puts.push([k, o.expirationTtl]) } } })
+    globalThis.fetch = vi.fn(() => Promise.resolve({ ok: true, json: async () => rows }))
+    const res = await handleAHL(
+      makeRequest(`/ahl/game-shots?${qs}`), env, makeCtx(),
+      new URL(`https://example.com/ahl/game-shots?${qs}`)
+    )
+    return { res, puts }
+  }
+
+  it("returns both teams' shots for one game, in game order", async () => {
+    const rows = [{ team_id: 330, event_type: 'shot' }, { team_id: 321, event_type: 'goal' }]
+    const { res, puts } = await gameShots(rows)
+    expect(await res.json()).toEqual(rows)
+    const url = String(globalThis.fetch.mock.calls[0][0])
+    expect(url).toContain('ahl_shot_events?game_id=eq.1029084')
+    expect(url).not.toContain('team_id')
+    expect(url).toContain('order=period_id.asc,time_seconds.asc')
+    expect(puts).toEqual([['ahl:game-shots:1029084', 3600]])
+  })
+
+  it('re-checks a game with no shots yet after 5 minutes', async () => {
+    const { puts } = await gameShots([])
+    expect(puts).toEqual([['ahl:game-shots:1029084', 300]])
+  })
+
+  it('requires gameId', async () => {
+    const { res } = await gameShots([], '')
+    expect(res.status).toBe(400)
+  })
+})
+
 describe('GET /ahl/shots -- cache TTL', () => {
   const shots = async (rows) => {
     const puts = []
