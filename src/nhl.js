@@ -5,7 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
+import { kvGet, kvPut, json, finalLabel, endedInSuffix, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
 import { resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
@@ -827,18 +827,20 @@ async function notifyGameOver(env, game) {
   const homeScore = game.homeTeam?.score ?? 0;
   const awayScore = game.awayTeam?.score ?? 0;
 
+  const endedIn   = game.gameOutcome?.lastPeriodType;
+
   for (const [abbr, myScore, oppScore, oppAbbr] of [
     [homeAbbr, homeScore, awayScore, awayAbbr],
     [awayAbbr, awayScore, homeScore, homeAbbr],
   ]) {
     const won = myScore > oppScore;
     await broadcast(env, won ? {
-      title: `🏆 ${abbr} Win! ${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
+      title: `🏆 ${abbr} Win! ${abbr} ${myScore}–${oppScore} ${oppAbbr}${endedInSuffix(endedIn)}`,
       body:  TEAM_CONFIGS[abbr]?.winCopy || 'Final score — great win!',
       tag:   `win-${game.id}-${abbr}`,
       url:   summaryUrl(game.id, 'game', abbr),
     } : {
-      title: `Final: ${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
+      title: `${finalLabel(endedIn)}: ${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
       body:  TEAM_CONFIGS[abbr]?.lossCopy || 'Final score.',
       tag:   `final-${game.id}-${abbr}`,
       url:   summaryUrl(game.id, 'game', abbr),

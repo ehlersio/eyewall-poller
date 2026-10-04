@@ -381,13 +381,20 @@ describe('GET /ahl/today', () => {
     expect(scorebarUrl).toContain('league_id=4')
   })
 
-  it("doesn't call the scorebar when every game is already final", async () => {
+  // game_log's game_state says "Final" for OT and shootout games too.
+  it("reports OT/SO from the scorebar's long status, even once game_log says final", async () => {
     globalThis.fetch = withScorebar(
-      [],
-      { game_id: 5, game_date: '2026-01-15', home_team_id: 321, away_team_id: 330, home_score: 3, away_score: 0, game_state: 'Final', game_status_code: 4 },
+      [
+        { ID: '5', GameStatus: '4', GameStatusString: 'Final', GameStatusStringLong: 'Final OT', HomeGoals: '3', VisitorGoals: '2' },
+        { ID: '6', GameStatus: '4', GameStatusString: 'Final', GameStatusStringLong: 'Final SO', HomeGoals: '1', VisitorGoals: '2' },
+        { ID: '7', GameStatus: '4', GameStatusString: 'Final', GameStatusStringLong: 'Final', HomeGoals: '4', VisitorGoals: '1' },
+      ],
+      { game_id: 5, game_date: '2026-01-15', home_team_id: 316, away_team_id: 411, home_score: 3, away_score: 2, game_state: 'Final', game_status_code: 4 },
+      { game_id: 6, game_date: '2026-01-15', home_team_id: 380, away_team_id: 389, home_score: 1, away_score: 2, game_state: 'Final', game_status_code: 4 },
+      { game_id: 7, game_date: '2026-01-15', home_team_id: 321, away_team_id: 330, home_score: 4, away_score: 1, game_state: 'Final', game_status_code: 4 },
     )
-    await today()
-    expect(globalThis.fetch.mock.calls.some(c => String(c[0]).includes('view=scorebar'))).toBe(false)
+    const body = await (await today()).json()
+    expect(body.map(g => g.endedIn)).toEqual(['OT', 'SO', null])
   })
 
   it('falls back to game_log as written when the scorebar is down', async () => {
@@ -538,5 +545,20 @@ describe('GET /ahl/prediction -- no made-up stats', () => {
     expect(prompt).not.toContain('Expected score')
     expect(body.expHome).toBeNull()
     expect(body.expAway).toBeNull()
+  })
+})
+
+describe('finalLabel / endedInFromStatus (shared.js)', () => {
+  it('labels a finished game Final, Final/OT or Final/SO', async () => {
+    const { finalLabel, endedInSuffix } = await import('../shared.js')
+    expect([finalLabel(null), finalLabel('REG'), finalLabel('OT'), finalLabel('SO')])
+      .toEqual(['Final', 'Final', 'Final/OT', 'Final/SO'])
+    expect([endedInSuffix(undefined), endedInSuffix('OT'), endedInSuffix('SO')]).toEqual(['', ' (OT)', ' (SO)'])
+  })
+
+  it("reads OT/SO from HockeyTech's long status text only for a final", async () => {
+    const { endedInFromStatus } = await import('../shared.js')
+    expect(['Final', 'Final OT', 'Final SO', 'Final 2OT', 'final so', '7:00 PM EDT', 'OT', '', null].map(endedInFromStatus))
+      .toEqual([null, 'OT', 'SO', 'OT', 'SO', null, null, null, null])
   })
 })
