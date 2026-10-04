@@ -2841,6 +2841,27 @@ describe('poll() — multi-team dual broadcast', () => {
     expect(nyrLoss?.[1].url).toBe('/?summary=game&game=2025020777&team=NYR')
   })
 
+  it('says Final/OT on the loss and (OT) on the win for an overtime game', async () => {
+    const env = makeEnv({
+      VAPID_PRIVATE_KEY: 'fake-key-for-test',
+      CACHE: makeFakeCache({
+        'push:subs': [subFor('TOR', 'https://push.example/tor-fan'), subFor('NYR', 'https://push.example/nyr-fan')],
+      }),
+    })
+    mockScoreboardAndPbp({ completedGames: [{
+      id: 2025020778, gameState: 'FINAL', gameType: 2, gameDate: '2026-01-15',
+      homeTeam: { id: 10, abbrev: 'TOR', score: 3 },
+      awayTeam: { id: 3,  abbrev: 'NYR', score: 2 },
+      gameOutcome: { lastPeriodType: 'OT' },
+    }] })
+
+    await poll(env, makeCtx())
+
+    const titles = sendPushMock.mock.calls.map(([, p]) => p.title)
+    expect(titles).toContain('🏆 TOR Win! TOR 3–2 NYR (OT)')
+    expect(titles).toContain('Final/OT: NYR 2–3 TOR')
+  })
+
   it('does not call generateGameSummary/AI for a completed game that does not involve CAR', async () => {
     const env = makeEnv({
       VAPID_PRIVATE_KEY: 'fake-key-for-test',

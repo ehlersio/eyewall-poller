@@ -152,6 +152,9 @@ export async function fetchScorebar(env, ht) {
         game_state:       g.GameStatusString || '',
         home_score:       parseInt(g.HomeGoals, 10) || 0,
         away_score:       parseInt(g.VisitorGoals, 10) || 0,
+        // GameStatusString is plain "Final" whatever the ending; the long
+        // form says "Final OT" / "Final SO".
+        ended_in:         code === 4 ? endedInFromStatus(g.GameStatusStringLong) : null,
       };
     }
     await kvPut(env, kvKey, map, 60);
@@ -162,12 +165,37 @@ export async function fetchScorebar(env, ht) {
 }
 
 // game_log rows with the scorebar's live columns laid over them. Skips the
-// fetch when every row is already final: the scorebar only ever moves a
-// game toward final, so there's nothing for it to correct.
-export async function withLiveScorebar(env, ht, rows) {
-  if (!rows.some(r => deriveGameStatus(r) !== 'final')) return rows;
+// fetch when every row is already final -- the scorebar only ever moves a
+// game toward final -- unless `withEndedIn`: the AHL/ECHL game_log may not
+// carry ended_in, so a route that reports OT/SO for today's finals asks
+// the scorebar anyway.
+export async function withLiveScorebar(env, ht, rows, { withEndedIn = false } = {}) {
+  if (!withEndedIn && !rows.some(r => deriveGameStatus(r) !== 'final')) return rows;
   const live = await fetchScorebar(env, ht);
   return rows.map(r => (live[r.game_id] ? { ...r, ...live[r.game_id] } : r));
+}
+
+// 'OT' | 'SO' | null from HockeyTech's long status text ("Final OT",
+// "Final SO", "Final 2OT"); mirrors eyewall-pipeline's
+// hockeytech_leagues.ended_in().
+export function endedInFromStatus(status) {
+  const words = String(status || '').toUpperCase().trim().split(/\s+/);
+  if (words[0] !== 'FINAL') return null;
+  if (words.includes('SO')) return 'SO';
+  if (words.slice(1).some(w => w.endsWith('OT'))) return 'OT';
+  return null;
+}
+
+// The label for a finished game in every league: 'Final' after regulation,
+// 'Final/OT' or 'Final/SO' otherwise. `endedIn` is 'OT' | 'SO' | anything
+// else (NHL's gameOutcome.lastPeriodType 'REG', null).
+export function finalLabel(endedIn) {
+  return endedIn === 'OT' || endedIn === 'SO' ? `Final/${endedIn}` : 'Final';
+}
+
+// ' (OT)' / ' (SO)' for a win headline, '' after regulation.
+export function endedInSuffix(endedIn) {
+  return endedIn === 'OT' || endedIn === 'SO' ? ` (${endedIn})` : '';
 }
 
 // ── Response helpers ──────────────────────────────────────────

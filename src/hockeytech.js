@@ -36,7 +36,7 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { buildHockeyTechPrediction } from './hockeytechPrediction.js';
 
 // Elo constants -- match eyewall-pipeline/elo.py (and nhl.js's
@@ -80,10 +80,10 @@ export function createHockeyTechLeague(cfg) {
     `${cfg.ht.base}?feed=statviewfeed&view=${view}&game_id=${gameId}&key=${cfg.ht.key}&client_code=${key}&lang=en&league_id=`;
   const htFetch = (url) => fetch(url, { headers: cfg.ht.headers });
   // game_log rows with live status/scores from the scorebar (shared.js).
-  const live = (env, rows) => withLiveScorebar(env, {
+  const live = (env, rows, opts) => withLiveScorebar(env, {
     client: key, base: cfg.ht.base, key: cfg.ht.key,
     siteId: cfg.ht.siteId, leagueId: cfg.ht.leagueId, headers: cfg.ht.headers,
-  }, rows);
+  }, rows, opts);
 
   // ?season= param, live-resolving the current season when omitted.
   async function seasonParam(url, env) {
@@ -385,26 +385,33 @@ export function createHockeyTechLeague(cfg) {
         await kvPut(env, finalKey, true, 48 * 3600);
         const hs = game.home_score ?? 0;
         const as = game.away_score ?? 0;
+        // A game the pipeline already marked final skipped the scorebar
+        // overlay, so ask it now for OT/SO -- once, for this push.
+        const endedIn = 'ended_in' in game
+          ? game.ended_in
+          : (await live(env, [game], { withEndedIn: true }))[0].ended_in;
+        const fin = finalLabel(endedIn);
+        const ot  = endedInSuffix(endedIn);
 
         await send(hs > as ? {
-          title: `🏆 ${homeAbbr} Win! ${homeAbbr} ${hs}–${as} ${awayAbbr}`,
+          title: `🏆 ${homeAbbr} Win! ${homeAbbr} ${hs}–${as} ${awayAbbr}${ot}`,
           body:  'Final score — great win!',
           tag:   `${key}-win-${gameId}-home`,
           url,
         } : {
-          title: `Final: ${homeAbbr} ${hs}–${as} ${awayAbbr}`,
+          title: `${fin}: ${homeAbbr} ${hs}–${as} ${awayAbbr}`,
           body:  'Final score.',
           tag:   `${key}-final-${gameId}-home`,
           url,
         }, `${label}:${homeAbbr}`, hs > as ? 'win' : 'loss');
 
         await send(as > hs ? {
-          title: `🏆 ${awayAbbr} Win! ${awayAbbr} ${as}–${hs} ${homeAbbr}`,
+          title: `🏆 ${awayAbbr} Win! ${awayAbbr} ${as}–${hs} ${homeAbbr}${ot}`,
           body:  'Final score — great win!',
           tag:   `${key}-win-${gameId}-away`,
           url,
         } : {
-          title: `Final: ${awayAbbr} ${as}–${hs} ${homeAbbr}`,
+          title: `${fin}: ${awayAbbr} ${as}–${hs} ${homeAbbr}`,
           body:  'Final score.',
           tag:   `${key}-final-${gameId}-away`,
           url,
@@ -1239,7 +1246,7 @@ Only reference the two teams named above and the numbers given -- no player name
         if (rows instanceof Response) return rows;
 
         const gameDate = rows[0]?.game_date || null;
-        const dayRows = await live(env, rows.filter(g => g.game_date === gameDate));
+        const dayRows = await live(env, rows.filter(g => g.game_date === gameDate), { withEndedIn: true });
         const games = dayRows.map(g => {
           const status = deriveGameStatus(g);
           return {
@@ -1256,6 +1263,9 @@ Only reference the two teams named above and the numbers given -- no player name
             // ("7:00 pm EST"), its live wording once under way. This feed
             // has no period/clock columns, unlike NHL's.
             statusDetail: g.game_state || null,
+            // 'OT' | 'SO' once final past regulation (the scoreboard's
+            // FINAL/OT), from the scorebar or game_log's ended_in.
+            endedIn:      status === 'final' ? (g.ended_in ?? null) : null,
           };
         });
 

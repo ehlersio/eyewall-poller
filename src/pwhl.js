@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction } from './hockeytechPrediction.js';
 
@@ -239,7 +239,7 @@ function pwhlSeasonActive() {
 // game_log rows with live status/scores from HockeyTech's scorebar -- see
 // fetchScorebar() in shared.js for why game_log alone lags.
 const PWHL_SCOREBAR = { client: 'pwhl', base: HT_BASE, key: HT_KEY, siteId: '0', leagueId: '', headers: HT_HDR };
-const withLive = (env, rows) => withLiveScorebar(env, PWHL_SCOREBAR, rows);
+const withLive = (env, rows, opts) => withLiveScorebar(env, PWHL_SCOREBAR, rows, opts);
 
 export async function pollPWHL(env) {
   if (!pwhlSeasonActive()) { console.log('[PWHL poll] Off-season — skipping'); return; }
@@ -470,15 +470,22 @@ async function pollPWHLGame(env, game) {
       await kvPut(env, finalKey, true, 48 * 3600);
       const hs = game.home_score ?? 0;
       const as = game.away_score ?? 0;
+      // A game the pipeline already marked final skipped the scorebar
+      // overlay, so ask it now for OT/SO -- once, for this push.
+      const endedIn = 'ended_in' in game
+        ? game.ended_in
+        : (await withLive(env, [game], { withEndedIn: true }))[0].ended_in;
+      const fin = finalLabel(endedIn);
+      const ot  = endedInSuffix(endedIn);
 
       // Home team
       await send(hs > as ? {
-        title: `🏆 ${homeAbbr} Win! ${homeAbbr} ${hs}–${as} ${awayAbbr}`,
+        title: `🏆 ${homeAbbr} Win! ${homeAbbr} ${hs}–${as} ${awayAbbr}${ot}`,
         body:  'Final score — great win!',
         tag:   `pwhl-win-${gameId}-home`,
         url:   '/pwhl/shots',
       } : {
-        title: `Final: ${homeAbbr} ${hs}–${as} ${awayAbbr}`,
+        title: `${fin}: ${homeAbbr} ${hs}–${as} ${awayAbbr}`,
         body:  'Final score.',
         tag:   `pwhl-final-${gameId}-home`,
         url:   '/pwhl/shots',
@@ -486,12 +493,12 @@ async function pollPWHLGame(env, game) {
 
       // Away team
       await send(as > hs ? {
-        title: `🏆 ${awayAbbr} Win! ${awayAbbr} ${as}–${hs} ${homeAbbr}`,
+        title: `🏆 ${awayAbbr} Win! ${awayAbbr} ${as}–${hs} ${homeAbbr}${ot}`,
         body:  'Final score — great win!',
         tag:   `pwhl-win-${gameId}-away`,
         url:   '/pwhl/shots',
       } : {
-        title: `Final: ${awayAbbr} ${as}–${hs} ${homeAbbr}`,
+        title: `${fin}: ${awayAbbr} ${as}–${hs} ${homeAbbr}`,
         body:  'Final score.',
         tag:   `pwhl-final-${gameId}-away`,
         url:   '/pwhl/shots',
@@ -1729,7 +1736,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       if (rows instanceof Response) return rows;
 
       const gameDate = rows[0]?.game_date || null;
-      const dayRows = await withLive(env, rows.filter(g => g.game_date === gameDate));
+      const dayRows = await withLive(env, rows.filter(g => g.game_date === gameDate), { withEndedIn: true });
       const games = dayRows.map(g => {
         const status = deriveGameStatus(g);
 
@@ -1749,7 +1756,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
           // is no clock in this feed.
           statusDetail: g.game_state || null,
           period:       status === 'live' ? (g.period ?? null) : null,
-          endedIn:      status === 'final' ? (g.shootout ? 'SO' : g.ot ? 'OT' : null) : null,
+          endedIn:      status === 'final' ? (g.ended_in ?? (g.shootout ? 'SO' : g.ot ? 'OT' : null)) : null,
         };
       });
 

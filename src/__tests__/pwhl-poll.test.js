@@ -38,10 +38,11 @@ const subs = [
   { endpoint: 'https://push.example/away', keys: { p256dh: 'x', auth: 'y' }, teamAbbr: `PWHL:${PWHL_TEAM_CODES[AWAY]}` },
 ]
 
-function installFetch(row) {
+function installFetch(row, scorebar = []) {
   globalThis.fetch = vi.fn(async (input) => {
     const url = String(input)
     if (url.includes('/rest/v1/pwhl_game_log')) return { ok: true, json: async () => [row] }
+    if (url.includes('view=scorebar')) return { ok: true, json: async () => ({ SiteKit: { Scorebar: scorebar } }) }
     if (url.includes('gameCenterPlayByPlay')) return { ok: true, text: async () => `(${JSON.stringify(PBP)})` }
     return { ok: true, json: async () => ({}), text: async () => '({})' }
   })
@@ -83,6 +84,23 @@ describe('pollPWHL game-over push', () => {
     await pollPWHL(env)
     expect(sendPushMock).not.toHaveBeenCalled()
     expect(pbpFetched()).toBe(false)
+  })
+
+  // The scorebar's short GameStatusString says "Final" whatever the ending;
+  // its long form carries OT/SO.
+  it('says Final/SO and (SO) for a game decided in a shootout', async () => {
+    const env = makeEnv({ VAPID_PRIVATE_KEY: 'k', CACHE: makeFakeCache({ 'push:subs': subs }) })
+    installFetch(gameRow())
+    await pollPWHL(env)
+
+    sendPushMock.mockClear()
+    await env.CACHE.delete('pwhl:scorebar') // its 60s TTL, run out
+    installFetch(gameRow(), [{
+      ID: String(GAME_ID), GameStatus: '4', GameStatusString: 'Final', GameStatusStringLong: 'Final SO',
+      HomeGoals: '3', VisitorGoals: '2',
+    }])
+    await pollPWHL(env)
+    expect(sent().map(p => p.title)).toEqual(['🏆 BOS Win! BOS 3–2 TOR (SO)', 'Final/SO: TOR 2–3 BOS'])
   })
 
   it('a game already final the first time it is polled gets no game-over push', async () => {
