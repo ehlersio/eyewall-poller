@@ -4880,6 +4880,7 @@ exports[`summary > Supabase unavailable 1`] = `
         "lastName": "Home",
       },
     },
+    "endedIn": null,
     "goalieLog": [
       {
         "firstName": "Home",
@@ -5055,6 +5056,7 @@ exports[`summary > response, upstream requests and KV writes; repeat call 1`] = 
         "lastName": "Home",
       },
     },
+    "endedIn": null,
     "goalieLog": [
       {
         "firstName": "Home",

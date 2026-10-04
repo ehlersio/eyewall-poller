@@ -2562,3 +2562,28 @@ describe('GET /pwhl/transactions', () => {
     expect(res.status).toBe(502)
   })
 })
+
+// The PWHL play-by-play has no shootout events, so the period summary can't
+// tell an OT final from a shootout one without this.
+describe('GET /pwhl/summary -- endedIn', () => {
+  const summaryFor = async (details, extra = {}) => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      text: async () => `(${JSON.stringify({ details, periods: [], homeTeam: {}, visitingTeam: {}, ...extra })})`,
+    }))
+    const res = await handlePWHL(
+      makeRequest('/pwhl/summary?gameId=237'), makeEnv(), makeCtx(),
+      new URL('https://example.com/pwhl/summary?gameId=237')
+    )
+    return (await res.json()).endedIn
+  }
+  it('reads OT/SO from a final game\'s status', async () => {
+    expect(await summaryFor({ final: '1', status: 'Final SO' })).toBe('SO')
+    expect(await summaryFor({ final: '1', status: 'Final OT' })).toBe('OT')
+    expect(await summaryFor({ final: '1', status: 'Final' })).toBe(null)
+  })
+  it('falls back to hasShootout, and says nothing for a game in progress', async () => {
+    expect(await summaryFor({ final: '1', status: '' }, { hasShootout: true })).toBe('SO')
+    expect(await summaryFor({ final: '0', status: '3rd Period' }, { hasShootout: false })).toBe(null)
+  })
+})

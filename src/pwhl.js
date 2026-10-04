@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction } from './hockeytechPrediction.js';
 
@@ -2112,6 +2112,11 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
         },
         homeTeamStats:     raw.homeTeam?.stats     || {},
         visitingTeamStats: raw.visitingTeam?.stats || {},
+        // 'OT' | 'SO' | null for a final. details.status reads "Final SO";
+        // the play-by-play has no shootout events to tell OT from SO by.
+        endedIn: raw.details?.final === '1'
+          ? (endedInFromStatus(raw.details?.status) ?? (raw.hasShootout ? 'SO' : null))
+          : null,
       };
       return payload;
     });
