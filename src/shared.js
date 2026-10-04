@@ -115,6 +115,61 @@ export function deriveGameStatus(gameRow) {
   return 'pre';
 }
 
+// ── HockeyTech live scorebar ──────────────────────────────────
+// {league}_game_log's live columns (game_state, game_status_code, scores)
+// are written by eyewall-pipeline's live-score-refresh.yml, a */5 GitHub
+// schedule that GitHub actually fired every 3-6 hours on 2026-10-03/04 --
+// so a finished AHL game kept reading "live" with a stale score for hours,
+// and a game going live could go unseen. The Worker's per-minute cron now
+// reads the same feed=modulekit&view=scorebar itself (+/-1 day, the window
+// that job reads) and overlays it onto game_log rows; the pipeline job
+// stays as the persistent backstop. Cached 60s under `{client}:scorebar`
+// so the cron and every route share one HockeyTech call a minute.
+//
+// `ht`: { client, base, key, siteId, leagueId, headers }. Resolves to
+// { [gameId]: { game_status_code, game_state, home_score, away_score } },
+// or {} when the feed is unreachable (callers then use game_log as-is).
+export async function fetchScorebar(env, ht) {
+  const kvKey = `${ht.client}:scorebar`;
+  const cached = await kvGet(env, kvKey);
+  if (cached) return cached;
+  try {
+    const res = await fetch(
+      `${ht.base}?feed=modulekit&view=scorebar&numberofdaysback=1&numberofdaysahead=1&limit=100` +
+      `&league_id=${ht.leagueId}&key=${ht.key}&client_code=${ht.client}&site_id=${ht.siteId}&lang=en`,
+      { headers: ht.headers }
+    );
+    if (!res.ok) return {};
+    const games = (await res.json())?.SiteKit?.Scorebar;
+    if (!Array.isArray(games)) return {};
+    const map = {};
+    for (const g of games) {
+      const id = parseInt(g.ID, 10);
+      if (!id) continue;
+      const code = parseInt(g.GameStatus, 10);
+      map[id] = {
+        game_status_code: Number.isFinite(code) ? code : null,
+        game_state:       g.GameStatusString || '',
+        home_score:       parseInt(g.HomeGoals, 10) || 0,
+        away_score:       parseInt(g.VisitorGoals, 10) || 0,
+      };
+    }
+    await kvPut(env, kvKey, map, 60);
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+// game_log rows with the scorebar's live columns laid over them. Skips the
+// fetch when every row is already final: the scorebar only ever moves a
+// game toward final, so there's nothing for it to correct.
+export async function withLiveScorebar(env, ht, rows) {
+  if (!rows.some(r => deriveGameStatus(r) !== 'final')) return rows;
+  const live = await fetchScorebar(env, ht);
+  return rows.map(r => (live[r.game_id] ? { ...r, ...live[r.game_id] } : r));
+}
+
 // ── Response helpers ──────────────────────────────────────────
 
 export function json(val) {

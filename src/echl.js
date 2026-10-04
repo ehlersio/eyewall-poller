@@ -77,6 +77,8 @@ const echl = createHockeyTechLeague({
     get base()    { return ECHL_HT_BASE; },
     get key()     { return ECHL_HT_KEY; },
     get headers() { return ECHL_HT_HDR; },
+    siteId:   '0',
+    leagueId: '1',
   },
 });
 

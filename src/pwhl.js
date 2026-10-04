@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction } from './hockeytechPrediction.js';
 
@@ -236,6 +236,11 @@ function pwhlSeasonActive() {
   return month >= 11 || month <= 6;
 }
 
+// game_log rows with live status/scores from HockeyTech's scorebar -- see
+// fetchScorebar() in shared.js for why game_log alone lags.
+const PWHL_SCOREBAR = { client: 'pwhl', base: HT_BASE, key: HT_KEY, siteId: '0', leagueId: '', headers: HT_HDR };
+const withLive = (env, rows) => withLiveScorebar(env, PWHL_SCOREBAR, rows);
+
 export async function pollPWHL(env) {
   if (!pwhlSeasonActive()) { console.log('[PWHL poll] Off-season — skipping'); return; }
   if (!env.VAPID_PRIVATE_KEY) return;
@@ -248,12 +253,13 @@ export async function pollPWHL(env) {
     const todayStr = nowET.toISOString().slice(0, 10);
 
     // Find today's games
-    const games = await sbRowsOr(
+    const logged = await sbRowsOr(
       `${SB_URL}/rest/v1/pwhl_game_log?game_date=eq.${todayStr}&season_id=eq.${pwhlSeason}` +
       `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10`,
       []
     );
-    if (!games?.length) return;
+    if (!logged?.length) return;
+    const games = await withLive(env, logged);
 
     // Live games, plus games that have gone final -- pollPWHLGame() sends a
     // final game's game-over push once, then skips it.
@@ -1723,7 +1729,8 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       if (rows instanceof Response) return rows;
 
       const gameDate = rows[0]?.game_date || null;
-      const games = rows.filter(g => g.game_date === gameDate).map(g => {
+      const dayRows = await withLive(env, rows.filter(g => g.game_date === gameDate));
+      const games = dayRows.map(g => {
         const status = deriveGameStatus(g);
 
         return {
@@ -1908,7 +1915,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
         `${SB_URL}/rest/v1/pwhl_game_log?game_id=eq.${gameId}&select=home_team_id,away_team_id,game_state,game_status_code&limit=1`,
         []
       ).catch(() => []);
-      const gameRow = gameRows[0] || null;
+      const gameRow = gameRows[0] ? (await withLive(env, gameRows))[0] : null;
 
       let homeScore = 0, awayScore = 0, gameStatus = 'pre';
       if (gameRow) {

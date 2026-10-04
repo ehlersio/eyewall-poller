@@ -294,6 +294,7 @@ Key patterns:
 | `ahl:h2h-narrative:{teamIds}` / `echl:h2h-narrative:{teamIds}` | 24hr | AI narrative layer on the head-to-head stats above |
 | `ahl:news` / `echl:news` | 25hr populated / 5min empty | News feed — 3 AHL sources, 2 ECHL sources (see [AHL & ECHL](#ahl--echl)); same populated/empty TTL split as `pwhl:news` above |
 | `ahl:today:{season}` / `echl:today:{season}` | 60s | Today's games with live status |
+| `ahl:scorebar` / `echl:scorebar` / `pwhl:scorebar` | 60s | HockeyTech's live scorebar (+/-1 day) as `{gameId: {game_status_code, game_state, home_score, away_score}}`, laid over `{league}_game_log` rows by `/today`, `/schedule` (AHL/ECHL), `/live` and the push poll. `game_log`'s live columns come from the pipeline's `live-score-refresh.yml`, a `*/5` GitHub schedule GitHub fired only every 3–6 hours on 2026-10-03/04, so a finished game kept reading live. Not written when every row is already final |
 | `ahl:live:{gameId}` / `echl:live:{gameId}` | 60s live / 1hr final | Live PBP + normalized events. 60s, not 30 — Cloudflare KV's `expiration_ttl` minimum is 60s (see [AHL & ECHL](#ahl--echl)) |
 | `ahl:push:{state|start|period|goal|pen|pull|final}:...` / `echl:push:{...}` | 24-48hr | Per-game push-notification dedup keys (game start, period start, goal, PP, goalie pulled, final) — mirrors NHL/PWHL's own push state-tracking shape, prefixed per league |
 | `config:season:ahl` / `config:season:echl` | 6hr | Live-resolved current AHL/ECHL season `{seasonId, seasonType}` |

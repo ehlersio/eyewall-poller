@@ -10,6 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeEnv, makeCtx, makeRequest, mockFetchWithAI, aiPrompt } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({
+  AHL_HT_BASE: 'https://lscluster.hockeytech.com/feed/index.php',
+  AHL_HT_KEY: 'ccb91f29d6744675',
+  AHL_HT_HDR: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://theahl.com/' },
   resolveAHLSeason: vi.fn().mockResolvedValue({ seasonId: 90, seasonType: 'regular' }),
   getAllAHLSeasonTypes: vi.fn().mockResolvedValue({ 86: 'regular', 88: 'playoffs', 90: 'regular', 92: 'playoffs', 93: 'preseason', 94: 'regular' }),
   // Real shape and dates (HockeyTech's AHL season list, 2026-09-29).
@@ -278,6 +281,40 @@ describe('GET /ahl/team-season-summary', () => {
     expect(body.faceoff).toBeUndefined()
     expect(body.penalties).toBeUndefined()
   })
+
+  // Opening weekend 2026: the nightly run wrote a 94 team_seasons row before
+  // any game (pp_pct/pk_pct 0), and the cards read 0.0% for both.
+  it('returns no PP%/PK% before the team has a finished game, and caches that briefly', async () => {
+    const puts = []
+    const env = makeEnv({ CACHE: { async get() { return null }, async put(k, v, o) { puts.push([k, o.expirationTtl]) } } })
+    globalThis.fetch = vi.fn((url) => Promise.resolve({ ok: true, json: async () =>
+      String(url).includes('ahl_team_seasons') ? [{ pp_pct: 0, pk_pct: 0 }] : [] }))
+    const res = await handleAHL(
+      makeRequest('/ahl/team-season-summary?teamId=330&season=94'), env, makeCtx(),
+      new URL('https://example.com/ahl/team-season-summary?teamId=330&season=94')
+    )
+    expect(await res.json()).toEqual({ teamId: 330, season: 94, gamesPlayed: 0, sog: { car: 0, opp: 0 }, ppPct: null, pkPct: null })
+    expect(puts).toEqual([['ahl:team-season-summary:330:94', 300]])
+  })
+})
+
+describe('GET /ahl/shots -- cache TTL', () => {
+  const shots = async (rows) => {
+    const puts = []
+    const env = makeEnv({ CACHE: { async get() { return null }, async put(k, v, o) { puts.push(o.expirationTtl) } } })
+    globalThis.fetch = vi.fn(() => Promise.resolve({ ok: true, json: async () => rows }))
+    await handleAHL(
+      makeRequest('/ahl/shots?teamId=330&season=94'), env, makeCtx(),
+      new URL('https://example.com/ahl/shots?teamId=330&season=94')
+    )
+    return puts
+  }
+  it('holds shots for an hour', async () => {
+    expect(await shots([{ id: 1, event_type: 'shot' }])).toEqual([3600])
+  })
+  it('re-checks an empty season after 5 minutes (its games may not be ingested yet)', async () => {
+    expect(await shots([])).toEqual([300])
+  })
 })
 
 // The scoreboard's day is whatever day actually has games: today when
@@ -320,6 +357,47 @@ describe('GET /ahl/today', () => {
   it('returns an empty list when the season has no games left at all', async () => {
     globalThis.fetch = rows()
     expect(await (await today()).json()).toEqual([])
+  })
+
+  // game_log's live columns can lag by hours (the GitHub schedule that
+  // refreshes them runs late); HockeyTech's scorebar is the live truth.
+  const withScorebar = (scorebar, ...r) => vi.fn((url) => {
+    const u = String(url)
+    if (u.includes('ahl_game_log')) return Promise.resolve({ ok: true, json: async () => r })
+    if (u.includes('view=scorebar')) return Promise.resolve({ ok: true, json: async () => ({ SiteKit: { Scorebar: scorebar } }) })
+    return Promise.resolve({ ok: true, json: async () => [] })
+  })
+
+  it("lays the scorebar's status and score over a game_log row that's gone stale", async () => {
+    globalThis.fetch = withScorebar(
+      [{ ID: '5', GameStatus: '4', GameStatusString: 'Final', HomeGoals: '3', VisitorGoals: '0' }],
+      { game_id: 5, game_date: '2026-01-15', home_team_id: 321, away_team_id: 330, home_score: 0, away_score: 0, game_state: 'In Progress', game_status_code: 2 },
+    )
+    const env = makeEnv()
+    const body = await (await today(env)).json()
+    expect(body[0]).toMatchObject({ status: 'final', statusDetail: 'Final', homeScore: 3, awayScore: 0 })
+    const scorebarUrl = globalThis.fetch.mock.calls.map(c => String(c[0])).find(u => u.includes('view=scorebar'))
+    expect(scorebarUrl).toContain('client_code=ahl&site_id=3')
+    expect(scorebarUrl).toContain('league_id=4')
+  })
+
+  it("doesn't call the scorebar when every game is already final", async () => {
+    globalThis.fetch = withScorebar(
+      [],
+      { game_id: 5, game_date: '2026-01-15', home_team_id: 321, away_team_id: 330, home_score: 3, away_score: 0, game_state: 'Final', game_status_code: 4 },
+    )
+    await today()
+    expect(globalThis.fetch.mock.calls.some(c => String(c[0]).includes('view=scorebar'))).toBe(false)
+  })
+
+  it('falls back to game_log as written when the scorebar is down', async () => {
+    globalThis.fetch = vi.fn((url) => String(url).includes('view=scorebar')
+      ? Promise.resolve({ ok: false, status: 503, json: async () => ({}) })
+      : Promise.resolve({ ok: true, json: async () => [
+        { game_id: 5, game_date: '2026-01-15', home_team_id: 321, away_team_id: 330, home_score: 1, away_score: 0, game_state: 'In Progress', game_status_code: 2 },
+      ] }))
+    const body = await (await today()).json()
+    expect(body[0]).toMatchObject({ status: 'live', homeScore: 1, awayScore: 0 })
   })
 })
 

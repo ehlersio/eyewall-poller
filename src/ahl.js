@@ -84,6 +84,8 @@ const ahl = createHockeyTechLeague({
     get base()    { return AHL_HT_BASE; },
     get key()     { return AHL_HT_KEY; },
     get headers() { return AHL_HT_HDR; },
+    siteId:   '3',
+    leagueId: '4',
   },
 });
 
