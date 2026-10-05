@@ -39,8 +39,8 @@ export const TEAM_CONFIGS = {
   // Used by teamFilterKeywords() to filter league-wide RSS feeds.
   ANA: { abbr:'ANA', teamId:24, franchiseId:32, displayName:'Anaheim Ducks',         keywords:['ducks','anaheim','drysdale','fowler','terry','zegras'],                       winCopy:"Let's go Ducks! 🦆",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`ANA vs ${o} — puck drop!`, hashtags:['#AnaheimDucks','#LetsGoDucks','#NHL'] },
   BOS: { abbr:'BOS', teamId:6,  franchiseId:6,  displayName:'Boston Bruins',          keywords:['bruins','boston','pastrnak','mcavoy','swayman'],                               winCopy:"Let's go Bruins! 🐻",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`BOS vs ${o} — puck drop!`, hashtags:['#NHLBruins','#BostonBruins','#NHL'] },
-  BUF: { abbr:'BUF', teamId:7,  franchiseId:7,  displayName:'Buffalo Sabres',         keywords:['sabres','buffalo','tuch','power','ukko-pekka'],                                winCopy:"Let's go Sabres! ⚔️",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`BUF vs ${o} — puck drop!`, hashtags:['#Sabres','#LetsGoBuffalo','#NHL'] },
-  CGY: { abbr:'CGY', teamId:20, franchiseId:27, displayName:'Calgary Flames',         keywords:['flames','calgary','huberdeau','weegar','markstrom'],                          winCopy:"Let's go Flames! 🔥",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`CGY vs ${o} — puck drop!`, hashtags:['#Flames','#CofRed','#NHL'] },
+  BUF: { abbr:'BUF', teamId:7,  franchiseId:19, displayName:'Buffalo Sabres',         keywords:['sabres','buffalo','tuch','power','ukko-pekka'],                                winCopy:"Let's go Sabres! ⚔️",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`BUF vs ${o} — puck drop!`, hashtags:['#Sabres','#LetsGoBuffalo','#NHL'] },
+  CGY: { abbr:'CGY', teamId:20, franchiseId:21, displayName:'Calgary Flames',         keywords:['flames','calgary','huberdeau','weegar','markstrom'],                          winCopy:"Let's go Flames! 🔥",      lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`CGY vs ${o} — puck drop!`, hashtags:['#Flames','#CofRed','#NHL'] },
   CAR: { abbr:'CAR', teamId:12, franchiseId:26, displayName:'Carolina Hurricanes',    keywords:['canes','hurricanes','carolina','aho','svechnikov','kotkaniemi','kochetkov'],   winCopy:"Let's go Canes! 🌀",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`CAR vs ${o} — puck drop!`, hashtags:['#LetsGoCanes','#Canes','#NHL','#CarolinaHurricanes','#SoundTheSiren'] },
   CHI: { abbr:'CHI', teamId:16, franchiseId:11, displayName:'Chicago Blackhawks',     keywords:['blackhawks','chicago','hawks','bedard','dickinson'],                          winCopy:"Let's go Blackhawks! 🪶",  lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`CHI vs ${o} — puck drop!`, hashtags:['#Blackhawks','#OneGoal','#NHL'] },
   COL: { abbr:'COL', teamId:21, franchiseId:27, displayName:'Colorado Avalanche',     keywords:['avalanche','colorado','avs','mackinnon','makar','landeskog'],                  winCopy:"Let's go Avs! ❄️",         lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`COL vs ${o} — puck drop!`, hashtags:['#GoAvsGo','#Avalanche','#NHL'] },
@@ -64,7 +64,7 @@ export const TEAM_CONFIGS = {
   STL: { abbr:'STL', teamId:19, franchiseId:18, displayName:'St. Louis Blues',        keywords:['blues','st. louis','thomas','kyrou','binnington'],                            winCopy:"Let's go Blues! 🎵",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`STL vs ${o} — puck drop!`, hashtags:['#STLBlues','#Blues','#NHL'] },
   TBL: { abbr:'TBL', teamId:14, franchiseId:31, displayName:'Tampa Bay Lightning',    keywords:['lightning','tampa bay','bolts','stamkos','kucherov','vasilevskiy'],           winCopy:"Let's go Lightning! ⚡",   lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`TBL vs ${o} — puck drop!`, hashtags:['#GoBolts','#TBLightning','#NHL'] },
   TOR: { abbr:'TOR', teamId:10, franchiseId:5,  displayName:'Toronto Maple Leafs',   keywords:['maple leafs','toronto','leafs','matthews','marner','nylander'],                winCopy:"Let's go Leafs! 🍁",       lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`TOR vs ${o} — puck drop!`, hashtags:['#LeafsForever','#TMLtalk','#NHL'] },
-  UTA: { abbr:'UTA', teamId:59, franchiseId:40, displayName:'Utah Mammoth',           keywords:['mammoth','utah','keller','peterka','villalta'],                               winCopy:"Let's go Mammoth! 🦣",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`UTA vs ${o} — puck drop!`, hashtags:['#TusksUp','#UtahMammoth','#Mammoth','#NHL'] },
+  UTA: { abbr:'UTA', teamId:68, franchiseId:40, displayName:'Utah Mammoth',           keywords:['mammoth','utah','keller','peterka','villalta'],                               winCopy:"Let's go Mammoth! 🦣",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`UTA vs ${o} — puck drop!`, hashtags:['#TusksUp','#UtahMammoth','#Mammoth','#NHL'] },
   VAN: { abbr:'VAN', teamId:23, franchiseId:20, displayName:'Vancouver Canucks',      keywords:['canucks','vancouver','demko','pettersson','hughes'],                          winCopy:"Let's go Canucks! 🏒",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`VAN vs ${o} — puck drop!`, hashtags:['#Canucks','#VanCIty','#NHL'] },
   VGK: { abbr:'VGK', teamId:54, franchiseId:38, displayName:'Vegas Golden Knights',   keywords:['golden knights','vegas','knights','marchessault','stone','hill'],              winCopy:"Let's go Knights! ⚔️",     lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`VGK vs ${o} — puck drop!`, hashtags:['#VegasBorn','#GoKnightsGo','#NHL'] },
   WSH: { abbr:'WSH', teamId:15, franchiseId:24, displayName:'Washington Capitals',    keywords:['capitals','washington','caps','ovechkin','carlson','kuemper'],                winCopy:"Let's go Caps! 🦅",        lossCopy:'Tough one. Next game.', gameStartBody:(o)=>`WSH vs ${o} — puck drop!`, hashtags:['#ALLCAPS','#Capitals','#NHL'] },
@@ -4073,11 +4073,11 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   Game stats:
   - Final: ${carAbbr} ${stats.carGoals} - ${stats.oppGoals} ${oppAbbr}
   - Game Corsi For%: ${stats.corsiForPct}%
-  - CAR shots: ${stats.carSOG}, OPP shots: ${stats.oppSOG}
-  - CAR high danger chances: ${stats.carHDCF} vs OPP ${stats.oppHDCF}
-  - Best period for CAR: P${stats.bestPeriod?.period} (${stats.bestPeriod?.corsiForPct}% CF)
+  - ${carAbbr} shots: ${stats.carSOG}, ${oppAbbr} shots: ${stats.oppSOG}
+  - ${carAbbr} high danger chances: ${stats.carHDCF} vs ${oppAbbr} ${stats.oppHDCF}
+  - Best period for ${carAbbr}: P${stats.bestPeriod?.period} (${stats.bestPeriod?.corsiForPct}% CF)
   - Worst period: P${stats.worstPeriod?.period} (${stats.worstPeriod?.corsiForPct}% CF)
-  - CAR hits: ${stats.carHits}, CAR faceoffs: ${stats.carFOPct}%
+  - ${carAbbr} hits: ${stats.carHits}, ${carAbbr} faceoffs: ${stats.carFOPct}%
   - Goals: ${goalsSummary}${goalieLine}
 
   ${allowedNamesNote}
@@ -4088,10 +4088,10 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   Tone: sharp, analytical, knowledgeable fan. No fluff. No bullet points. Just sentences.
 
   Stats:
-  - CAR Corsi For%: ${stats.corsiForPct}%
-  - CAR shots on goal: ${stats.carSOG}, OPP shots on goal: ${stats.oppSOG}
-  - CAR goals: ${stats.carGoals}, OPP goals: ${stats.oppGoals}
-  - CAR hits: ${stats.carHits}
+  - ${carAbbr} Corsi For%: ${stats.corsiForPct}%
+  - ${carAbbr} shots on goal: ${stats.carSOG}, ${oppAbbr} shots on goal: ${stats.oppSOG}
+  - ${carAbbr} goals: ${stats.carGoals}, ${oppAbbr} goals: ${stats.oppGoals}
+  - ${carAbbr} hits: ${stats.carHits}
   - Penalties: ${stats.penaltyCount} total (${stats.carPenaltyCount} against ${carAbbr})
   - Goals: ${goalsSummary}${goalieLine}
 
