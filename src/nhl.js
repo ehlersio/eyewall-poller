@@ -233,18 +233,51 @@ async function scheduleWithFetch(env, abbr, season) {
   }
 }
 
-// League standings, fetching live and caching on a miss. poll() refreshes
-// the 'standings' key only once its 5-min TTL has lapsed and it next runs,
-// so a reader can land in the gap between expiry and refill -- seen live
-// 2026-09-29 as /prediction/analyze returning "Team standings not found".
-async function standingsWithFetch(env) {
+// League standings ('standings' KV key). poll() refreshes them once the
+// stored copy is STANDINGS_REFRESH_MS old, and the key outlives that
+// (STANDINGS_TTL) so the cron replaces it before it expires. Until
+// 2026-10 the key expired after 5 min and poll() only refilled it on its
+// next tick after expiry, so /cache/standings 404'd for up to a minute
+// every 5 min (seen 2026-10-05) and /prediction/analyze once answered
+// "Team standings not found" (2026-09-29). The age lives in the KV
+// metadata (fetchedAt) so checking it needs no extra key or write.
+export const STANDINGS_TTL = 15 * 60;               // seconds, KV expiry
+export const STANDINGS_REFRESH_MS = 5 * 60 * 1000;  // poll() refreshes after this
+
+// One in-flight NHL standings fetch per isolate: concurrent misses (and a
+// cron tick landing at the same moment) share it instead of each hitting
+// the NHL. Only the pending promise is shared -- it's cleared once it
+// settles, so a later miss fetches afresh and nothing is served from
+// isolate memory. Resolves to plain rows (no Response crosses requests);
+// the starting request keeps its context alive via ctx.waitUntil so a
+// client disconnect can't cancel the fetch out from under another waiter.
+// Rejects if the NHL call fails; stores only a non-empty result.
+let standingsInFlight = null;
+export function refreshStandings(env, ctx) {
+  if (!standingsInFlight) {
+    standingsInFlight = (async () => {
+      const data = await nhlGet(`${NHL_BASE}/standings/now`);
+      const rows = data?.standings || [];
+      if (rows.length) {
+        await env.CACHE.put('standings', JSON.stringify(rows), {
+          expirationTtl: STANDINGS_TTL,
+          metadata: { fetchedAt: Date.now() },
+        });
+      }
+      return rows;
+    })().finally(() => { standingsInFlight = null; });
+    ctx?.waitUntil?.(standingsInFlight.catch(() => {}));
+  }
+  return standingsInFlight;
+}
+
+// League standings, fetching live and caching on a miss. [] if the NHL
+// call fails -- callers treat that as "no standings", never a guess.
+async function standingsWithFetch(env, ctx) {
   const cached = await kvGet(env, 'standings');
   if (cached?.length) return cached;
   try {
-    const data = await nhlGet(`${NHL_BASE}/standings/now`);
-    const rows = data?.standings || [];
-    if (rows.length) await kvPut(env, 'standings', rows, 300);
-    return rows;
+    return await refreshStandings(env, ctx);
   } catch (e) {
     console.warn(`standingsWithFetch: ${e.message}`);
     return [];
@@ -2061,12 +2094,15 @@ export async function poll(env, _ctx) {
     }
   }
 
-  // 4. Standings — only once the 5-min cache has lapsed, not every tick.
-  // They only move when a game ends, and a per-minute rewrite cost a KV
-  // write a minute for nothing.
-  if (!(await env.CACHE.get('standings'))) {
-    const standings = await nhlGet(`${NHL_BASE}/standings/now`);
-    await kvPut(env, 'standings', standings?.standings || [], 300);
+  // 4. Standings — once the stored copy is STANDINGS_REFRESH_MS old, not
+  // every tick. They only move when a game ends, and a per-minute rewrite
+  // cost a KV write a minute for nothing. Refreshed while the key is still
+  // live (it lasts STANDINGS_TTL), so readers never land in an expiry gap;
+  // a copy without fetchedAt (written before 2026-10) counts as due.
+  const { value: standingsRaw, metadata: standingsMeta } = await env.CACHE.getWithMetadata('standings');
+  const standingsFetchedAt = Number(standingsMeta?.fetchedAt) || 0;
+  if (!standingsRaw || Date.now() - standingsFetchedAt >= STANDINGS_REFRESH_MS) {
+    await refreshStandings(env);
   }
 
   // 5. (Team-stats fetch removed 2026-09 -- nothing ever read the
@@ -3361,7 +3397,8 @@ Only reference the two teams named above and the numbers given -- no player name
   }
 
   // KV cache read — on a schedule miss, trigger background population
-  // so the next request gets real data without a frontend change.
+  // so the next request gets real data without a frontend change; on a
+  // standings miss, fetch them synchronously (refreshStandings()).
   if (url.pathname.startsWith('/cache/')) {
     const key = decodeURIComponent(url.pathname.slice('/cache/'.length));
     // A schedule is how the app tells a game went live (see
@@ -3389,6 +3426,17 @@ Only reference the two teams named above and the numbers given -- no player name
               console.warn(`Schedule bg fetch ${abbr}: ${e.message}`);
             }
           })());
+        }
+      }
+      // Standings: fetch from the NHL now rather than 404 (poll() keeps the
+      // key live, so this is a cold start or a cron that has stopped, e.g.
+      // after the season ends). A failed or empty fetch is still a 404.
+      if (key === 'standings') {
+        try {
+          const rows = await refreshStandings(env, ctx);
+          if (rows.length) return json(rows);
+        } catch (e) {
+          console.warn(`/cache/standings refetch: ${e.message}`);
         }
       }
       return new Response('Not found', { status: 404, headers: corsHeaders() });
@@ -3754,7 +3802,7 @@ Only reference the two teams named above and the numbers given -- no player name
     const isPlayoff = game.gameType === 3;
     const neutral   = !!game.neutralSite;
 
-    const standings = await standingsWithFetch(env);
+    const standings = await standingsWithFetch(env, ctx);
 
     // NHL's /standings/now stays pinned to last season's final standings
     // until real games exist for the new one (confirmed live) — the
