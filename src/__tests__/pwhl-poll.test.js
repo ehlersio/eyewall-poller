@@ -63,6 +63,19 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('pollPWHL slate query', () => {
+  // The AHL/ECHL poll's identical read stopped at 10 unordered rows (audit
+  // 2026-10-06, AHL/ECHL F1); the PWHL copy keeps the same shape.
+  it('reads today\'s games in game_id order without the old 10-row cap', async () => {
+    installFetch(gameRow())
+    const env = makeEnv({ CACHE: makeFakeCache({ 'push:subs': subs }), VAPID_PRIVATE_KEY: 'k' })
+    await pollPWHL(env)
+    const url = globalThis.fetch.mock.calls.map(([u]) => String(u)).find(u => u.includes('/rest/v1/pwhl_game_log?game_date='))
+    expect(url).toContain('&order=game_id.asc')
+    expect(url).not.toContain('limit=10')
+  })
+})
+
 describe('pollPWHL game-over push', () => {
   it('a game followed live gets exactly one game-over push when it goes final', async () => {
     const env = makeEnv({ VAPID_PRIVATE_KEY: 'k', CACHE: makeFakeCache({ 'push:subs': subs }) })

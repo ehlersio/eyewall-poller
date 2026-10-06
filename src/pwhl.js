@@ -253,10 +253,13 @@ export async function pollPWHL(env) {
     const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const todayStr = nowET.toISOString().slice(0, 10);
 
-    // Find today's games
+    // Find today's games. Ordered and capped well above a PWHL slate (6
+    // games max) -- same shape as the AHL/ECHL poll in hockeytech.js,
+    // which actually hit the old limit=10.
     const logged = await sbRowsOr(
       `${SB_URL}/rest/v1/pwhl_game_log?game_date=eq.${todayStr}&season_id=eq.${pwhlSeason}` +
-      `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10`,
+      `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code` +
+      `&order=game_id.asc&limit=50`,
       []
     );
     if (!logged?.length) return;

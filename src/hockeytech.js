@@ -198,9 +198,15 @@ export function createHockeyTechLeague(cfg) {
       const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
       const todayStr = nowET.toISOString().slice(0, 10);
 
+      // Every game on the slate: the AHL/ECHL schedule 12-16 games on a
+      // busy night and this read used to stop at 10 with no order=, so
+      // which 3-6 games got no pushes was arbitrary and stable for the
+      // whole night (audit 2026-10-06, AHL/ECHL F1). The limit is only a
+      // sanity cap, well above the 16/15-game ceiling.
       const logged = await sbRowsOr(
         `${table('game_log')}?game_date=eq.${todayStr}&season_id=eq.${seasonId}` +
-        `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10`,
+        `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code` +
+        `&order=game_id.asc&limit=50`,
         []
       );
       if (!logged?.length) return;
