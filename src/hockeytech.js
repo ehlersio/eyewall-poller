@@ -37,9 +37,10 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull } from './hockeytechGame.js';
+import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
 
 // Elo constants -- match eyewall-pipeline/elo.py (and nhl.js's
 // ELO_HOME_ADVANTAGE). hockeytech_elo.py writes the ratings these apply to.
@@ -92,6 +93,20 @@ export function createHockeyTechLeague(cfg) {
     const raw = url.searchParams.get('season');
     if (raw) return parseInt(raw, 10);
     return (await cfg.resolveSeason(env)).seasonId;
+  }
+
+  // Every row of a Supabase read, a 1,000-row page at a time (its per-
+  // request cap). `url` needs a stable order=. A failed page returns that
+  // Response, like sbRows().
+  async function sbAllRows(url) {
+    const PAGE = 1000;
+    const all = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const rows = await sbRows(url, { Range: `${offset}-${offset + PAGE - 1}`, 'Range-Unit': 'items', Prefer: 'count=none' });
+      if (rows instanceof Response) return rows;
+      all.push(...rows);
+      if (rows.length < PAGE) return all;
+    }
   }
 
   async function resolveSeasonType(env, seasonId) {
@@ -444,6 +459,63 @@ export function createHockeyTechLeague(cfg) {
     return broadcastToTeam(env, payload, teamKey, eventType, { pair, tag: `${label} push`, send: sendPush });
   }
 
+  // /today's seasons: `season` plus every regular/playoff/preseason season
+  // that starts after it (from the league's season list). Just `season`
+  // when the list is unavailable.
+  async function todaySeasonIds(env, season) {
+    const ids = new Set([Number(season)]);
+    try {
+      const all = (await cfg.getAllSeasons(env)) || [];
+      const cur = all.find(s => Number(s.seasonId) === Number(season));
+      for (const s of all) {
+        if (!['regular', 'playoffs', 'preseason'].includes(s.seasonType)) continue;
+        const later = cur?.startDate && s.startDate ? s.startDate > cur.startDate : Number(s.seasonId) > Number(season);
+        if (later) ids.add(Number(s.seasonId));
+      }
+    } catch { /* season list unavailable: `season` alone */ }
+    return [...ids].filter(Number.isFinite).sort((a, b) => a - b);
+  }
+
+  // Games from today through the next 6 days straight from HockeyTech's
+  // scorebar (feed=modulekit&view=scorebar), as game_log-shaped rows in
+  // date order -- for days game_log doesn't have yet. [] when the feed is
+  // unreachable or has none.
+  async function upcomingFromScorebar(env, todayStr) {
+    const kvKey = `${key}:scorebar:upcoming:${todayStr}`;
+    const cached = await kvGet(env, kvKey);
+    if (cached) return cached;
+    try {
+      const res = await htFetch(
+        `${cfg.ht.base}?feed=modulekit&view=scorebar&numberofdaysback=0&numberofdaysahead=6&limit=200` +
+        `&league_id=${cfg.ht.leagueId}&key=${cfg.ht.key}&client_code=${key}&site_id=${cfg.ht.siteId}&lang=en`
+      );
+      if (!res.ok) return [];
+      const games = (await res.json())?.SiteKit?.Scorebar;
+      if (!Array.isArray(games)) return [];
+      const rows = games
+        .filter(g => g.Date >= todayStr && parseInt(g.ID, 10) && parseInt(g.HomeID, 10) && parseInt(g.VisitorID, 10))
+        .map(g => {
+          const code = parseInt(g.GameStatus, 10);
+          return {
+            game_id:          parseInt(g.ID, 10),
+            game_date:        g.Date,
+            home_team_id:     parseInt(g.HomeID, 10),
+            away_team_id:     parseInt(g.VisitorID, 10),
+            home_score:       parseInt(g.HomeGoals, 10) || 0,
+            away_score:       parseInt(g.VisitorGoals, 10) || 0,
+            game_status_code: Number.isFinite(code) ? code : null,
+            game_state:       g.GameStatusString || '',
+            ended_in:         code === 4 ? endedInFromStatus(g.GameStatusStringLong) : null,
+          };
+        })
+        .sort((a, b) => a.game_date.localeCompare(b.game_date) || a.game_id - b.game_id);
+      await kvPut(env, kvKey, rows, 60);
+      return rows;
+    } catch {
+      return [];
+    }
+  }
+
   // ── HTTP routes ────────────────────────────────────────────────────
   async function handle(request, env, ctx, url) {
     // GET /{league}/standings?season=90
@@ -589,26 +661,42 @@ export function createHockeyTechLeague(cfg) {
     }
 
     // GET /{league}/league-players?season=90
-    // All teams' skater + goalie season stats (Leaders tab).
+    // All teams' skater + goalie season stats (Leaders tab), one row per
+    // player: a traded player's per-team rows (eyewall-pipeline#190) are
+    // combined -- counting stats summed, SV%/GAA recomputed, `teams` with
+    // each team's part, team_id his current team if he played for it that
+    // season, else the one he played most for (hockeytechSeasonRows.js).
+    // Every row is read (paged past Supabase's 1,000-row cap) so no part of
+    // a season is missed; the response keeps the top 600 skaters by points
+    // (the Leaders tab reads the top 10 by points and by goals) and every
+    // goalie.
     if (url.pathname === `${P}/league-players`) {
       const season = await seasonParam(url, env);
       return cachedJson(env, `${key}:leagueplayers:${season}`, 3600 * 2, async () => {
         const seasonType = await resolveSeasonType(env, season);
         const reads = await Promise.all([
-          sbRows(`${table('player_seasons')}?season_id=eq.${season}&season_type=eq.${seasonType}&select=player_id,team_id,goals,assists,points,gp,shots,pp_goals,sh_goals,pim,plus_minus&order=points.desc&limit=600`),
-          sbRows(`${table('goalie_seasons')}?season_id=eq.${season}&season_type=eq.${seasonType}&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against&order=sv_pct.desc&limit=80`),
+          sbAllRows(`${table('player_seasons')}?season_id=eq.${season}&season_type=eq.${seasonType}&select=player_id,team_id,goals,assists,points,gp,shots,pp_goals,sh_goals,pim,plus_minus&order=player_id.asc,team_id.asc`),
+          sbAllRows(`${table('goalie_seasons')}?season_id=eq.${season}&season_type=eq.${seasonType}&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against,shots_against,toi&order=player_id.asc,team_id.asc`),
         ]);
         if (reads.some(r => r instanceof Response)) return sbError();
-        const [skaters, goalies] = reads;
+        const [skaterRows, goalieRows] = reads;
 
-        const nameRows = await sbRowsOr(`${table('players')}?select=player_id,first_name,last_name,position,team_id&limit=1500`, []);
+        const players = await sbAllRows(`${table('players')}?select=player_id,first_name,last_name,position,team_id&order=player_id.asc`);
+        const nameRows = players instanceof Response ? [] : players;
         const nameMap = {};
+        const currentTeams = {};
         for (const p of nameRows) {
           nameMap[p.player_id] = {
             player_name: `${p.first_name || ''} ${p.last_name || ''}`.trim(),
             first_name: p.first_name, last_name: p.last_name, position: p.position,
           };
+          currentTeams[p.player_id] = p.team_id ?? null;
         }
+        const skaters = combineByPlayer(skaterRows, 'skater', currentTeams)
+          .sort((a, b) => (b.points ?? 0) - (a.points ?? 0))
+          .slice(0, 600);
+        const goalies = combineByPlayer(goalieRows, 'goalie', currentTeams)
+          .sort((a, b) => (b.sv_pct ?? -1) - (a.sv_pct ?? -1));
         const enrichSkaters = skaters.map(s => ({ ...s, ...nameMap[s.player_id] }));
         const enrichGoalies = goalies.map(g => ({ ...g, ...nameMap[g.player_id] }));
         const result = { skaters: enrichSkaters, goalies: enrichGoalies };
@@ -733,11 +821,24 @@ export function createHockeyTechLeague(cfg) {
         // 92 = its playoffs), so ?season= alone picks the row -- also filtering
         // to regular returned no stats for a playoff season. With no ?season=,
         // fall back to the most recent regular season.
+        //
+        // A traded player has one row per team for a season once the
+        // pipeline stores it that way (eyewall-pipeline#190), or one
+        // league-wide row before: either way his rows for the season are
+        // combined -- counting stats summed, SV%/GAA recomputed, `teams`
+        // listing each team's part (hockeytechSeasonRows.js).
         const statsQuery = seasonQ
-          ? `player_id=eq.${playerId}&season_id=eq.${seasonQ}&limit=1&select=*`
-          : `player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc&limit=1&select=*`;
+          ? `player_id=eq.${playerId}&season_id=eq.${seasonQ}&order=team_id.asc&select=*`
+          : `player_id=eq.${playerId}&season_type=eq.regular&order=season_id.desc,team_id.asc&limit=20&select=*`;
 
-        const stats = (await sbRowsOr(`${statsTable}?${statsQuery}`, []))[0] || {};
+        const seasonRows = (await sbRowsOr(`${statsTable}?${statsQuery}`, []))
+          .filter(r => String(r.player_id) === String(playerId));
+        const latest = seasonRows[0]?.season_id;
+        const stats = combineSeasonRows(
+          seasonRows.filter(r => r.season_id === latest),
+          player.position === 'G' ? 'goalie' : 'skater',
+          player.team_id ?? null
+        ) || {};
 
         const data = { ...player, ...stats };
         return data;
@@ -1265,25 +1366,45 @@ Only reference the two teams named above and the numbers given -- no player name
 
     // GET /{league}/today?season=90
     // Today's games (Eastern time) with status pre/live/final.
+    //
+    // Reads ?season= and every season that starts after it (2026-10): the
+    // current season only moves on once the next one's start date passes
+    // (seasons.js), so the off-season and the days around an opener used
+    // to show nothing even with the next season's games scheduled (ECHL's
+    // 2026-27 opener is 10-17, two days after its 10-15 start date).
+    // game_log may not carry a just-published season yet (ECHL's 2026-27
+    // preseason and regular season weren't in it on 10-05), so when it has
+    // no game today the HockeyTech scorebar's next week is read too, and
+    // its first game day wins if it comes sooner (upcomingFromScorebar()).
     if (url.pathname === `${P}/today`) {
       const season = await seasonParam(url, env);
       return cachedJson(env, `${key}:today:${season}`, 60, async () => {
         const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
         const todayStr = nowET.toISOString().slice(0, 10);
+        const seasonIds = await todaySeasonIds(env, season);
 
         // Today's games, or the next day that has some. One query either
         // way: ask for everything from today onward in date order and keep
         // whichever date comes back first. Out of season this is what stops
         // the scoreboard from being a permanently empty "no games today".
         const rows = await sbRows(
-          `${table('game_log')}?game_date=gte.${todayStr}&season_id=eq.${season}` +
+          `${table('game_log')}?game_date=gte.${todayStr}&season_id=in.(${seasonIds.join(',')})` +
           `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date` +
           `&order=game_date.asc&limit=40`
         );
         if (rows instanceof Response) return rows;
 
-        const gameDate = rows[0]?.game_date || null;
-        const dayRows = await live(env, rows.filter(g => g.game_date === gameDate), { withEndedIn: true });
+        let gameDate = rows[0]?.game_date || null;
+        let dayRows;
+        if (gameDate !== todayStr) {
+          const upcoming = await upcomingFromScorebar(env, todayStr);
+          const sbDate = upcoming[0]?.game_date || null;
+          if (sbDate && (!gameDate || sbDate < gameDate)) {
+            gameDate = sbDate;
+            dayRows = upcoming.filter(g => g.game_date === sbDate);
+          }
+        }
+        dayRows = dayRows || await live(env, rows.filter(g => g.game_date === gameDate), { withEndedIn: true });
         const games = dayRows.map(g => {
           const status = deriveGameStatus(g);
           return {
