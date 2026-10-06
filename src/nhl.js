@@ -614,14 +614,92 @@ export function oppGoalBody(scoringAbbr, scoringScore, otherScore, scoringScoreB
 // misconduct, and a penalty shot (awarded instead of a power play).
 const NO_PP_PENALTY_TYPES = new Set(['MIS', 'GAM', 'PS']);
 
+// A live penalty can post before the scorer enters the infraction: its
+// descKey is then just the penalty's class, 'minor' or 'major', and the
+// real one (interference, cross-checking...) replaces it a poll or two
+// later. Pushed as-is, about half the power-play alerts in the 2026-10-04
+// games read "Minor" where the infraction belongs.
+const PLACEHOLDER_PENALTY_DESC = new Set(['minor', 'major']);
+export function penaltyDescPending(details) {
+  return !details?.descKey || PLACEHOLDER_PENALTY_DESC.has(details.descKey);
+}
+
+// Push titles name periods P1-P3, then as the Live Activity does past
+// regulation: OT, then 2OT, 3OT... in the playoffs, and SO for a
+// regular-season shootout. `n === 5 ? 'SO' : P${n}` called playoff 2OT
+// 'SO' and 3OT 'P6'.
+export function pushPeriodLabel(num, periodType, gameType) {
+  return num >= 1 && num <= 3 ? `P${num}` : periodLabelFor(num, periodType, gameType);
+}
+
+// Strength tags for a goal, from its play's situationCode -- a field of
+// the play itself, not of its details -- read [awayG][awayS][homeS][homeG].
+// A skater digit includes an extra attacker, so a side with its goalie
+// pulled has that skater taken back out before the sides are compared: a
+// 6-on-5 goal with the net empty is even strength, not a power play. EN:
+// the other side's goalie digit is 0. Nothing for a code that can't be
+// true (see isValidSituationCode).
+export function goalStrengthTags(situationCode, scoringIsHome) {
+  if (!isValidSituationCode(situationCode)) return [];
+  const awayG = situationCode[0] === '1', homeG = situationCode[3] === '1';
+  const awayS = Number(situationCode[1]) - (awayG ? 0 : 1);
+  const homeS = Number(situationCode[2]) - (homeG ? 0 : 1);
+  const [mine, theirs, theirGoalie] = scoringIsHome ? [homeS, awayS, awayG] : [awayS, homeS, homeG];
+  const tags = [];
+  if (mine > theirs) tags.push('PP');
+  else if (mine < theirs) tags.push('SH');
+  if (!theirGoalie) tags.push('EN');
+  return tags;
+}
+
+// The NHL feed has no goalie-pulled play: a pull shows only as that side's
+// goalie digit going to 0 in the situationCode of the plays made while
+// the net is empty. Returns, for each side, the first play of the pull
+// still on at the end of `plays` (null when that side's goalie is in).
+// Plays during a delayed penalty are skipped -- from the 'delayed-penalty'
+// play to the whistle that ends it (the penalty itself, any stoppage or a
+// goal) -- since the team about to go on the power play pulls its goalie
+// then too (FLA-ANA 2026-10-04, P1 09:12: penalty coded 0651). So are
+// plays whose code can't be true, and the period/game markers, whose codes
+// are leftovers (2026020037's game-end reads 0440).
+const NO_SITUATION_PLAYS = new Set(['period-start', 'period-end', 'game-end', 'shootout-complete']);
+const DELAYED_PENALTY_ENDS = new Set(['penalty', 'stoppage', 'goal', 'period-end', 'game-end']);
+export function emptyNets(plays) {
+  const pulled = { away: null, home: null };
+  let delayed = false;
+  for (const p of plays || []) {
+    if (p.periodDescriptor?.periodType === 'SO') continue;
+    const type = p.typeDescKey;
+    if (type === 'delayed-penalty') { delayed = true; continue; }
+    if (delayed) {
+      if (DELAYED_PENALTY_ENDS.has(type)) delayed = false;
+      continue;
+    }
+    if (type === 'period-start') { pulled.away = pulled.home = null; continue; }
+    if (NO_SITUATION_PLAYS.has(type) || !isValidSituationCode(p.situationCode)) continue;
+    const sc = p.situationCode;
+    for (const [side, digit] of [['away', sc[0]], ['home', sc[3]]]) {
+      if (digit === '1') pulled[side] = null;
+      else if (!pulled[side]) pulled[side] = p;
+    }
+  }
+  return pulled;
+}
+
 // ── Event detection ───────────────────────────────────────────
 // Broadcasts to BOTH teams playing in `game`, each framed from their own
 // perspective — mirrors pollPWHLGame's dual-broadcast pattern in pwhl.js.
 // Used to only ever run for TEAM_ABBR (Carolina); poll() now calls this for
 // every live game league-wide, so there's no fixed "our team" here anymore.
+//
+// { final: true } is poll()'s last pass over a game that just ended, with
+// its final play-by-play: goals only. A sudden-death OT goal ends the game,
+// which then drops out of the live games before this ever saw the new
+// score -- no OT winner was pushed (FLA-ANA and CAR-PHI, 2026-10-04).
 
-async function detectAndNotify(env, game, pbp) {
-  if (!game || !pbp?.plays) return;
+async function detectAndNotify(env, game, pbp, { final = false } = {}) {
+  if (!game || (!final && !pbp?.plays)) return;
+  const plays = pbp?.plays || [];
 
   const liveId    = game.id;
   const homeAbbr  = game.homeTeam?.abbrev;
@@ -630,27 +708,32 @@ async function detectAndNotify(env, game, pbp) {
   const awayId    = game.awayTeam?.id;
   const homeScore = game.homeTeam?.score ?? 0;
   const awayScore = game.awayTeam?.score ?? 0;
-  const playCount = pbp.plays.length;
-  const period    = pbp.periodDescriptor?.number || 1;
+  const playCount = plays.length;
+  const period    = pbp?.periodDescriptor?.number || 1;
+  const periodType = pbp?.periodDescriptor?.periodType;
+  const inPlay    = game.gameState === 'LIVE' || game.gameState === 'CRIT';
 
   const stateKey  = `push:gamestate:${liveId}`;
-  const lastState = (await kvGet(env, stateKey)) || {
-    homeScore: 0, awayScore: 0, playCount: 0, started: false, period: 0,
-    goalScorers: {}, // { playerId: count } for hat trick tracking
+  const storedState = await kvGet(env, stateKey);
+  // Final pass: only for a game this followed live, so a deploy or a
+  // missed game doesn't replay every goal of a finished game.
+  if (final && !storedState) return;
+  const lastState = storedState || {
+    homeScore: 0, awayScore: 0, playCount: 0, started: false, period: 0, hatTricks: [],
   };
 
   const lastPlayIdx = lastState.playCount;
-  const newPlays    = pbp.plays.slice(lastPlayIdx);
-  const periodLabel = n => n === 4 ? 'OT' : n === 5 ? 'SO' : `P${n}`;
+  const newPlays    = plays.slice(lastPlayIdx);
+  const labelOf     = (n, type) => pushPeriodLabel(n, type, game.gameType);
 
   const pair = [`NHL:${homeAbbr}`, `NHL:${awayAbbr}`];
-  const rosterNames = new Map((pbp.rosterSpots || []).map(r =>
+  const rosterNames = new Map((pbp?.rosterSpots || []).map(r =>
     [String(r.playerId), `${r.firstName?.default || ''} ${r.lastName?.default || ''}`.trim()]));
   const fullName = id => rosterNames.get(String(id)) || null;
   const notify = (abbr, payload, eventType) => broadcast(env, payload, `NHL:${abbr}`, eventType, pair);
 
   // ── Game just started ─────────────────────────────────────
-  if (!lastState.started && game.gameState === 'LIVE') {
+  if (!final && !lastState.started && game.gameState === 'LIVE') {
     for (const [abbr, oppAbbr] of [[homeAbbr, awayAbbr], [awayAbbr, homeAbbr]]) {
       await notify(abbr, {
         title: '🏒 Game Starting!',
@@ -661,71 +744,102 @@ async function detectAndNotify(env, game, pbp) {
     }
   }
 
-  // ── Period start (P2, P3, OT only — P1 = game start) ─────
-  if (period > 1 && period !== lastState.period && game.gameState === 'LIVE') {
-    for (const [abbr, myScore, oppScore, oppAbbr] of [
-      [homeAbbr, homeScore, awayScore, awayAbbr],
-      [awayAbbr, awayScore, homeScore, homeAbbr],
-    ]) {
-      await notify(abbr, {
-        title: `🏒 ${periodLabel(period)} Starting`,
-        body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr} — ${periodLabel(period)} underway`,
-        tag:   `period-start-${liveId}-${period}`,
-        url:   '/',
-      }, 'periodStart');
-    }
-  }
-
   // ── Period end ────────────────────────────────────────────
   // Sent when the intermission starts. It used to wait for the NEXT period
   // to begin (the first moment periodDescriptor moved on), so "End of P1"
   // landed ~18 minutes late, alongside "P2 Starting". Still sent then as a
-  // fallback, if no poll happened to catch the intermission itself.
+  // fallback, if no poll happened to catch the intermission itself --
+  // ahead of that period's "Starting" push, in the order they happened.
   const periodEndSent = lastState.periodEndSent ?? 0;
   let endedPeriod = null;
-  if (lastState.started && periodEndSent < period && periodIsOver(pbp, period, game, homeScore, awayScore)) {
-    endedPeriod = period;
-  } else if (lastState.started && lastState.period > periodEndSent && period > lastState.period) {
-    endedPeriod = lastState.period;
+  if (!final) {
+    if (lastState.started && periodEndSent < period && periodIsOver(pbp, period, game, homeScore, awayScore)) {
+      endedPeriod = period;
+    } else if (lastState.started && lastState.period > periodEndSent && period > lastState.period) {
+      endedPeriod = lastState.period;
+    }
   }
   if (endedPeriod) {
+    const label = labelOf(endedPeriod, endedPeriod === period ? periodType : undefined);
     for (const [abbr, myScore, oppScore, oppAbbr] of [
       [homeAbbr, homeScore, awayScore, awayAbbr],
       [awayAbbr, awayScore, homeScore, homeAbbr],
     ]) {
       await notify(abbr, {
-        title: `🔔 End of ${periodLabel(endedPeriod)}`,
-        body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr} after ${periodLabel(endedPeriod)}`,
+        title: `🔔 End of ${label}`,
+        body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr} after ${label}`,
         tag:   `period-end-${liveId}-${endedPeriod}`,
         url:   summaryUrl(liveId, endedPeriod, abbr),
       }, 'periodEnd');
     }
   }
 
+  // ── Period start (P2, P3, OT only — P1 = game start) ─────
+  // LIVE or CRIT: the NHL marks the late part of a game, and overtime,
+  // 'CRIT', so OT never got its "OT Starting" push.
+  if (!final && period > 1 && period !== lastState.period && inPlay) {
+    const label = labelOf(period, periodType);
+    for (const [abbr, myScore, oppScore, oppAbbr] of [
+      [homeAbbr, homeScore, awayScore, awayAbbr],
+      [awayAbbr, awayScore, homeScore, homeAbbr],
+    ]) {
+      await notify(abbr, {
+        title: `🏒 ${label} Starting`,
+        body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr} — ${label} underway`,
+        tag:   `period-start-${liveId}-${period}`,
+        url:   '/',
+      }, 'periodStart');
+    }
+  }
+
   // ── Goals — both directions independently (a poll cycle can, in theory,
   // catch both teams having scored since the last check) ───────────────
-  const goalScorers = { ...lastState.goalScorers };
+  // Each new goal is matched to its own play by the score it made
+  // (details.homeScore/awayScore), not taken as the team's last goal in the
+  // feed: the play-by-play can be a poll behind /score/now, and its last
+  // goal was then the previous one (FLA-ANA 2026-10-04: "FLA scores!"). The
+  // scorer's name comes from rosterSpots -- the feed has no
+  // scoringPlayerName, which is why every goal push read "<TEAM> scores!".
+  // A goal whose play hasn't posted waits one poll for it; after that it
+  // goes without a name. A shootout isn't scored as goals (its plays keep
+  // the tied score), and the final pass skips a game decided by one.
+  const decidedInSO = game.gameOutcome?.lastPeriodType === 'SO'
+    || game.periodDescriptor?.periodType === 'SO' || periodType === 'SO';
+  const goalWait = { ...(lastState.goalWait || {}) };
+  const announced = { home: lastState.homeScore, away: lastState.awayScore };
 
-  const handleGoal = async (scoringAbbr, scoringTeamId, scoringScore, otherAbbr, otherScore, lastScoringScore) => {
+  const goalPlayFor = (teamId, side, score) => plays.find(p =>
+    p.typeDescKey === 'goal' && p.periodDescriptor?.periodType !== 'SO'
+    && p.details?.eventOwnerTeamId === teamId && p.details?.[`${side}Score`] === score);
+
+  const handleGoal = async (side, scoringAbbr, scoringTeamId, scoringScore, otherAbbr, otherScore) => {
+    const lastScoringScore = announced[side];
     const newGoals = scoringScore - lastScoringScore;
-    const goalPlay = [...pbp.plays].reverse().find(p =>
-      p.typeDescKey === 'goal' && p.details?.eventOwnerTeamId === scoringTeamId
-    );
-    const scorer   = goalPlay?.details?.scoringPlayerName || scoringAbbr;
-    const scorerId = String(goalPlay?.details?.scoringPlayerId || '');
-    const shotType = goalPlay?.details?.shotType || null;
-    const isSH     = goalPlay?.details?.situationCode?.charAt(1) === '4'; // strength indicator
+    const goalPlays = [];
+    for (let s = lastScoringScore + 1; s <= scoringScore; s++) goalPlays.push(goalPlayFor(scoringTeamId, side, s));
+    if (!final && goalPlays.some(p => !p) && !(goalWait[side] > lastScoringScore)) {
+      goalWait[side] = scoringScore; // not posted yet: try again next poll
+      return;
+    }
+    delete goalWait[side];
+    announced[side] = scoringScore;
 
-    if (scorerId) goalScorers[scorerId] = (goalScorers[scorerId] || 0) + newGoals;
+    const named = goalPlays.filter(Boolean).map(p => fullName(p.details?.scoringPlayerId)).filter(Boolean);
+    let body;
+    if (newGoals > 1) {
+      body = `${newGoals} goals scored!${named.length ? ` ${[...new Set(named)].join(', ')}` : ''}`;
+    } else {
+      const goalPlay = goalPlays[0];
+      const scorer   = fullName(goalPlay?.details?.scoringPlayerId) || scoringAbbr;
+      const tags     = goalPlay ? goalStrengthTags(goalPlay.situationCode, side === 'home') : [];
+      const shotType = goalPlay?.details?.shotType || null;
+      const extra    = [...tags, shotType].filter(Boolean);
+      body = `${scorer} scores!${extra.length ? ` (${extra.join(', ')})` : ''}`;
+    }
 
-    // SH goals still notify under the 'goal' preference — there's no
-    // separate shorthanded-goal toggle in NotificationBell's PREF_GROUPS
-    // for users to filter by, so no separate eventType is needed here.
     await notify(scoringAbbr, {
       title: `🚨 GOAL! ${scoringAbbr} ${scoringScore}–${otherScore} ${otherAbbr}`,
-      body:  newGoals > 1
-        ? `${newGoals} goals scored!`
-        : `${scorer} scores!${shotType ? ` (${shotType})` : ''}${isSH ? ' ⚡ Short-Handed!' : ''}`,
+      body,
       tag:   `goal-${liveId}-${scoringAbbr}-${scoringScore}`,
       url:   '/',
     }, 'goal');
@@ -736,95 +850,168 @@ async function detectAndNotify(env, game, pbp) {
       tag:   `opp-goal-${liveId}-${scoringAbbr}-${scoringScore}`,
       url:   '/',
     }, 'oppGoal');
-
-    if (scorerId && goalScorers[scorerId] === 3) {
-      await notify(scoringAbbr, {
-        title: `🎩 HAT TRICK! ${scorer}`,
-        body:  `${scorer} scores their 3rd goal of the game!`,
-        tag:   `hattrick-${liveId}-${scorerId}`,
-        url:   '/',
-      }, 'hatTrick');
-    }
   };
 
-  if (homeScore > lastState.homeScore) {
-    await handleGoal(homeAbbr, homeId, homeScore, awayAbbr, awayScore, lastState.homeScore);
+  if (!(final && decidedInSO) && !(!final && periodType === 'SO')) {
+    if (homeScore > announced.home) {
+      await handleGoal('home', homeAbbr, homeId, homeScore, awayAbbr, awayScore);
+    }
+    if (awayScore > announced.away) {
+      await handleGoal('away', awayAbbr, awayId, awayScore, homeAbbr, homeScore);
+    }
   }
-  if (awayScore > lastState.awayScore) {
-    await handleGoal(awayAbbr, awayId, awayScore, homeAbbr, homeScore, lastState.awayScore);
-  }
+  // A goal taken back (a review) lowers the score: follow it down, so the
+  // next goal to that score is announced again.
+  if (homeScore < announced.home) announced.home = homeScore;
+  if (awayScore < announced.away) announced.away = awayScore;
 
-  // ── Goalie pulled — notify whichever team benefits (empty-net look) ──
-  const goaliePull = newPlays.find(p => p.typeDescKey === 'goalie-pulled');
-  if (goaliePull) {
-    const pulledTeamId  = goaliePull.details?.eventOwnerTeamId;
-    const benefitAbbr   = pulledTeamId === homeId ? awayAbbr : homeAbbr;
-    const pulledAbbr    = pulledTeamId === homeId ? homeAbbr : awayAbbr;
-    const benefitScore  = pulledTeamId === homeId ? awayScore : homeScore;
-    const pulledScore   = pulledTeamId === homeId ? homeScore : awayScore;
-    await notify(benefitAbbr, {
-      title: `🥅 ${pulledAbbr} pulled their goalie!`,
-      body:  `6-on-5 — ${benefitAbbr} ${benefitScore}–${pulledScore}. Empty net opportunity!`,
-      tag:   `goalie-pull-${liveId}-${lastPlayIdx}`,
+  // ── Hat trick — counted from the feed's own goal plays, per player, once
+  // that player's third goal has been announced. It used to add each
+  // score change to whoever scored the team's last goal in the feed, which
+  // a feed a poll behind credited to the previous scorer.
+  const hatTricks = new Set(lastState.hatTricks || []);
+  const goalsBy = new Map();
+  for (const p of plays) {
+    if (p.typeDescKey !== 'goal' || p.periodDescriptor?.periodType === 'SO') continue;
+    const id = p.details?.scoringPlayerId;
+    if (id == null) continue;
+    const list = goalsBy.get(String(id)) || [];
+    list.push(p);
+    goalsBy.set(String(id), list);
+  }
+  const hatTrickCandidates = (announcedNow) => [...goalsBy].filter(([id, list]) => {
+    if (list.length < 3 || hatTricks.has(id)) return false;
+    const third = list[2];
+    const side = third.details?.eventOwnerTeamId === homeId ? 'home' : 'away';
+    return third.details?.[`${side}Score`] <= announcedNow[side];
+  });
+  // A game state saved before hat tricks were tracked this way: any hat
+  // trick already announced by then counts as sent.
+  if (storedState && !storedState.hatTricks) {
+    hatTrickCandidates({ home: lastState.homeScore, away: lastState.awayScore })
+      .forEach(([id]) => hatTricks.add(id));
+  }
+  for (const [id, list] of hatTrickCandidates(announced)) {
+    hatTricks.add(id);
+    const name = fullName(id);
+    if (!name) continue;
+    const abbr = list[2].details?.eventOwnerTeamId === homeId ? homeAbbr : awayAbbr;
+    await notify(abbr, {
+      title: `🎩 HAT TRICK! ${name}`,
+      body:  `${name} scores their 3rd goal of the game!`,
+      tag:   `hattrick-${liveId}-${id}`,
       url:   '/',
-    }, 'goaliePulled');
+    }, 'hatTrick');
   }
 
-  // ── Penalty — notify whichever team gets the power play ──────────────
-  // Once per penalty, by its own eventId (as pwhl.js keys on
-  // game_penalty_id). newPlays alone isn't enough: the NHL feed isn't
-  // append-only -- plays get inserted ahead of a posted penalty and its
-  // details revised -- so the same penalty landed past the old playCount
-  // again and alerted on 2-3 polls in a row (CAR-FLA, 2026-09-29).
-  //
-  // Everything called at one stoppage is netted first, since that's how
-  // it's served: equal minutes offset (a fight's two majors, matching
-  // minors at 4-on-4) and put no one on the power play, and misconducts
-  // and penalty shots never do. Both teams were penalized at the same
-  // stoppage 121 times in 200 games of 2025-26, 97 of them evenly; those
-  // used to send "Power Play!" (CAR-FLA's fight did, to both sides).
-  const penaltyKey  = p => String(p.eventId ?? `${p.periodDescriptor?.number}-${p.timeInPeriod}`);
-  const stoppageKey = p => `${p.periodDescriptor?.number}-${p.timeInPeriod}`;
+  const goalieSent = new Set(lastState.goaliePullsSent || []);
   const penaltiesSent = new Set(lastState.penaltiesSent || []);
   const ppSent        = new Set(lastState.ppSent || []); // `${stoppage}-${ppAbbr}`
-  const newPenalties  = newPlays.filter(p => p.typeDescKey === 'penalty' && !penaltiesSent.has(penaltyKey(p)));
-  newPenalties.forEach(p => penaltiesSent.add(penaltyKey(p)));
-  for (const stoppage of new Set(newPenalties.map(stoppageKey))) {
-    // Every penalty at this stoppage, not just the new ones: its offsetting
-    // half can post a poll after the first.
-    const served = pbp.plays.filter(p => p.typeDescKey === 'penalty' && stoppageKey(p) === stoppage
-      && !NO_PP_PENALTY_TYPES.has(p.details?.typeCode));
-    const minutes = teamId => served
-      .filter(p => p.details?.eventOwnerTeamId === teamId)
-      .reduce((sum, p) => sum + (p.details?.duration || 2), 0);
-    const homeMins = minutes(homeId), awayMins = minutes(awayId);
-    if (homeMins === awayMins) continue;
+  const penaltiesHeld = new Set();
 
-    const penTeamId = homeMins > awayMins ? homeId : awayId;
-    const ppAbbr    = penTeamId === homeId ? awayAbbr : homeAbbr;
-    const penAbbr   = penTeamId === homeId ? homeAbbr : awayAbbr;
-    // One alert per power play: a second penalty to the same side at the
-    // same stoppage (a double minor posted as two plays) extends it.
-    if (ppSent.has(`${stoppage}-${ppAbbr}`)) continue;
-    ppSent.add(`${stoppage}-${ppAbbr}`);
+  if (!final) {
+    // ── Goalie pulled — notify whichever team benefits (empty-net look) ──
+    // Read off the situationCode (see emptyNets()): a goalie still out at
+    // the latest play, in the third period or later, by a team that's
+    // behind -- a delayed-penalty pull, or one a late-posted delayed-penalty
+    // play hasn't caught yet, isn't news. Once per team per period: a
+    // goalie in and out around faceoffs is the same push.
+    const nets = emptyNets(plays);
+    for (const [side, pulledAbbr, benefitAbbr, pulledScore, benefitScore] of [
+      ['home', homeAbbr, awayAbbr, homeScore, awayScore],
+      ['away', awayAbbr, homeAbbr, awayScore, homeScore],
+    ]) {
+      const pullPlay = nets[side];
+      if (!pullPlay || pulledScore >= benefitScore) continue;
+      const pullPeriod = pullPlay.periodDescriptor?.number;
+      if (!(pullPeriod >= 3)) continue;
+      const key = `${side}-${pullPeriod}`;
+      if (goalieSent.has(key)) continue;
+      goalieSent.add(key);
+      const sc = pullPlay.situationCode;
+      const [pulledSkaters, otherSkaters] = side === 'home' ? [sc[2], sc[1]] : [sc[1], sc[2]];
+      await notify(benefitAbbr, {
+        title: `🥅 ${pulledAbbr} pulled their goalie!`,
+        body:  `${pulledSkaters}-on-${otherSkaters} — ${benefitAbbr} ${benefitScore}–${pulledScore}. Empty net opportunity!`,
+        tag:   `goalie-pull-${liveId}-${pulledAbbr}-${pullPeriod}`,
+        url:   '/',
+      }, 'goaliePulled');
+    }
 
-    const penalty = served.find(p => p.details?.eventOwnerTeamId === penTeamId);
-    await notify(ppAbbr, {
-      title: `⚡ ${ppAbbr} Power Play!`,
-      body:  `${penAbbr} — ${penaltyText(penalty.details, fullName) || 'Penalty'}`,
-      tag:   `pp-${liveId}-${penaltyKey(penalty)}`,
-      url:   '/',
-    }, 'penalty');
+    // ── Penalty — notify whichever team gets the power play ──────────────
+    // Once per penalty, by its own eventId (as pwhl.js keys on
+    // game_penalty_id). newPlays alone isn't enough: the NHL feed isn't
+    // append-only -- plays get inserted ahead of a posted penalty and its
+    // details revised -- so the same penalty landed past the old playCount
+    // again and alerted on 2-3 polls in a row (CAR-FLA, 2026-09-29).
+    //
+    // Everything called at one stoppage is netted first, since that's how
+    // it's served: equal minutes offset (a fight's two majors, matching
+    // minors at 4-on-4) and put no one on the power play, and misconducts
+    // and penalty shots never do. Both teams were penalized at the same
+    // stoppage 121 times in 200 games of 2025-26, 97 of them evenly; those
+    // used to send "Power Play!" (CAR-FLA's fight did, to both sides).
+    //
+    // A penalty whose infraction isn't in yet (penaltyDescPending) is held
+    // one poll, unmarked, so it's sent with the real one; if it's still
+    // missing then, it goes without the placeholder word.
+    const penaltyKey  = p => String(p.eventId ?? `${p.periodDescriptor?.number}-${p.timeInPeriod}`);
+    const stoppageKey = p => `${p.periodDescriptor?.number}-${p.timeInPeriod}`;
+    const wasHeld     = new Set(lastState.penaltiesHeld || []);
+    const newPlaySet  = new Set(newPlays);
+    const newPenalties = plays.filter(p => p.typeDescKey === 'penalty' && !penaltiesSent.has(penaltyKey(p))
+      && (newPlaySet.has(p) || wasHeld.has(penaltyKey(p))));
+    for (const stoppage of new Set(newPenalties.map(stoppageKey))) {
+      const atStoppage = newPenalties.filter(p => stoppageKey(p) === stoppage);
+      const markSent = () => atStoppage.forEach(p => penaltiesSent.add(penaltyKey(p)));
+      // Every penalty at this stoppage, not just the new ones: its offsetting
+      // half can post a poll after the first.
+      const served = plays.filter(p => p.typeDescKey === 'penalty' && stoppageKey(p) === stoppage
+        && !NO_PP_PENALTY_TYPES.has(p.details?.typeCode));
+      const minutes = teamId => served
+        .filter(p => p.details?.eventOwnerTeamId === teamId)
+        .reduce((sum, p) => sum + (p.details?.duration || 2), 0);
+      const homeMins = minutes(homeId), awayMins = minutes(awayId);
+      if (homeMins === awayMins) { markSent(); continue; }
+
+      const penTeamId = homeMins > awayMins ? homeId : awayId;
+      const ppAbbr    = penTeamId === homeId ? awayAbbr : homeAbbr;
+      const penAbbr   = penTeamId === homeId ? homeAbbr : awayAbbr;
+      // One alert per power play: a second penalty to the same side at the
+      // same stoppage (a double minor posted as two plays) extends it.
+      if (ppSent.has(`${stoppage}-${ppAbbr}`)) { markSent(); continue; }
+
+      const penalty = served.find(p => p.details?.eventOwnerTeamId === penTeamId);
+      if (penaltyDescPending(penalty.details) && !atStoppage.some(p => wasHeld.has(penaltyKey(p)))) {
+        atStoppage.forEach(p => penaltiesHeld.add(penaltyKey(p)));
+        continue;
+      }
+      markSent();
+      ppSent.add(`${stoppage}-${ppAbbr}`);
+      const details = penaltyDescPending(penalty.details) ? { ...penalty.details, descKey: null } : penalty.details;
+      await notify(ppAbbr, {
+        title: `⚡ ${ppAbbr} Power Play!`,
+        body:  `${penAbbr} — ${penaltyText(details, fullName) || 'Penalty'}`,
+        tag:   `pp-${liveId}-${penaltyKey(penalty)}`,
+        url:   '/',
+      }, 'penalty');
+    }
   }
 
-  // Save new state
+  // Save new state. homeScore/awayScore are the scores announced so far,
+  // which trail the scoreboard while a goal waits for its play.
   await kvPut(env, stateKey, {
-    homeScore, awayScore, playCount, period,
+    homeScore: announced.home, awayScore: announced.away,
+    playCount: final ? lastState.playCount : playCount,
+    period: final ? lastState.period : period,
     started: true,
-    goalScorers,
+    hatTricks: [...hatTricks],
+    goalWait,
     periodEndSent: Math.max(periodEndSent, endedPeriod || 0),
     penaltiesSent: [...penaltiesSent],
+    penaltiesHeld: [...penaltiesHeld],
     ppSent: [...ppSent],
+    goaliePullsSent: [...goalieSent],
   }, 24 * 3600);
 }
 
@@ -899,6 +1086,68 @@ async function notifyGameOver(env, game) {
   }
 }
 
+// The AI game summary's inputs from a final play-by-play, for the team
+// `teamId`/`abbr` against `oppAbbr`:
+// - goals: every goal, with its period named as the app does (OT, 2OT...);
+//   shootout attempts aren't goals, and the shootout's own plays keep the
+//   tied score.
+// - cfPct: the team's share of shot attempts (goals, shots on goal, missed
+//   and blocked shots), or null with no play-by-play to count -- never a
+//   stand-in 50%, which was stored and shown as a real "CF% 50%".
+// - topScorer: the team's leading goal scorer when one player scored more
+//   than any other (topScorerGoals, how many); null on a tie. It used to be
+//   the game-winning goal's scorer, so in CAR-PHI 2026-10-03 the prompt
+//   said "Top CAR scorer: Shayne Gostisbehere" (the OT winner) over Aho's 2.
+// - gwgScorer: in a win, the scorer of the team's goal that put it one
+//   past the opponent's final total; null in a loss or a shootout win.
+export function summaryInputs(pbp, { teamId, abbr, oppAbbr, won, oppScore, gameType }) {
+  const names = new Map((pbp?.rosterSpots || []).filter(p => p.playerId).map(p =>
+    [String(p.playerId), `${p.firstName?.default || ''} ${p.lastName?.default || ''}`.trim()]));
+  const pName = id => names.get(String(id)) || null;
+
+  let attempts = 0, totalAttempts = 0;
+  const goals = [], penalties = [];
+  for (const p of pbp?.plays || []) {
+    const mine = p.details?.eventOwnerTeamId === teamId;
+    const t    = p.typeDescKey;
+    const pd   = p.periodDescriptor || {};
+    if (pd.periodType === 'SO') continue;
+    if (['goal', 'shot-on-goal', 'missed-shot', 'blocked-shot'].includes(t)) {
+      if (mine) attempts++;
+      totalAttempts++;
+    }
+    if (t === 'goal') goals.push({
+      team:   mine ? abbr : oppAbbr,
+      scorer: pName(p.details?.scoringPlayerId) || 'Unknown',
+      period: pd.number,
+      periodLabel: pushPeriodLabel(pd.number, pd.periodType, gameType),
+      time:   p.timeInPeriod,
+      shot:   p.details?.shotType || '',
+    });
+    if (t === 'penalty') penalties.push({
+      team: mine ? abbr : oppAbbr,
+      // What for, not who: the prompt names only allowedNames' players.
+      desc: penaltyDescription(p.details?.descKey) || 'Penalty',
+      mins: p.details?.duration || 2,
+    });
+  }
+  const cfPct = totalAttempts > 0 ? Math.round(attempts / totalAttempts * 100) : null;
+
+  const teamGoals = goals.filter(g => g.team === abbr);
+  const counts = new Map();
+  for (const g of teamGoals) if (g.scorer !== 'Unknown') counts.set(g.scorer, (counts.get(g.scorer) || 0) + 1);
+  const ranked = [...counts].sort((a, b) => b[1] - a[1]);
+  const leader = ranked.length && (ranked.length === 1 || ranked[0][1] > ranked[1][1]) ? ranked[0] : null;
+
+  const gwg = won ? teamGoals[oppScore ?? 0] : null;
+  return {
+    goals, penalties, cfPct,
+    topScorer: leader ? leader[0] : null,
+    topScorerGoals: leader ? leader[1] : null,
+    gwgScorer: gwg && gwg.scorer !== 'Unknown' ? gwg.scorer : null,
+  };
+}
+
 // ── Game Summary Card ─────────────────────────────────────────
 async function generateGameSummary(env, game) {
   const gameId     = game.id;
@@ -927,43 +1176,8 @@ async function generateGameSummary(env, game) {
   const oppAbbr  = isHome ? game.awayTeam?.abbrev : game.homeTeam?.abbrev;
   const won      = carScore > oppScore;
 
-  // Build player name map from rosterSpots (same as app's buildPlayerMap)
-  const playerMap = {};
-  (pbp?.rosterSpots || []).forEach(p => {
-    if (p.playerId) {
-      playerMap[String(p.playerId)] =
-        `${p.firstName?.default || ''} ${p.lastName?.default || ''}`.trim();
-    }
-  });
-  const pName = id => playerMap[String(id)] || null;
-
-  // Compute Corsi from PBP
-  let carAttempts = 0, totalAttempts = 0;
-  const goals = [], penalties = [];
-  if (pbp?.plays) {
-    pbp.plays.forEach(p => {
-      const isCar = p.details?.eventOwnerTeamId === TEAM_ID;
-      const t     = p.typeDescKey;
-      if (['goal','shot-on-goal','missed-shot','blocked-shot'].includes(t)) {
-        if (isCar) carAttempts++;
-        totalAttempts++;
-      }
-      if (t === 'goal') goals.push({
-        team:   isCar ? TEAM_ABBR : oppAbbr,
-        scorer: pName(p.details?.scoringPlayerId) || 'Unknown',
-        period: p.periodDescriptor?.number,
-        time:   p.timeInPeriod,
-        shot:   p.details?.shotType || '',
-      });
-      if (t === 'penalty') penalties.push({
-        team: isCar ? TEAM_ABBR : oppAbbr,
-        // What for, not who: the prompt names only allowedNames' players.
-        desc: penaltyDescription(p.details?.descKey) || 'Penalty',
-        mins: p.details?.duration || 2,
-      });
-    });
-  }
-  const cfPct = totalAttempts > 0 ? Math.round(carAttempts / totalAttempts * 100) : 50;
+  const { goals, penalties, cfPct, topScorer, topScorerGoals, gwgScorer } =
+    summaryInputs(pbp, { teamId: TEAM_ID, abbr: TEAM_ABBR, oppAbbr, won, oppScore, gameType: game.gameType });
 
   // CAR goalie stats
   let carGoalie = null;
@@ -980,23 +1194,6 @@ async function generateGameSummary(env, game) {
       : null,
   };
 
-  // Game-winning goal: OT goal if it went to OT, otherwise the CAR goal
-  // that gave them the margin they won by
-  const carGoals = goals.filter(g => g.team === TEAM_ABBR);
-  const otGoal   = carGoals.find(g => g.period >= 4); // OT or shootout
-  let topScorer  = null;
-  if (otGoal) {
-    topScorer = otGoal.scorer; // OT winner is always the GWG scorer
-  } else if (won && carGoals.length > 0) {
-    // GWG = the goal that gave CAR a lead they never relinquished
-    // Simple proxy: the goal that made the score carScore - (oppScore - 1) → final margin
-    // i.e. the last goal that mattered = carGoals[carScore - oppScore - 1] index
-    // (0-indexed: in a 3-2 win, goal index 1 = the 2nd CAR goal = the GWG)
-    const gwgIndex = Math.max(0, (oppScore ?? 0)); // = winning margin goal
-    topScorer = carGoals[Math.min(gwgIndex, carGoals.length - 1)]?.scorer || carGoals[carGoals.length - 1]?.scorer || null;
-  } else if (!won && carGoals.length > 0) {
-    topScorer = carGoals[carGoals.length - 1]?.scorer || null; // show last CAR goal in a loss
-  }
   const carPens   = penalties.filter(p => p.team === TEAM_ABBR).length;
   const oppPens   = penalties.filter(p => p.team !== TEAM_ABBR).length;
 
@@ -1012,15 +1209,16 @@ async function generateGameSummary(env, game) {
   const prompt = `You are EyeWall Analytics, a ${TEAM_CONFIG.displayName} hockey analytics voice. Write a sharp 3-sentence game summary for ${TEAM_CONFIG.displayName} fans. Use the stats. Write flowing prose — no bullets, no headers.
 
 Result: CAR ${carScore}-${oppScore} ${oppAbbr} (${won ? 'WIN' : 'LOSS'}) · ${game.gameDate} · ${isHome ? 'Home' : 'Away'}
-Corsi For%: ${cfPct}% (${cfPct >= 50 ? 'CAR controlled possession' : 'CAR was outshot territorially'})
-Goals: ${goals.map(g => `${g.team} ${g.scorer} P${g.period} ${g.time}`).join(' | ') || 'no goals recorded'}
+${cfPct != null ? `Corsi For%: ${cfPct}% (${cfPct >= 50 ? 'CAR controlled possession' : 'CAR was outshot territorially'})` : ''}
+Goals: ${goals.map(g => `${g.team} ${g.scorer} ${g.periodLabel} ${g.time}`).join(' | ') || 'no goals recorded'}
 ${carGoalie ? `CAR Goalie: ${carGoalie.name} — ${carGoalie.saves}/${carGoalie.shots} (${carGoalie.svPct != null ? (carGoalie.svPct * 100).toFixed(1) : '—'}% SV%)` : ''}
-${topScorer ? `Top CAR scorer: ${topScorer}` : ''}
+${topScorer ? `Top CAR scorer: ${topScorer} (${topScorerGoals} goal${topScorerGoals === 1 ? '' : 's'})` : ''}
+${gwgScorer ? `Game-winning goal: ${gwgScorer}` : ''}
 Penalties — CAR: ${carPens}, ${oppAbbr}: ${oppPens}
 
 ${allowedBlock}
 
-3 sentences only. Sentence 1: result and key storyline. Sentence 2: possession/goaltending insight. Sentence 3: one forward-looking thought.`;
+3 sentences only. Sentence 1: result and key storyline. Sentence 2: ${cfPct != null ? 'possession/goaltending' : 'goaltending'} insight. Sentence 3: one forward-looking thought.`;
 
   const aiResponse = await generateText(env, {
     messages: [{ role: 'user', content: prompt }],
@@ -1031,7 +1229,7 @@ ${allowedBlock}
   const summaryData = {
     gameId, gameDate: game.gameDate, won,
     carScore, oppScore, oppAbbr, isHome,
-    cfPct, narrative, topScorer, carGoalie, goals,
+    cfPct, narrative, topScorer, gwgScorer, carGoalie, goals,
     generatedAt: new Date().toISOString(),
   };
   await kvPut(env, summaryKey, summaryData, 30 * 24 * 3600); // 30 days
@@ -1139,9 +1337,11 @@ function buildGamePost(game, summary) {
   const scoreStr   = `CAR ${carScore}-${oppScore} ${oppAbbr}`;
   const venue      = isHome ? 'Home' : 'Away';
 
-  // OT/SO indicator
+  // OT/SO indicator, from how the game ended (goals leave out the
+  // shootout, so a shootout win has no goal past regulation and OT).
   const maxPeriod  = goals.length > 0 ? Math.max(...goals.map(g => g.period)) : 3;
-  const periodStr  = maxPeriod === 4 ? ' (OT)' : maxPeriod > 4 ? ' (SO)' : '';
+  const endedIn    = game.gameOutcome?.lastPeriodType || (maxPeriod >= 4 ? 'OT' : 'REG');
+  const periodStr  = endedIn === 'OT' ? ' (OT)' : endedIn === 'SO' ? ' (SO)' : '';
 
   // Build hashtags
   const tags = [
@@ -2049,6 +2249,7 @@ export async function poll(env, _ctx) {
   // otherwise be what the app read for up to three minutes after the
   // final), and keeps the finished game in KV for the post-game crowd
   // instead of every open app fetching it from the NHL.
+  const finalPbps = new Map();
   for (const game of completedToday) {
     const doneKey = `pbp:final:${game.id}`;
     if (await env.CACHE.get(doneKey)) continue;
@@ -2056,6 +2257,7 @@ export async function poll(env, _ctx) {
       nhlGet(`${NHL_BASE}/gamecenter/${game.id}/play-by-play`),
       nhlGet(`${NHL_BASE}/gamecenter/${game.id}/boxscore`),
     ]);
+    if (p.status === 'fulfilled') finalPbps.set(game.id, p.value);
     if (p.status === 'fulfilled') await kvPut(env, `pbp:${game.id}`, p.value, 3600);
     if (b.status === 'fulfilled') await kvPut(env, `boxscore:${game.id}`, b.value, 3600);
     if (p.status === 'fulfilled' && b.status === 'fulfilled') await kvPut(env, doneKey, true, 24 * 3600);
@@ -2068,8 +2270,18 @@ export async function poll(env, _ctx) {
   // notifyGameOver() already dedups per game_id via push:gameover:${id},
   // so calling it again for an already-notified game on every later cycle
   // is a cheap no-op, not a re-send.
+  //
+  // Before it, any goal since the last live tick: a sudden-death OT goal
+  // ends the game, so the game left liveGames before detectAndNotify() saw
+  // the winner (detectAndNotify's final pass explains).
   if (env.VAPID_PRIVATE_KEY) {
     for (const game of completedToday) {
+      if (!(await kvGet(env, `push:gameover:${game.id}`))) {
+        const finalPbp = finalPbps.get(game.id) || await kvGet(env, `pbp:${game.id}`);
+        await detectAndNotify(env, game, finalPbp, { final: true }).catch(e =>
+          console.error(`Final goal notification error (game ${game.id}):`, e.message)
+        );
+      }
       await notifyGameOver(env, game).catch(e =>
         console.error(`Game over notification error (game ${game.id}):`, e.message)
       );
