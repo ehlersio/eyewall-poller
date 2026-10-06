@@ -8,7 +8,7 @@
 import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction } from './hockeytechPrediction.js';
-import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull } from './hockeytechGame.js';
+import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 
 // Elo constants for /pwhl/prediction -- match eyewall-pipeline/elo.py.
 const PWHL_ELO_INITIAL_RATING = 1500;
@@ -324,7 +324,6 @@ async function pollPWHLGame(env, game) {
   const period    = events[events.length - 1]?.details?.period?.id;
   const periodNum = typeof period === 'string' && period.startsWith('OT')
     ? 4 : (parseInt(period, 10) || 1);
-  const periodLabel = n => n <= 3 ? `P${n}` : n === 4 ? 'OT' : `OT${n - 3}`;
 
   const scorerGoalCounts = { ...lastState.scorerGoalCounts };
 
@@ -357,7 +356,7 @@ async function pollPWHLGame(env, game) {
         [awayAbbr, curAway, curHome, homeAbbr],
       ]) {
         await send({
-          title: `🔔 ${periodLabel(periodNum)} Starting`,
+          title: `🔔 ${hockeytechPeriodLabel(periodNum)} Starting`,
           body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
           tag:   `pwhl-period-${gameId}-${periodNum}-${abbr}`,
           url:   '/pwhl/shots',
@@ -1839,11 +1838,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       }
 
       // Period normaliser: "OT1"→4, "OT2"→5, "OT3"→6, "SO"→7, numeric string→int
-      const normPeriod = (raw) => {
-        const periodMap = { 'OT1': 4, 'OT2': 5, 'OT3': 6, 'SO': 7 };
-        const s = String(raw ?? '1');
-        return periodMap[s] ?? (parseInt(s, 10) || 1);
-      };
+      const normPeriod = hockeytechPeriodNumber;
 
       // Strip clinch prefixes from team abbrevs: "x - MTL" → "MTL"
       const normAbbr = (abbr) => (abbr || '').replace(/^[a-z]+ - /i, '').trim();
@@ -2205,30 +2200,69 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
 
       const isGame = periodKey === 'game';
 
+      // Periods named as the alerts name them (hockeytechPeriodLabel): OT,
+      // 2OT, never a raw "P4". A stat the client didn't have comes as
+      // null; its piece is left out rather than printed as "null%" or
+      // "undefined", and the best/worst period lines when there was no
+      // period to rank.
+      const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+      const pair = (a, b) => (num(a) != null && num(b) != null ? `${a}–${b}` : null);
+      const joinParts = parts => parts.filter(Boolean).join(' · ');
+
       const goalLines = goals.map(g => {
         const who = g.scorerName || (g.isCar ? carDisplay : oppDisplay);
         const str = g.strength && g.strength !== 'ev' ? ` (${g.strength.toUpperCase()})` : '';
-        const per = isGame && g.period ? ` P${g.period}` : '';
-        return `${g.isCar ? carDisplay : oppDisplay}: ${who} at ${g.time}${per}${str}`;
+        const label = isGame ? hockeytechPeriodLabel(g.period) : null;
+        const when = [g.time ? `at ${g.time}` : null, label].filter(Boolean).join(' ');
+        return `${g.isCar ? carDisplay : oppDisplay}: ${who}${when ? ` ${when}` : ''}${str}`;
       }).join('\n');
+
+      const sog = pair(carSOG, oppSOG), hd = pair(carHDCF, oppHDCF);
+      const shotLine = joinParts([
+        num(corsiForPct) != null ? `Corsi For%: ${corsiForPct}%` : null,
+        sog ? `SOG: ${sog}` : null,
+        hd ? `HD Chances: ${hd}` : null,
+      ]);
+      const fo = num(carFOPct) != null ? `${carFOPct}%` : null;
+      const hits = num(carHits) != null ? `Hits: ${carHits}` : null;
+      const oppPenaltyCount = num(penaltyCount) != null && num(carPenaltyCount) != null ? penaltyCount - carPenaltyCount : null;
+      const periodLine = (title, p) => {
+        const label = hockeytechPeriodLabel(p?.period), cf = num(p?.corsiForPct);
+        return label && cf != null ? `${title}: ${label} (${cf}% CF)` : null;
+      };
+      const samePeriod = bestPeriod?.period != null && bestPeriod.period === worstPeriod?.period;
+      const lines = parts => parts.filter(Boolean).join('\n');
+      const periodName = (typeof periodLabel === 'string' && periodLabel.trim()) || hockeytechPeriodLabel(periodKey);
 
       const prompt = isGame
         ? `You are Sticks, EyeWall Analytics' PWHL game analyst. Write a punchy 2-3 sentence final game summary. Use the full team names (e.g. "${carDisplay}", "${oppDisplay}") when referring to teams — never use abbreviations in the narrative.
-Game: ${carDisplay} (${carAbbr}) vs ${oppDisplay} (${oppAbbr})
-Score: ${carDisplay} ${carGoals}–${oppGoals} ${oppDisplay}
-Corsi For%: ${corsiForPct}% · SOG: ${carSOG}–${oppSOG} · HD Chances: ${carHDCF}–${oppHDCF}
-Faceoff Win%: ${carFOPct != null ? carFOPct + '%' : '—'} · Hits: ${carHits} · Penalties: ${carDisplay} ${carPenaltyCount}–${penaltyCount - carPenaltyCount} ${oppDisplay}
-Goals:\n${goalLines || 'None'}${goalieLine}
-Best period: ${bestPeriod?.period ? 'P' + bestPeriod.period + ' (' + bestPeriod.corsiForPct + '% CF)' : '—'}
-Worst period: ${worstPeriod?.period ? 'P' + worstPeriod.period + ' (' + worstPeriod.corsiForPct + '% CF)' : '—'}
+${lines([
+  `Game: ${carDisplay} (${carAbbr}) vs ${oppDisplay} (${oppAbbr})`,
+  pair(carGoals, oppGoals) ? `Score: ${carDisplay} ${carGoals}–${oppGoals} ${oppDisplay}` : null,
+  shotLine,
+  joinParts([
+    fo ? `Faceoff Win%: ${fo}` : null,
+    hits,
+    oppPenaltyCount != null ? `Penalties: ${carDisplay} ${carPenaltyCount}–${oppPenaltyCount} ${oppDisplay}` : null,
+  ]),
+  `Goals:\n${goalLines || 'None'}${goalieLine}`,
+  periodLine('Best period', bestPeriod),
+  samePeriod ? null : periodLine('Worst period', worstPeriod),
+])}
 
 Write in plain text, no markdown, no bullet points. Be specific about what happened.`
         : `You are Sticks, EyeWall Analytics' PWHL analyst. Write a punchy 1-2 sentence period summary. Use the full team names (e.g. "${carDisplay}", "${oppDisplay}") — never abbreviations in the narrative.
-Period: ${periodLabel} — ${carDisplay} (${carAbbr}) vs ${oppDisplay} (${oppAbbr})
-Corsi For%: ${corsiForPct}% · SOG: ${carSOG}–${oppSOG} · HD Chances: ${carHDCF}–${oppHDCF}
-Goals: ${carGoals}–${oppGoals} · Hits: ${carHits} · Faceoffs: ${carFOPct != null ? carFOPct + '%' : '—'}
-Penalties this period: ${penaltyCount} (${carDisplay} took ${carPenaltyCount})
-${goalLines ? 'Goals:\n' + goalLines : 'No goals this period.'}${goalieLine}
+${lines([
+  `${periodName ? `Period: ${periodName} — ` : ''}${carDisplay} (${carAbbr}) vs ${oppDisplay} (${oppAbbr})`,
+  shotLine,
+  joinParts([
+    pair(carGoals, oppGoals) ? `Goals: ${carGoals}–${oppGoals}` : null,
+    hits,
+    fo ? `Faceoffs: ${fo}` : null,
+  ]),
+  num(penaltyCount) != null && num(carPenaltyCount) != null ? `Penalties this period: ${penaltyCount} (${carDisplay} took ${carPenaltyCount})` : null,
+  `${goalLines ? 'Goals:\n' + goalLines : 'No goals this period.'}${goalieLine}`,
+])}
 
 Write in plain text, no markdown. 1-2 sentences max.`;
 

@@ -42,6 +42,8 @@ vi.mock('../shared.js', async (importOriginal) => {
 import { handleNHL, poll, refreshPPUnits, STANDINGS_TTL, STANDINGS_REFRESH_MS, oppGoalBody, periodIsOver, scoreboardBroadcasts, liveActivityState, startLiveActivities, applyScoreboardStates, scoreboardStates } from '../nhl.js'
 import { resolveNHLSeason } from '../seasons.js'
 import * as game2025021237 from './fixtures/nhl-2025021237-penalties.js'
+import fla_ana_ot from './fixtures/nhl-2026020037-pbp.json'
+import car_vgk_2ot from './fixtures/nhl-2025030413-pbp.json'
 
 beforeEach(() => {
   globalThis.fetch = vi.fn()
@@ -3965,6 +3967,90 @@ describe('POST /summary/narrative', () => {
     const promptSent = aiPrompt(globalThis.fetch)[0].content
     expect(promptSent).not.toMatch(/Kochetkov/)
     expect(promptSent).not.toMatch(/goalie in net/)
+  })
+})
+
+// The body the app posts to /summary/narrative for a final, built from a
+// real play-by-play the way eyewallanalytics' buildGameSummary()
+// (usePeriodSummary.js) builds it: shot attempts (goals, shots, missed and
+// blocked shots) by eventOwnerTeamId, each period's share, best/worst
+// period by that share, the shootout left out. A feed with no shot plays
+// (a goals-only feed) has no attempts, hits or per-period numbers at all
+// -- the app sends those as null.
+function finalNarrativeBody(pbp, teamId) {
+  const plays = pbp.plays.filter(p => p.periodDescriptor?.periodType !== 'SO')
+  const attempts = ['goal', 'shot-on-goal', 'missed-shot', 'blocked-shot']
+  const tracked = plays.some(p => p.typeDescKey === 'shot-on-goal')
+  const share = ps => {
+    const att = ps.filter(p => attempts.includes(p.typeDescKey))
+    const mine = att.filter(p => p.details?.eventOwnerTeamId === teamId).length
+    return att.length ? +(mine / att.length * 100).toFixed(1) : null
+  }
+  const periods = tracked ? [...new Set(plays.map(p => p.periodDescriptor.number))].sort((a, b) => a - b) : []
+  const periodStats = periods.map(period => ({ period, corsiForPct: share(plays.filter(p => p.periodDescriptor.number === period)) }))
+  const ranked = periodStats.filter(ps => ps.corsiForPct != null)
+  const names = Object.fromEntries(pbp.rosterSpots.map(r => [r.playerId, `${r.firstName.default} ${r.lastName.default}`]))
+  const isCar = p => p.details?.eventOwnerTeamId === teamId
+  const goals = plays.filter(p => p.typeDescKey === 'goal')
+  const carSide = pbp.homeTeam.id === teamId ? pbp.homeTeam : pbp.awayTeam
+  const oppSide = pbp.homeTeam.id === teamId ? pbp.awayTeam : pbp.homeTeam
+  const count = (type, mine) => plays.filter(p => p.typeDescKey === type && isCar(p) === mine).length
+  return {
+    carAbbr: carSide.abbrev, oppAbbr: oppSide.abbrev, isPlayoff: pbp.gameType === 3,
+    corsiForPct: tracked ? share(plays) : null,
+    carSOG: tracked ? count('shot-on-goal', true) + count('goal', true) : null,
+    oppSOG: tracked ? count('shot-on-goal', false) + count('goal', false) : null,
+    carGoals: goals.filter(isCar).length, oppGoals: goals.filter(p => !isCar(p)).length,
+    carHits: tracked ? count('hit', true) : null,
+    carFOPct: null, carHDCF: null, oppHDCF: null,
+    bestPeriod: [...ranked].sort((a, b) => b.corsiForPct - a.corsiForPct)[0] ?? null,
+    worstPeriod: [...ranked].sort((a, b) => a.corsiForPct - b.corsiForPct)[0] ?? null,
+    goals: goals.map(p => ({ isCar: isCar(p), scorerName: names[p.details.scoringPlayerId], time: p.timeInPeriod, period: p.periodDescriptor.number, strength: 'ev' })),
+  }
+}
+
+describe('POST /summary/narrative -- period names and missing stats', () => {
+  const gamePrompt = async (gameId, body, period = 'game') => {
+    const env = makeEnv()
+    mockFetchWithAI('Game summary text.')
+    const path = `/summary/narrative?gameId=${gameId}&period=${period}&carAbbr=${body.carAbbr}`
+    await handleNHL(makeRequest(path, { method: 'POST', body }), env, makeCtx(), new URL(`https://example.com${path}`))
+    return aiPrompt(globalThis.fetch)[0].content
+  }
+
+  it('names an overtime best period "OT", not "P4" (FLA@ANA 2026020037, ANA won in OT)', async () => {
+    const body = finalNarrativeBody(fla_ana_ot, fla_ana_ot.homeTeam.id)
+    expect(body.bestPeriod).toEqual({ period: 4, corsiForPct: 54.5 }) // 6 of 11 attempts in OT
+    const prompt = await gamePrompt(fla_ana_ot.id, body)
+    expect(prompt).toContain('Best period for ANA: OT (54.5% CF)')
+    expect(prompt).toContain('Worst period: P3 (31.3% CF)')
+    expect(prompt).toMatch(/ANA goal by [^;]+ at OT 04:14 \(EV\)/)
+    expect(prompt).not.toMatch(/\bP4\b/)
+  })
+
+  it('names the same overtime the worst period from the other side (FLA)', async () => {
+    const prompt = await gamePrompt(fla_ana_ot.id, finalNarrativeBody(fla_ana_ot, fla_ana_ot.awayTeam.id))
+    expect(prompt).toContain('Worst period: OT (45.5% CF)')
+  })
+
+  it('names a playoff second overtime "2OT" and leaves out the stats a goals-only feed lacks (CAR@VGK 2025030413)', async () => {
+    const body = finalNarrativeBody(car_vgk_2ot, car_vgk_2ot.awayTeam.id)
+    expect(body).toMatchObject({ isPlayoff: true, corsiForPct: null, bestPeriod: null, worstPeriod: null })
+    const prompt = await gamePrompt(car_vgk_2ot.id, body)
+    expect(prompt).toMatch(/VGK goal by [^;]+ at 2OT 05:38 \(EV\)/)
+    expect(prompt).toContain('Final: CAR 4 - 5 VGK')
+    expect(prompt).not.toMatch(/\bP5\b|null|undefined|NaN/)
+    expect(prompt).not.toMatch(/Corsi|possession|Best period|Worst period|shots:|hits|faceoffs|high danger/)
+  })
+
+  it('names the period by number when the app sends no label, and leaves out a null Corsi', async () => {
+    const prompt = await gamePrompt(car_vgk_2ot.id, {
+      carAbbr: 'CAR', oppAbbr: 'VGK', isPlayoff: true, corsiForPct: null, carSOG: null, oppSOG: null,
+      carGoals: 0, oppGoals: 1, carHits: null, penaltyCount: 0, carPenaltyCount: 0, goals: [],
+    }, 5)
+    expect(prompt).toContain('period summary for 2OT of a CAR vs VGK game')
+    expect(prompt).toContain('CAR goals: 0, VGK goals: 1')
+    expect(prompt).not.toMatch(/null|undefined|Corsi|possession/)
   })
 })
 

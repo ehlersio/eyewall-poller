@@ -31,6 +31,8 @@ import { getAllPWHLSeasonTypes, getPWHLScheduleSeasonIds, resolvePWHLSeason } fr
 
 import { handlePWHL, fetchPWHLNews, pwhlLeagueAverages } from '../pwhl.js'
 import { FRENCH_INSTRUCTION } from '../shared.js'
+import { hockeytechPeriodLabel, hockeytechPeriodNumber } from '../hockeytechGame.js'
+import { events as bosOtt2ot } from './fixtures/pwhl-344-pbp.js'
 
 beforeEach(() => {
   globalThis.fetch = vi.fn()
@@ -1023,6 +1025,101 @@ describe('POST /pwhl/scout', () => {
       env, makeCtx(), new URL('https://example.com/pwhl/scout')
     )
     expect(res.status).toBe(502)
+  })
+})
+
+describe('hockeytechPeriodLabel()', () => {
+  it('names periods as the NHL alerts do, from the HockeyTech period number', () => {
+    expect([1, 2, 3, 4, 5, 6, 7].map(hockeytechPeriodLabel)).toEqual(['P1', 'P2', 'P3', 'OT', '2OT', '3OT', 'SO'])
+    expect(hockeytechPeriodLabel(null)).toBeNull()
+    expect(hockeytechPeriodLabel('game')).toBeNull()
+  })
+  it('names PWHL 344\'s second overtime -- period id "5", shortName "OT2" -- 2OT', () => {
+    const winner = bosOtt2ot.filter(e => e.event === 'goal').at(-1).details
+    expect(winner.period).toEqual({ id: '5', shortName: 'OT2' })
+    expect(hockeytechPeriodLabel(hockeytechPeriodNumber(winner.period.id))).toBe('2OT')
+    expect(hockeytechPeriodNumber('OT1')).toBe(4)
+  })
+})
+
+// The body the app posts to /pwhl/summary/narrative for a final, built from
+// a real play-by-play the way eyewallanalytics' buildPWHLGameSummary()
+// (usePWHLPeriodSummary.js) builds it: shot attempts (shot and
+// blocked_shot events) by shooting team, each period's share rounded,
+// best/worst period by that share. No faceoff/hit events in this fixture,
+// so those are left out of the body.
+function pwhlFinalBody(events, teamId, carAbbr, oppAbbr) {
+  const rows = events.map(e => ({
+    type: e.event,
+    period: hockeytechPeriodNumber(e.details.period?.id),
+    teamId: parseInt(e.details.shooterTeamId ?? e.details.team?.id, 10),
+    e,
+  }))
+  const share = rs => {
+    const att = rs.filter(r => r.type === 'shot' || r.type === 'blocked_shot')
+    return Math.round(att.filter(r => r.teamId === teamId).length / (att.length || 1) * 100)
+  }
+  const periods = [...new Set(rows.map(r => r.period))].sort((a, b) => a - b)
+  const periodStats = periods.map(period => ({ period, corsiForPct: share(rows.filter(r => r.period === period)) }))
+  const goals = rows.filter(r => r.type === 'goal')
+  return {
+    carAbbr, oppAbbr,
+    corsiForPct: share(rows),
+    carGoals: goals.filter(r => r.teamId === teamId).length,
+    oppGoals: goals.filter(r => r.teamId !== teamId).length,
+    bestPeriod: [...periodStats].sort((a, b) => b.corsiForPct - a.corsiForPct)[0],
+    worstPeriod: [...periodStats].sort((a, b) => a.corsiForPct - b.corsiForPct)[0],
+    goals: goals.map(r => ({
+      isCar: r.teamId === teamId,
+      scorerName: `${r.e.details.scoredBy.firstName} ${r.e.details.scoredBy.lastName}`,
+      time: r.e.details.time, period: r.period, strength: 'ev',
+    })),
+  }
+}
+
+describe('POST /pwhl/summary/narrative -- period names and missing stats (PWHL 344, OTT won in 2OT)', () => {
+  const gamePrompt = async body => {
+    const env = makeEnv()
+    mockFetchWithAI('Game summary text.')
+    const path = `/pwhl/summary/narrative?gameId=344&period=game&carAbbr=${body.carAbbr}`
+    await handlePWHL(makeRequest(path, { method: 'POST', body }), env, makeCtx(), new URL(`https://example.com${path}`))
+    return aiPrompt(globalThis.fetch)[0].content
+  }
+
+  it('names the second overtime "2OT" as OTT\'s best period and in the winning goal, never "P5"', async () => {
+    const body = pwhlFinalBody(bosOtt2ot, 5, 'OTT', 'BOS')
+    expect(body.bestPeriod).toEqual({ period: 5, corsiForPct: 100 }) // 3-0 in attempts
+    const prompt = await gamePrompt(body)
+    expect(prompt).toContain('Best period: 2OT (100% CF)')
+    expect(prompt).toContain('Worst period: P2 (34% CF)')
+    expect(prompt).toContain('OTT: Michela Cava at 1:12 2OT')
+    expect(prompt).toContain('Score: OTT 4–3 BOS')
+    expect(prompt).not.toMatch(/\bP5\b/)
+  })
+
+  it('names it as BOS\'s worst period from the other side', async () => {
+    const prompt = await gamePrompt(pwhlFinalBody(bosOtt2ot, 1, 'BOS', 'OTT'))
+    expect(prompt).toContain('Worst period: 2OT (0% CF)')
+  })
+
+  it('leaves out stats the app did not send instead of printing null/undefined', async () => {
+    const prompt = await gamePrompt({
+      ...pwhlFinalBody(bosOtt2ot, 5, 'OTT', 'BOS'),
+      corsiForPct: null, carSOG: null, carFOPct: null, carHits: null, bestPeriod: null, worstPeriod: undefined,
+    })
+    expect(prompt).not.toMatch(/null|undefined|NaN|Corsi|SOG|HD Chances|Faceoff|Hits|Penalties|Best period|Worst period/)
+    expect(prompt).toContain('OTT: Michela Cava at 1:12 2OT')
+  })
+
+  it('names a period summary by its number when the app sends no label', async () => {
+    const env = makeEnv()
+    mockFetchWithAI('Period summary text.')
+    const path = '/pwhl/summary/narrative?gameId=344&period=5&carAbbr=OTT'
+    await handlePWHL(makeRequest(path, { method: 'POST', body: { carAbbr: 'OTT', oppAbbr: 'BOS', carGoals: 1, oppGoals: 0, goals: [] } }),
+      env, makeCtx(), new URL(`https://example.com${path}`))
+    const prompt = aiPrompt(globalThis.fetch)[0].content
+    expect(prompt).toContain('Period: 2OT — OTT (OTT) vs BOS (BOS)')
+    expect(prompt).not.toMatch(/null|undefined|NaN/)
   })
 })
 

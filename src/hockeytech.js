@@ -39,7 +39,7 @@
 
 import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
-import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull } from './hockeytechGame.js';
+import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
 
 // Elo constants -- match eyewall-pipeline/elo.py (and nhl.js's
@@ -260,7 +260,6 @@ export function createHockeyTechLeague(cfg) {
     const period    = events[events.length - 1]?.details?.period?.id;
     const periodNum = typeof period === 'string' && period.startsWith('OT')
       ? 4 : (parseInt(period, 10) || 1);
-    const periodLabel = n => n <= 3 ? `P${n}` : n === 4 ? 'OT' : `OT${n - 3}`;
     const url = `${P}/shots`;
 
     const scorerGoalCounts = { ...lastState.scorerGoalCounts };
@@ -293,7 +292,7 @@ export function createHockeyTechLeague(cfg) {
           [awayAbbr, curAway, curHome, homeAbbr],
         ]) {
           await send({
-            title: `🔔 ${periodLabel(periodNum)} Starting`,
+            title: `🔔 ${hockeytechPeriodLabel(periodNum)} Starting`,
             body:  `${abbr} ${myScore}–${oppScore} ${oppAbbr}`,
             tag:   `${key}-period-${gameId}-${periodNum}-${abbr}`,
             url,
@@ -1461,11 +1460,7 @@ Only reference the two teams named above and the numbers given -- no player name
           return errorJson(502, { error: 'PBP parse failed', detail: e.message });
         }
 
-        const normPeriod = (raw) => {
-          const periodMap = { 'OT1': 4, 'OT2': 5, 'OT3': 6, 'SO': 7 };
-          const s = String(raw ?? '1');
-          return periodMap[s] ?? (parseInt(s, 10) || 1);
-        };
+        const normPeriod = hockeytechPeriodNumber;
         const normAbbr = (abbr) => (abbr || '').replace(/^[a-z]+ - /i, '').trim();
         const timeToSeconds = (t) => {
           const parts = (t || '0:00').split(':');
