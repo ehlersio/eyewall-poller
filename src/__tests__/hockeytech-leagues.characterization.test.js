@@ -486,7 +486,9 @@ describe.each(LEAGUES)('$key', (L) => {
       await L.poll(env)
       expect(sendPushMock).not.toHaveBeenCalled()
       // Only today's schedule is fetched -- no PBP call for a finished game.
-      expect(upstreamCalls().map(c => c.url).filter(u => u.includes('hockeytech'))).toEqual([])
+      // No PBP read for a game it has finished with (the scorebar reads
+      // that find the day's games still happen every minute).
+      expect(upstreamCalls().map(c => c.url).filter(u => u.includes('gameCenterPlayByPlay'))).toEqual([])
     })
 
     it('prunes subscriptions whose push endpoint has expired', async () => {

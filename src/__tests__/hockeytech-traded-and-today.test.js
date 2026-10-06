@@ -4,7 +4,9 @@
 //     pipeline stores one league-wide row (today) or one row per team
 //     (eyewall-pipeline#190, audit #14);
 //   - /{league}/today reads the seasons after ?season= and, when game_log
-//     doesn't have the next game day yet, HockeyTech's scorebar.
+//     doesn't have the next game day yet, HockeyTech's scorebar;
+//   - /{league}/live/:id and the push poll fall back to that scorebar for
+//     a game game_log doesn't have at all (audit 2026-10-06, AHL/ECHL F4).
 //
 // Traded players, AHL 2025-26 regular season (season 90), per-team splits
 // from HockeyTech's view=player / team-scoped view=players on 2026-10-05:
@@ -13,9 +15,15 @@
 //   Laurent Brossoit (4961, G, now SD 404): RFD (372) 6 GP, SJ (405) 28 GP.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { makeEnv, makeCtx, makeRequest } from './route-harness.js'
+import { makeEnv, makeCtx, makeRequest, makeFakeCache } from './route-harness.js'
 import { scorebar as echlScorebar } from './fixtures/echl-scorebar-2026-10.js'
 import { combineSeasonRows, combineByPlayer } from '../hockeytechSeasonRows.js'
+
+const sendPushMock = vi.hoisted(() => vi.fn())
+vi.mock('../shared.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, sendPush: sendPushMock }
+})
 
 vi.mock('../seasons.js', async (importOriginal) => {
   const actual = await importOriginal()
@@ -41,7 +49,7 @@ vi.mock('../seasons.js', async (importOriginal) => {
 })
 
 import { handleAHL } from '../ahl.js'
-import { handleECHL } from '../echl.js'
+import { handleECHL, pollECHL } from '../echl.js'
 
 const base = { season_id: 90, season_type: 'regular' }
 const clarkeHER = { ...base, player_id: 8598, team_id: 319, gp: 50, goals: 15, assists: 9,  points: 24, plus_minus: -8, pim: 24, shots: 126, pp_goals: 4, sh_goals: 0 }
@@ -60,7 +68,7 @@ const players = [
 
 const rows = (data) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)), text: async () => JSON.stringify(data) })
 
-function installFetch({ tables = {}, scorebar = null }) {
+function installFetch({ tables = {}, scorebar = null, pbp = [] }) {
   globalThis.fetch = vi.fn(async (input) => {
     const u = new URL(String(input))
     if (u.pathname.startsWith('/rest/v1/')) {
@@ -68,6 +76,7 @@ function installFetch({ tables = {}, scorebar = null }) {
       return rows(typeof t === 'function' ? t(u.searchParams) : (t ?? []))
     }
     if (u.searchParams.get('view') === 'scorebar') return rows({ SiteKit: { Scorebar: scorebar ?? [] } })
+    if (u.searchParams.get('view') === 'gameCenterPlayByPlay') return { ok: true, status: 200, text: async () => `(${JSON.stringify(pbp)})` }
     return rows({})
   })
 }
@@ -86,6 +95,7 @@ const urls = () => globalThis.fetch.mock.calls.map(([u]) => String(u))
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
+  sendPushMock.mockReset().mockResolvedValue('ok')
   vi.spyOn(console, 'log').mockImplementation(() => {})
 })
 afterEach(() => {
@@ -226,5 +236,69 @@ describe('/echl/today looks ahead into the next season', () => {
     installFetch({ tables: { echl_game_log: [] }, scorebar: [] })
     const { body } = await get(handleECHL, '/echl/today?season=76')
     expect(body).toEqual([])
+  })
+})
+
+// ── /echl/live/:id and pollECHL for a game only the scorebar has ──────
+// ECHL preseason game 26588 (ADK 74 v TR 99, 2026-10-08, season 77) is on
+// /echl/today from the scorebar but never reaches echl_game_log. Before
+// 2026-10 /echl/live/26588 answered null teams, 'pre' and 0-0 while the
+// game was on, and the poll never saw it, so nobody got a push.
+describe('a game only the scorebar has (ECHL preseason 26588)', () => {
+  const liveScorebar = echlScorebar.map(g => (g.ID === '26588'
+    ? { ...g, GameStatus: '2', GameStatusString: '2nd Period', GameStatusStringLong: '2nd Period 10:00', HomeGoals: '2', VisitorGoals: '1' }
+    : g))
+  const pbp = [
+    { event: 'goal', details: { time: '5:00', period: { id: '1' }, team: { id: '74', abbreviation: 'echl - ADK' }, scoredBy: { id: '1', firstName: 'Home', lastName: 'One' }, assists: [], properties: {} } },
+    { event: 'goal', details: { time: '8:00', period: { id: '1' }, team: { id: '99', abbreviation: 'echl - TR' }, scoredBy: { id: '2', firstName: 'Away', lastName: 'One' }, assists: [], properties: {} } },
+    { event: 'goal', details: { time: '3:00', period: { id: '2' }, team: { id: '74', abbreviation: 'echl - ADK' }, scoredBy: { id: '3', firstName: 'Home', lastName: 'Two' }, assists: [], properties: {} } },
+  ]
+
+  it('/echl/live/26588: teams, score and live status from the scorebar row', async () => {
+    vi.setSystemTime(new Date('2026-10-08T23:30:00Z'))
+    installFetch({ tables: { echl_game_log: [] }, scorebar: liveScorebar, pbp })
+    const { status, body } = await get(handleECHL, '/echl/live/26588')
+    expect(status).toBe(200)
+    expect(body).toMatchObject({ gameId: 26588, homeTeamId: 74, awayTeamId: 99, homeScore: 2, awayScore: 1, gameStatus: 'live' })
+    expect(body.events).toHaveLength(3)
+  })
+
+  it('/echl/live/26588 once final: the scorebar score, cached for an hour', async () => {
+    vi.setSystemTime(new Date('2026-10-08T23:30:00Z'))
+    const finalScorebar = liveScorebar.map(g => (g.ID === '26588'
+      ? { ...g, GameStatus: '4', GameStatusString: 'Final', GameStatusStringLong: 'Final SO', HomeGoals: '3', VisitorGoals: '2' }
+      : g))
+    installFetch({ tables: { echl_game_log: [] }, scorebar: finalScorebar, pbp })
+    const env = makeEnv()
+    const putSpy = vi.spyOn(env.CACHE, 'put')
+    const res = await handleECHL(makeRequest('/echl/live/26588'), env, makeCtx(), new URL('https://example.com/echl/live/26588'))
+    expect(await res.json()).toMatchObject({ homeTeamId: 74, awayTeamId: 99, homeScore: 3, awayScore: 2, gameStatus: 'final' })
+    expect(putSpy).toHaveBeenCalledWith('echl:live:26588', expect.any(String), { expirationTtl: 3600 })
+  })
+
+  it('a game game_log never had still answers as before: null teams, pre, 0-0', async () => {
+    vi.setSystemTime(new Date('2026-10-08T23:30:00Z'))
+    installFetch({ tables: { echl_game_log: [] }, scorebar: liveScorebar, pbp })
+    const { body } = await get(handleECHL, '/echl/live/99999')
+    expect(body).toMatchObject({ homeTeamId: null, awayTeamId: null, homeScore: 0, awayScore: 0, gameStatus: 'pre' })
+  })
+
+  it('pollECHL: the game is polled and its followers get the puck-drop push', async () => {
+    vi.setSystemTime(new Date('2026-10-08T23:30:00Z'))
+    installFetch({ tables: { echl_game_log: [] }, scorebar: liveScorebar, pbp })
+    const subs = [
+      { endpoint: 'https://push.example/adk', keys: { p256dh: 'x', auth: 'y' }, teamAbbr: 'ECHL:ADK' },
+      { endpoint: 'https://push.example/tr',  keys: { p256dh: 'x', auth: 'y' }, teamAbbr: 'ECHL:TR' },
+    ]
+    const env = makeEnv({ VAPID_PRIVATE_KEY: 'k', CACHE: makeFakeCache({ 'push:subs': subs }) })
+    await pollECHL(env)
+    expect(urls().some(u => u.includes('view=gameCenterPlayByPlay') && u.includes('game_id=26588'))).toBe(true)
+    expect(urls().some(u => u.includes('game_id=26589'))).toBe(false) // the other game is still 'pre'
+    const sent = sendPushMock.mock.calls.map(([s, p]) => [s.endpoint, p.tag])
+    expect(sent.filter(([, tag]) => tag === 'echl-start-26588')).toEqual([
+      ['https://push.example/adk', 'echl-start-26588'],
+      ['https://push.example/tr',  'echl-start-26588'],
+    ])
+    expect(sent.some(([, tag]) => tag.startsWith('echl-goal-'))).toBe(true)
   })
 })
