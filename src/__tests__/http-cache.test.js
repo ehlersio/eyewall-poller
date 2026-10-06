@@ -63,7 +63,7 @@ describe('GET responses', () => {
     const env = makeEnv({ CACHE: makeFakeCache({ 'nhl:today': [{ id: 2025020001 }] }) })
     const res = await get('/nhl/today', env)
     expect(res.status).toBe(200)
-    expect(LIVE_MAX_AGE).toBeLessThanOrEqual(30)
+    expect(LIVE_MAX_AGE).toBeLessThan(10) // strictly under the app's 10 s live poll
     expect(res.headers.get('Cache-Control')).toBe(`public, max-age=${LIVE_MAX_AGE}`)
     expect(res.headers.get('ETag')).toBeTruthy()
   })

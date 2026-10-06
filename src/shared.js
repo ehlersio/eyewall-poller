@@ -560,9 +560,11 @@ export const DEFAULT_MAX_AGE = 30;
 // behind a /cache/bust or a nightly run; past an hour the ETag makes the
 // revalidation cheap anyway.
 export const MAX_MAX_AGE = 3600;
-// The app polls a live game every 10 s; a longer max-age would let the
-// browser answer those polls with an older copy.
-export const LIVE_MAX_AGE = 10;
+// The app polls a live game every 10 s. Freshness is judged against the
+// response's second-granularity Date header, so a max-age equal to the
+// poll interval can still let the browser answer a poll with the previous
+// copy; half the interval leaves no such window.
+export const LIVE_MAX_AGE = 5;
 
 // Matched against the decoded path (the app sends /cache/schedule%3ACAR%3A...).
 const LIVE_PATHS = [
