@@ -284,19 +284,45 @@ describe('GET /cache/:key', () => {
 // short (10 min) TTL; any other explicitly-requested season is treated as
 // historical/immutable and gets a long TTL instead.
 describe('GET /schedule', () => {
-  it('cold cache, no ?season=: background-fetches the current season and caches it under the season-namespaced key with the short TTL', async () => {
+  // Regression (audit 2026-10-06, NHL F1): the current season answered []
+  // on a cold miss and filled the cache in the background, so every
+  // non-CAR team's Shot Map opened with no games (poll() only keeps CAR's
+  // copy warm and the 10-minute entry had always expired by the next open).
+  it('cold cache, no ?season=: fetches the current season SYNCHRONOUSLY, returns the games and caches them under the season-namespaced key with the short TTL', async () => {
     const putSpy = vi.fn()
     const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [{ id: 1 }] }) })
     const ctx = makeCtx()
 
-    const res = await handleNHL(makeRequest('/schedule'), env, ctx, new URL('https://example.com/schedule'))
+    const res = await handleNHL(makeRequest('/schedule?team=UTA'), env, ctx, new URL('https://example.com/schedule?team=UTA'))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([{ id: 1 }]) // real data on the very first request, not []
+    expect(ctx._promises.length).toBe(0) // nothing deferred -- the fetch happened in the request
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(String(globalThis.fetch.mock.calls[0][0])).toBe('https://api-web.nhle.com/v1/club-schedule-season/UTA/20252026')
+
+    expect(putSpy).toHaveBeenCalledWith('schedule:UTA:20252026', JSON.stringify([{ id: 1 }]), { expirationTtl: 600 })
+  })
+
+  it('cold cache, current season, NHL API down: answers [] (uncached) and retries once in the background', async () => {
+    const putSpy = vi.fn()
+    const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ games: [{ id: 2 }] }) })
+    const ctx = makeCtx()
+
+    const res = await handleNHL(makeRequest('/schedule?team=UTA'), env, ctx, new URL('https://example.com/schedule?team=UTA'))
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual([])
-    await flushWaitUntil(ctx)
+    expect(putSpy).not.toHaveBeenCalled() // the empty answer is never cached
+    expect(ctx._promises.length).toBe(1)
 
-    expect(putSpy).toHaveBeenCalledWith('schedule:CAR:20252026', JSON.stringify([{ id: 1 }]), { expirationTtl: 600 })
+    await flushWaitUntil(ctx)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    expect(putSpy).toHaveBeenCalledWith('schedule:UTA:20252026', JSON.stringify([{ id: 2 }]), { expirationTtl: 600 })
   })
 
   it('cold cache, explicit historical ?season=: fetches and returns that season SYNCHRONOUSLY (no background/retry-later gap), caching it with the long TTL', async () => {
@@ -343,11 +369,11 @@ describe('GET /schedule', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [{ id: 7 }] }) })
     const ctx = makeCtx()
 
-    await handleNHL(
+    const res = await handleNHL(
       makeRequest('/schedule?season=20262027'), env, ctx,
       new URL('https://example.com/schedule?season=20262027')
     )
-    await flushWaitUntil(ctx)
+    expect(await res.json()).toEqual([{ id: 7 }])
 
     expect(putSpy).toHaveBeenCalledWith('schedule:CAR:20262027', JSON.stringify([{ id: 7 }]), { expirationTtl: 600 })
   })

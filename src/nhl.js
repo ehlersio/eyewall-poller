@@ -211,16 +211,16 @@ async function nhlGet(url) {
 // instead of assuming the cache is already warm. CAR's copy stays warm
 // forever via poll()'s own cron refresh (TEAM_ABBR-scoped, runs every
 // 60s); every other team's cache depends entirely on a recent
-// /schedule?team=X request having already populated it -- /schedule's
-// own current-season path even deliberately returns [] on a cold miss
-// (fire-and-forget background fetch, fine for a page the frontend
-// re-polls). A caller that needs the schedule for a one-shot answer
-// (can't just tell the user to reload) can't tolerate that gap: found
-// live in production as "Game not found in schedule" for every non-CAR
-// team whenever nothing had recently warmed that team's cache -- /prediction/analyze
-// was reading the cache passively (`kvGet(...) || []`) instead of ever
-// fetching. This fetches synchronously so the very first request for a
-// cold team succeeds instead of erroring once and only working on retry.
+// /schedule?team=X request having already populated it (and /schedule's
+// own current-season path answered [] on a cold miss until 2026-10,
+// filling the cache in the background). A caller that needs the schedule
+// for a one-shot answer (can't just tell the user to reload) can't
+// tolerate that gap: found live in production as "Game not found in
+// schedule" for every non-CAR team whenever nothing had recently warmed
+// that team's cache -- /prediction/analyze was reading the cache
+// passively (`kvGet(...) || []`) instead of ever fetching. This fetches
+// synchronously so the very first request for a cold team succeeds
+// instead of erroring once and only working on retry.
 async function scheduleWithFetch(env, abbr, season) {
   const cached = await kvGet(env, scheduleKey(abbr, season));
   if (cached) return cached;
@@ -2467,18 +2467,22 @@ export async function handleNHL(request, env, ctx, url) {
   // changes; the current season (and the next, see isPastSeason) keeps the
   // short TTL.
   //
-  // Current season: mirrors the /news pattern (warm: serve from KV; cold:
-  // fetch in background, return [] immediately, next request ~2s later
-  // gets real data) — appropriate here since the current season is
-  // requested constantly and cron already keeps CAR's copy warm.
+  // Every season is fetched and cached SYNCHRONOUSLY on a cold miss (the
+  // same shape as /roster below and PWHL's /pwhl/schedule). The current
+  // season used to follow the /news pattern instead -- fire a background
+  // fetch, answer [] now, let the next request ~2s later get real data --
+  // on the theory that poll() keeps it warm. poll() only rewrites this
+  // app's own team's copy (TEAM_ABBR); every other team's 10-minute entry
+  // had expired by the time its next user arrived, so the Shot Map opened
+  // with no game chips, no season aggregate and no game-type options for
+  // UTA/SEA/VGK/... on nearly every open (audit 2026-10-06, NHL F1).
+  // Nothing on the page re-requests the schedule, so "retry later" never
+  // happened. The background path is now only the fallback when the
+  // synchronous fetch fails: answer [] (not cached) and try once more
+  // off the request so a transient upstream error still fills the cache.
   //
-  // Historical season: fetched and cached SYNCHRONOUSLY on a cold miss
-  // instead — same shape as PWHL's /pwhl/schedule route (`pwhl.js`). A
-  // past season is a single one-off upstream call that then sits on a
-  // 60-day TTL; the fire-and-forget "empty now, retry later" pattern has
-  // no natural retry trigger once a user has already picked that season
-  // chip and is looking at an empty game row, so it isn't the right shape
-  // here the way it is for a page the user reloads/polls anyway.
+  // Historical seasons sit on a 60-day TTL; the current and next season
+  // keep the short one (see putCurrentSchedule / isPastSeason).
   if (url.pathname === '/schedule' && request.method === 'GET') {
     const tc     = await getTeamConfig(request, env);
     const season = url.searchParams.get('season') || String(tc.season);
@@ -2498,6 +2502,14 @@ export async function handleNHL(request, env, ctx, url) {
       }
     }
 
+    try {
+      const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${season}`);
+      const games = await putCurrentSchedule(env, tc.abbr, season, data?.games || []);
+      return json(games);
+    } catch (e) {
+      console.warn(`Schedule fetch ${tc.abbr} season ${season}: ${e.message}`);
+    }
+
     ctx.waitUntil((async () => {
       try {
         const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${season}`);
@@ -2512,9 +2524,8 @@ export async function handleNHL(request, env, ctx, url) {
 
   // GET /roster?team=CAR
   // Proxies NHL's /roster/{team}/current, cached in KV. Synchronous
-  // fetch-and-cache-on-miss (mirrors /schedule's historical-season branch
-  // above, not its current-season fire-and-forget pattern) -- this is a
-  // foreground page (the Players view's Roster tab), not a background
+  // fetch-and-cache-on-miss (the same shape as /schedule above) -- this
+  // is a foreground page (the Players view's Roster tab), not a background
   // feed nothing else keeps warm, so a cold-miss user needs real data
   // now, not an empty response with a silent retry-later.
   //

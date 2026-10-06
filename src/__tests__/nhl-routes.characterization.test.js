@@ -526,13 +526,13 @@ describe('background fetches', () => {
     expect({ res, kvWrites }).toMatchSnapshot()
   })
 
-  it('GET /schedule for the current season: [] now, cached in the background', async () => {
+  it('GET /schedule for the current season: fetched synchronously on a cold miss, then served from KV', async () => {
     installUpstream()
     const { env, kvWrites } = makeRecordingEnv()
     const ctx = makeCtx()
 
     const res = await callRoute(env, '/schedule?team=BOS', { ctx })
-    await flushWaitUntil(ctx)
+    expect(ctx._promises).toHaveLength(0)
     expect({ res, upstream: upstreamCalls(), kvWrites }).toMatchSnapshot()
 
     globalThis.fetch.mockClear()
