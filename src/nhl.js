@@ -1211,7 +1211,7 @@ async function generateGameSummary(env, game) {
 Result: CAR ${carScore}-${oppScore} ${oppAbbr} (${won ? 'WIN' : 'LOSS'}) · ${game.gameDate} · ${isHome ? 'Home' : 'Away'}
 ${cfPct != null ? `Corsi For%: ${cfPct}% (${cfPct >= 50 ? 'CAR controlled possession' : 'CAR was outshot territorially'})` : ''}
 Goals: ${goals.map(g => `${g.team} ${g.scorer} ${g.periodLabel} ${g.time}`).join(' | ') || 'no goals recorded'}
-${carGoalie ? `CAR Goalie: ${carGoalie.name} — ${carGoalie.saves}/${carGoalie.shots} (${carGoalie.svPct != null ? (carGoalie.svPct * 100).toFixed(1) : '—'}% SV%)` : ''}
+${carGoalie ? `CAR Goalie: ${carGoalie.name} — ${carGoalie.saves}/${carGoalie.shots}${carGoalie.svPct != null ? ` (${(carGoalie.svPct * 100).toFixed(1)}% SV%)` : ''}` : ''}
 ${topScorer ? `Top CAR scorer: ${topScorer} (${topScorerGoals} goal${topScorerGoals === 1 ? '' : 's'})` : ''}
 ${gwgScorer ? `Game-winning goal: ${gwgScorer}` : ''}
 Penalties — CAR: ${carPens}, ${oppAbbr}: ${oppPens}
@@ -4300,10 +4300,43 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     // wasn't being read. Omitted for period-level narratives, where every
     // goal in this same list is already understood to be from the one
     // period the prompt names (stats.periodLabel below).
+    //
+    // Periods are named as the alerts name them (pushPeriodLabel): P1-P3,
+    // then OT, and 2OT/3OT in the playoffs. Printed raw, an overtime goal
+    // or best period read "P4" (a playoff 2OT "P5"). The client sends
+    // isPlayoff, not a gameType; it leaves the shootout out of goals and
+    // periods, so a regular-season period here is never past OT.
+    const periodName = n => {
+      const num = Number(n);
+      return Number.isInteger(num) && num > 0 ? pushPeriodLabel(num, undefined, isPlayoff ? 3 : 2) : null;
+    };
     const goalsSummary = (stats.goals || []).map(g => {
-      const when = isGame && g.period != null ? `P${g.period} ${g.time || '—'}` : (g.time || '—');
-      return `${g.isCar ? carAbbr : oppAbbr} goal by ${g.scorerName || 'unknown'} at ${when} (${(g.strength || 'EV').toUpperCase()})`;
+      const label = isGame ? periodName(g.period) : null;
+      const when  = [label, g.time].filter(Boolean).join(' ');
+      return `${g.isCar ? carAbbr : oppAbbr} goal by ${g.scorerName || 'unknown'}${when ? ` at ${when}` : ''} (${(g.strength || 'EV').toUpperCase()})`;
     }).join('; ') || 'no goals';
+
+    // A stat the client didn't have (a goals-only feed has no shot
+    // attempts, hits or high-danger chances; no faceoffs, no FO%) comes as
+    // null. Its line is left out rather than printed as "null%" -- and the
+    // best/worst period lines when there was no period to rank, rather
+    // than "Pundefined (undefined% CF)".
+    const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const statLine = (cond, text) => (cond ? [`  - ${text}`] : []);
+    const periodLine = (title, p) => {
+      const label = periodName(p?.period), cf = num(p?.corsiForPct);
+      return statLine(label && cf != null, `${title}: ${label} (${cf}% CF)`);
+    };
+    const cf = num(stats.corsiForPct);
+    const carSOG = num(stats.carSOG), oppSOG = num(stats.oppSOG);
+    const carHDCF = num(stats.carHDCF), oppHDCF = num(stats.oppHDCF);
+    const carHits = num(stats.carHits), carFOPct = num(stats.carFOPct);
+    const carGoals = num(stats.carGoals), oppGoals = num(stats.oppGoals);
+    const samePeriod = stats.bestPeriod?.period != null && stats.bestPeriod.period === stats.worstPeriod?.period;
+    const penaltyCount = num(stats.penaltyCount), carPenaltyCount = num(stats.carPenaltyCount);
+    // The period summary names its period from the client's label
+    // ("Period 2", "OT", "2OT"), else from the period number.
+    const periodTitle = (typeof stats.periodLabel === 'string' && stats.periodLabel.trim()) || periodName(period);
 
     // The team's goalies who actually faced shots, which the client reads off
     // the play-by-play's goalieInNetId. Deliberately not the older
@@ -4328,8 +4361,30 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       : `No confirmed player names — refer to teams by abbreviation only (${carAbbr}, ${oppAbbr}).`;
 
     const playoffNote = isPlayoff
-      ? '\n\nNote: This is a PLAYOFF game. Do not mention points, standings, or "escaping with a point". Overtime is full 20-minute periods, not 3v3. Focus on possession, goaltending, and series context.'
+      ? `\n\nNote: This is a PLAYOFF game. Do not mention points, standings, or "escaping with a point". Overtime is full 20-minute periods, not 3v3. Focus on ${cf != null ? 'possession, ' : ''}goaltending, and series context.`
       : '';
+
+    const gameLines = [
+      ...statLine(carGoals != null && oppGoals != null, `Final: ${carAbbr} ${carGoals} - ${oppGoals} ${oppAbbr}`),
+      ...statLine(cf != null, `Game Corsi For%: ${cf}%`),
+      ...statLine(carSOG != null && oppSOG != null, `${carAbbr} shots: ${carSOG}, ${oppAbbr} shots: ${oppSOG}`),
+      ...statLine(carHDCF != null && oppHDCF != null, `${carAbbr} high danger chances: ${carHDCF} vs ${oppAbbr} ${oppHDCF}`),
+      ...periodLine(`Best period for ${carAbbr}`, stats.bestPeriod),
+      ...(samePeriod ? [] : periodLine('Worst period', stats.worstPeriod)),
+      ...statLine(carHits != null || carFOPct != null, [
+        carHits != null ? `${carAbbr} hits: ${carHits}` : null,
+        carFOPct != null ? `${carAbbr} faceoffs: ${carFOPct}%` : null,
+      ].filter(Boolean).join(', ')),
+      `  - Goals: ${goalsSummary}${goalieLine}`,
+    ].join('\n');
+    const periodLines = [
+      ...statLine(cf != null, `${carAbbr} Corsi For%: ${cf}%`),
+      ...statLine(carSOG != null && oppSOG != null, `${carAbbr} shots on goal: ${carSOG}, ${oppAbbr} shots on goal: ${oppSOG}`),
+      ...statLine(carGoals != null && oppGoals != null, `${carAbbr} goals: ${carGoals}, ${oppAbbr} goals: ${oppGoals}`),
+      ...statLine(carHits != null, `${carAbbr} hits: ${carHits}`),
+      ...statLine(penaltyCount != null && carPenaltyCount != null, `Penalties: ${penaltyCount} total (${carPenaltyCount} against ${carAbbr})`),
+      `  - Goals: ${goalsSummary}${goalieLine}`,
+    ].join('\n');
 
     const prompt = isGame
       ? `You are EyeWall, an analytics assistant for ${carAbbr} hockey fans.
@@ -4337,33 +4392,21 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   Tone: analytical, knowledgeable fan. No fluff. No bullet points.
 
   Game stats:
-  - Final: ${carAbbr} ${stats.carGoals} - ${stats.oppGoals} ${oppAbbr}
-  - Game Corsi For%: ${stats.corsiForPct}%
-  - ${carAbbr} shots: ${stats.carSOG}, ${oppAbbr} shots: ${stats.oppSOG}
-  - ${carAbbr} high danger chances: ${stats.carHDCF} vs ${oppAbbr} ${stats.oppHDCF}
-  - Best period for ${carAbbr}: P${stats.bestPeriod?.period} (${stats.bestPeriod?.corsiForPct}% CF)
-  - Worst period: P${stats.worstPeriod?.period} (${stats.worstPeriod?.corsiForPct}% CF)
-  - ${carAbbr} hits: ${stats.carHits}, ${carAbbr} faceoffs: ${stats.carFOPct}%
-  - Goals: ${goalsSummary}${goalieLine}
+${gameLines}
 
   ${allowedNamesNote}
 
   Summarize how the game went, key turning points, and whether the result matched the underlying play. Under 80 words.${playoffNote}`
       : `You are EyeWall, an analytics assistant for ${carAbbr} hockey fans.
-  Write a tight 2-3 sentence period summary for ${stats.periodLabel} of a ${carAbbr} vs ${oppAbbr} game.
+  Write a tight 2-3 sentence period summary for ${periodTitle ? `${periodTitle} of ` : ''}a ${carAbbr} vs ${oppAbbr} game.
   Tone: sharp, analytical, knowledgeable fan. No fluff. No bullet points. Just sentences.
 
   Stats:
-  - ${carAbbr} Corsi For%: ${stats.corsiForPct}%
-  - ${carAbbr} shots on goal: ${stats.carSOG}, ${oppAbbr} shots on goal: ${stats.oppSOG}
-  - ${carAbbr} goals: ${stats.carGoals}, ${oppAbbr} goals: ${stats.oppGoals}
-  - ${carAbbr} hits: ${stats.carHits}
-  - Penalties: ${stats.penaltyCount} total (${stats.carPenaltyCount} against ${carAbbr})
-  - Goals: ${goalsSummary}${goalieLine}
+${periodLines}
 
   ${allowedNamesNote}
 
-  Focus on what mattered most — possession dominance, momentum, key goals. Under 60 words.${playoffNote}`;
+  Focus on what mattered most — ${cf != null ? 'possession dominance, ' : ''}momentum, key goals. Under 60 words.${playoffNote}`;
 
     // For game summaries, also generate a short card caption in parallel
     const cardPrompt = isGame

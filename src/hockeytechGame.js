@@ -103,3 +103,28 @@ export function isExtraAttackerPull(events, index) {
   }
   return true;
 }
+
+// A HockeyTech period id as a number. Most events carry "1".."5" (a
+// playoff second overtime is "5", shortName "OT2" -- PWHL 344), but some
+// carry "OT1" (blocked shots in PWHL 227's overtime); the shootout, whose
+// events have no period, is put in 7 by the routes that list it.
+export function hockeytechPeriodNumber(raw) {
+  const periodMap = { 'OT1': 4, 'OT2': 5, 'OT3': 6, 'SO': 7 };
+  const s = String(raw ?? '1');
+  return periodMap[s] ?? (parseInt(s, 10) || 1);
+}
+
+// A HockeyTech period's name, as the NHL alerts name theirs (see nhl.js's
+// pushPeriodLabel): P1-P3, OT, then 2OT/3OT, and SO. Takes the period
+// number of hockeytechPeriodNumber() -- OT1 4, OT2 5, OT3 6, SO 7 -- so a
+// second overtime (only played in the playoffs) and the shootout never
+// share a number, and no game type is needed to tell them apart. Null for
+// anything else; never a raw "P4".
+export function hockeytechPeriodLabel(n) {
+  const num = Number(n);
+  if (!Number.isInteger(num) || num < 1) return null;
+  if (num <= 3) return `P${num}`;
+  if (num === 4) return 'OT';
+  if (num === 7) return 'SO';
+  return `${num - 3}OT`;
+}
