@@ -23,6 +23,7 @@ import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_I
 import { handleECHL, ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS, fetchECHLNews, pollECHL } from './echl.js';
 import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog } from './shared.js';
 import { handleOps, trackCron, checkCronHealth, readCronHealth, readOpsHealth, OPS_SUBS_KEY } from './ops.js';
+import { maybeDispatchWorkflows } from './dispatch.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
 // GET /config/seasons/comparison, one entry per league. NHL's team_seasons is
@@ -561,6 +562,9 @@ export async function runScheduled(env, ctx) {
         .catch(e => console.error('PP units scheduled error:', e.message)),
       refreshSeasonsCache(env)
         .catch(e => console.error('Season cache refresh error:', e.message)),
+      // The pipeline's daily runs, started on time (dispatch.js).
+      maybeDispatchWorkflows(env)
+        .catch(e => console.error('Workflow dispatch error:', e.message)),
     ]);
     await checkCronHealth(env, { nhl, pwhl, ahl, echl })
       .catch(e => console.error('Cron health check error:', e.message));
