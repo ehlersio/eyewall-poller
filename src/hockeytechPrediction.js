@@ -111,8 +111,18 @@ function leagueAverage(rows, seasonText, floor) {
   return leagueAverageLine(leagueSpecialTeams(played, minTeams), seasonText);
 }
 
-// Streak from the season's Final games (newest first). Every non-win
-// extends a losing streak; PWHL's OT/SO losses ('O') included.
+// One final game from a team's side: 'W', 'OT' (lost in overtime or a
+// shootout) or 'L' (lost in regulation). `endedIn` is the game log's
+// ended_in ('OT' | 'SO' | null) -- AHL/ECHL rows carry it; PWHL rows don't
+// (their OT/SO flags are ot/shootout), so a PWHL loss stays 'L'.
+export function gameResult(myScore, oppScore, endedIn) {
+  if (myScore > oppScore) return 'W';
+  return endedIn === 'OT' || endedIn === 'SO' ? 'OT' : 'L';
+}
+
+// Streak from the season's Final games (newest first): W3, L2 or OT1. For
+// AHL/ECHL an OT/SO loss is its own 'OT' result (gameResult()); for the
+// PWHL every non-win extends a losing streak, OT/SO losses included.
 function streakFor(games, teamId) {
   const results = games
     .filter(g => g.home_team_id === teamId || g.away_team_id === teamId)
@@ -120,7 +130,7 @@ function streakFor(games, teamId) {
       const isHomeG = g.home_team_id === teamId;
       const my = isHomeG ? g.home_score : g.away_score;
       const opp = isHomeG ? g.away_score : g.home_score;
-      return my > opp ? 'W' : 'L';
+      return gameResult(my, opp, g.ended_in);
     });
   let streak = 0, streakType = '';
   for (const res of results) {
@@ -315,7 +325,7 @@ Write the analysis now. Mention the single most decisive factor from the ${prior
       `- ${describeStat('PP%', s.pp, priorLabel, fmtPct, words)}`,
       `- ${describeStat('PK%', s.pk, priorLabel, fmtPct, words)}`,
       ...(cfg.corsi ? [`- ${corsiSource !== 'unavailable' ? describeStat(corsiLabel, cf, priorLabel, fmtPct, words) : `${corsiLabel}: not available`}`] : []),
-      ...(streak !== 'unknown' ? [`- Current streak: ${streak}`] : []),
+      ...(streak !== 'unknown' ? [`- Current streak: ${streak}${streak.startsWith('OT') ? ' (consecutive overtime/shootout losses)' : ''}`] : []),
     ].join('\n');
 
     const all = [h, a].flatMap(s => ['gf', 'ga', 'pp', 'pk', 'cf5', 'cfAll'].map(k => s[k]));

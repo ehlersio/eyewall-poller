@@ -19,8 +19,9 @@
  * production data (see the README's "AHL & ECHL" section):
  *   - No shift data, and no hit/faceoff/blocked_shot PBP events. Box scores
  *     carry hits/faceoff fields, but hardcoded "0" -- /summary strips them.
- *   - {league}_game_log has no OT/shootout columns, so streaks and L10
- *     count every non-win as a plain loss ('L').
+ *   - {league}_game_log.ended_in ('OT' | 'SO' | null) says how a final
+ *     game ended, so standings L10/streaks and /prediction's streaks split
+ *     OT/SO losses ('OT') from regulation losses ('L').
  *   - {league}_team_seasons has ot_losses and shootout_losses as separate
  *     columns; {league}_player_seasons has no shot_pct/gw_goals/pp_assists/
  *     sh_assists.
@@ -37,7 +38,8 @@
  */
 
 import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
-import { buildHockeyTechPrediction } from './hockeytechPrediction.js';
+import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
+import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull } from './hockeytechGame.js';
 
 // Elo constants -- match eyewall-pipeline/elo.py (and nhl.js's
 // ELO_HOME_ADVANTAGE). hockeytech_elo.py writes the ratings these apply to.
@@ -106,7 +108,7 @@ export function createHockeyTechLeague(cfg) {
     teamCodes,
     getSeasonTypes: (env) => cfg.getAllSeasonTypes(env),
     getSeasons: (env) => cfg.getAllSeasons(env),
-    gameLogSelect: 'game_id,home_team_id,away_team_id,home_score,away_score',
+    gameLogSelect: 'game_id,home_team_id,away_team_id,home_score,away_score,ended_in',
     recordFields: ['wins', 'losses', 'ot_losses', 'shootout_losses'],
     corsi: false,
     playoffFocus: 'goaltending and recent form',
@@ -286,7 +288,8 @@ export function createHockeyTechLeague(cfg) {
     }
 
     // ── Process new events ─────────────────────────────────
-    for (const ev of newEvents) {
+    for (let i = lastState.eventCount; i < events.length; i++) {
+      const ev   = events[i];
       const type = ev.event;
       const d    = ev.details || {};
       const time = d.time || null;
@@ -358,7 +361,9 @@ export function createHockeyTechLeague(cfg) {
         }, `${label}:${ppAbbr}`, 'penalty');
       }
 
-      if (type === 'goalie_change' && d.goalieComingIn === null) {
+      // Only an extra-attacker pull, not a delayed-penalty trip to the
+      // bench (hockeytechGame.js).
+      if (type === 'goalie_change' && isExtraAttackerPull(events, i)) {
         const pulledTeamId  = parseInt(d.team_id, 10) || null;
         const benefitTeamId = pulledTeamId === homeId ? awayId : homeId;
         const benefitAbbr   = teamCodes[benefitTeamId] || String(benefitTeamId);
@@ -444,7 +449,11 @@ export function createHockeyTechLeague(cfg) {
     // GET /{league}/standings?season=90
     // L10/streak enrichment from the game log. {league}_team_seasons.wins is
     // already the season total (regulation + OT/SO), so no PWHL-style
-    // regulation_wins + non_reg_wins addition.
+    // regulation_wins + non_reg_wins addition. l10L counts regulation losses
+    // and l10OTL OT/SO losses (same field names as /pwhl/standings);
+    // streakType is 'W', 'L' or 'OT' -- an OT/SO loss starts or extends an
+    // 'OT' streak, never a regulation-loss one, matching the NHL's streak
+    // codes.
     if (url.pathname === `${P}/standings`) {
       const season = await seasonParam(url, env);
       return cachedJson(env, `${key}:standings:${season}`, 3600, async () => {
@@ -452,14 +461,12 @@ export function createHockeyTechLeague(cfg) {
         const [rows, games] = await Promise.all([
           sbRows(`${table('team_seasons')}?season_id=eq.${season}&season_type=eq.${seasonType}&order=points.desc&limit=32`),
           sbRowsOr(
-            `${table('game_log')}?season_id=eq.${season}&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score`,
+            `${table('game_log')}?season_id=eq.${season}&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score,ended_in`,
             []
           ),
         ]);
         if (rows instanceof Response) return rows;
 
-        // No OT/shootout columns on the game log, so every non-win is a plain
-        // loss ('L'), never split into a PWHL-style OT loss ('O').
         const teamStats = {};
         for (const g of games) {
           for (const [tid, myScore, oppScore] of [
@@ -468,7 +475,7 @@ export function createHockeyTechLeague(cfg) {
           ]) {
             if (!tid) continue;
             if (!teamStats[tid]) teamStats[tid] = { games: [] };
-            teamStats[tid].games.push(myScore > oppScore ? 'W' : 'L');
+            teamStats[tid].games.push(gameResult(myScore, oppScore, g.ended_in));
           }
         }
         const enriched = rows.map(r => {
@@ -477,13 +484,14 @@ export function createHockeyTechLeague(cfg) {
           const last10 = ts.games.slice(0, 10);
           const l10W = last10.filter(x => x === 'W').length;
           const l10L = last10.filter(x => x === 'L').length;
+          const l10OTL = last10.filter(x => x === 'OT').length;
           let streak = 0, streakType = '';
           for (const res of ts.games) {
             if (!streakType) { streakType = res; streak = 1; }
             else if (res === streakType) streak++;
             else break;
           }
-          return { ...r, l10W, l10L, streakType, streakCount: streak };
+          return { ...r, l10W, l10L, l10OTL, streakType, streakCount: streak };
         });
         return enriched;
       });
@@ -522,24 +530,32 @@ export function createHockeyTechLeague(cfg) {
     // GET /{league}/players?teamId=444&season=90
     // Skater + goalie season stats for one team, plus a jersey-sorted roster
     // list for the Roster tab. Same shape as /pwhl/players.
+    //
+    // Every skater and goalie who played for the team that season: no row
+    // cap (an AHL club dresses 45+ skaters and up to 6 goalies a season
+    // with call-ups and PTOs; this used to stop at 40 and 5 without saying
+    // so). Names/bio come from {league}_players by id for exactly those
+    // players -- a league-wide read stops at Supabase's 1,000-row page,
+    // which left about a third of a team's rows unnamed.
     if (url.pathname === `${P}/players`) {
       const season = await seasonParam(url, env);
       const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
       if (!teamId) return badRequest('teamId param required');
       return cachedJson(env, `${key}:players:${teamId}:${season}`, 3600, async () => {
         const seasonType = await resolveSeasonType(env, season);
+        const bio = 'player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs';
         const reads = await Promise.all([
-          sbRows(`${table('player_seasons')}?team_id=eq.${teamId}&season_id=eq.${season}&season_type=eq.${seasonType}&order=points.desc&limit=40`),
-          sbRows(`${table('goalie_seasons')}?team_id=eq.${teamId}&season_id=eq.${season}&season_type=eq.${seasonType}&order=gp.desc&limit=5`),
-          sbRows(`${table('players')}?team_id=eq.${teamId}&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=80`),
+          sbRows(`${table('player_seasons')}?team_id=eq.${teamId}&season_id=eq.${season}&season_type=eq.${seasonType}&order=points.desc`),
+          sbRows(`${table('goalie_seasons')}?team_id=eq.${teamId}&season_id=eq.${season}&season_type=eq.${seasonType}&order=gp.desc`),
+          sbRows(`${table('players')}?team_id=eq.${teamId}&select=${bio}&limit=80`),
         ]);
         if (reads.some(r => r instanceof Response)) return sbError();
         const [skaters, goalies, rosterRaw] = reads;
 
-        const allPlayers = await sbRowsOr(
-          `${table('players')}?select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=1500`,
-          rosterRaw
-        );
+        const statIds = [...new Set([...skaters, ...goalies].map(r => r.player_id))].filter(id => id != null);
+        const allPlayers = statIds.length
+          ? await sbRowsOr(`${table('players')}?player_id=in.(${statIds.join(',')})&select=${bio}`, rosterRaw)
+          : rosterRaw;
 
         const nameMap = {};
         for (const p of allPlayers) {
@@ -981,27 +997,35 @@ export function createHockeyTechLeague(cfg) {
     // Per-game player box score from {league}_skater_game_box/
     // {league}_goalie_game_box (eyewall-pipeline's {league}_game_boxscore.py).
     // No hits/faceoff/blocked-shots/skater-TOI columns -- always 0 in the feed.
+    // player_name comes from the game's own gameSummary lineup first, then
+    // {league}_players by id; null when neither knows the player.
     if (url.pathname === `${P}/game-box`) {
       const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
       if (!gameId) return badRequest('gameId required');
-      return cachedJson(env, `${key}:gamebox:${gameId}`, 3600, async () => {
-        const [skaters, goalies, gameRows] = await Promise.all([
+      // 5 min while a row is unnamed (gameSummary unreachable), so it fills in soon.
+      const ttl = (box) => ([...box.skaters, ...box.goalies].every(r => r.player_name) ? 3600 : 300);
+      return cachedJson(env, `${key}:gamebox:${gameId}`, ttl, async () => {
+        const [skaters, goalies, gameRows, summary] = await Promise.all([
           sbRows(`${table('skater_game_box')}?game_id=eq.${gameId}&order=points.desc`),
           sbRows(`${table('goalie_game_box')}?game_id=eq.${gameId}`),
           sbRowsOr(`${table('game_log')}?game_id=eq.${gameId}&select=home_team_id,away_team_id`, []),
+          fetchGameSummary(htGameUrl('gameSummary', gameId), cfg.ht.headers),
         ]);
         if (skaters instanceof Response || goalies instanceof Response) return sbError();
         const gameTeamIds = gameRows[0] ? [gameRows[0].home_team_id, gameRows[0].away_team_id] : [];
 
-        const playerIds = [...new Set([...skaters, ...goalies].map(r => r.player_id))];
         const nameMap = {};
+        for (const [id, p] of Object.entries(gameSummaryPlayers(summary))) nameMap[id] = p.name;
+        const playerIds = [...new Set([...skaters, ...goalies].map(r => r.player_id))]
+          .filter(id => id != null && !nameMap[id]);
         if (playerIds.length) {
           const nameRows = await sbRowsOr(
             `${table('players')}?player_id=in.(${playerIds.join(',')})&select=player_id,first_name,last_name`,
             []
           );
           for (const p of nameRows) {
-            nameMap[p.player_id] = `${p.first_name || ''} ${p.last_name || ''}`.trim();
+            const name = `${p.first_name || ''} ${p.last_name || ''}`.trim();
+            if (name) nameMap[p.player_id] = name;
           }
         }
 
@@ -1288,12 +1312,18 @@ Only reference the two teams named above and the numbers given -- no player name
 
     // GET /{league}/live/:gameId
     // Normalized live PBP from HockeyTech. Event set: goal, shot,
-    // penaltyshot, penalty, goalie_change, plus a defensive shootout branch
-    // (not yet seen as a distinct event type in either league). No hit/
-    // faceoff/blocked_shot -- those don't exist in this feed. Goal events
-    // already carry assists/properties/on-ice players, so unlike PWHL's
-    // route there's no gameSummary merge. KV TTL: 60s live, 1hr final --
-    // 60 is Cloudflare KV's minimum expiration_ttl.
+    // penaltyshot, penalty, goalie_change, shootout. No hit/faceoff/
+    // blocked_shot -- those don't exist in this feed. Goal events already
+    // carry assists/properties/on-ice players, so unlike PWHL's route
+    // there's no gameSummary merge. KV TTL: 60s live, 1hr final -- 60 is
+    // Cloudflare KV's minimum expiration_ttl.
+    //
+    // Shootout attempts are 'shootout' events whose details carry
+    // shooterTeam (camelCase) and no period or time (AHL 1029078, IA@TEX
+    // 2026-10-02), so they get period 7 ('SO'). They aren't goal events,
+    // so counting goals gives a tie for every shootout game: once the game
+    // is final the score is the game row's (game_log / scorebar), which
+    // includes the shootout winner's goal.
     if (url.pathname.startsWith(`${P}/live/`)) {
       const gameId = parseInt(url.pathname.split(`${P}/live/`)[1], 10);
       if (!gameId) return badRequest('gameId required');
@@ -1371,10 +1401,13 @@ Only reference the two teams named above and the numbers given -- no player name
           }
 
           // No coordinates: breakaway-style attempts aren't location-tracked.
+          // The feed's team key is shooterTeam; shooter_team is kept as a
+          // fallback for any older payload that used it.
           if (type === 'penaltyshot' || type === 'shootout') {
             return {
               ...base,
-              teamId:  parseInt(d.shooter_team?.id, 10) || null,
+              ...(type === 'shootout' ? { period: normPeriod('SO') } : {}),
+              teamId:  parseInt((d.shooterTeam ?? d.shooter_team)?.id, 10) || null,
               shooter: normPlayer(d.shooter),
               goalie:  normPlayer(d.goalie),
               isGoal:  !!d.isGoal,
@@ -1408,7 +1441,7 @@ Only reference the two teams named above and the numbers given -- no player name
         }).filter(Boolean);
 
         const gameRows = await sbRowsOr(
-          `${table('game_log')}?game_id=eq.${gameId}&select=home_team_id,away_team_id,game_state,game_status_code&limit=1`,
+          `${table('game_log')}?game_id=eq.${gameId}&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1`,
           []
         ).catch(() => []);
         const gameRow = gameRows[0] ? (await live(env, gameRows))[0] : null;
@@ -1420,6 +1453,12 @@ Only reference the two teams named above and the numbers given -- no player name
             else awayScore++;
           }
           gameStatus = deriveGameStatus(gameRow);
+          // A final's official score counts the shootout winner's goal,
+          // which no goal event carries.
+          if (gameStatus === 'final' && Number.isFinite(gameRow.home_score) && Number.isFinite(gameRow.away_score)) {
+            homeScore = gameRow.home_score;
+            awayScore = gameRow.away_score;
+          }
         }
 
         const payload = {
