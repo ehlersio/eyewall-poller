@@ -85,6 +85,10 @@ exports[`ahl > game-box > response, upstream requests and KV writes; repeat call
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_id=eq.1028992&select=home_team_id,away_team_id",
     },
     {
+      "referer": "https://theahl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=1028992&key=ccb91f29d6744675&client_code=ahl&lang=en&league_id=",
+    },
+    {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=in.(6681,6682,7001)&select=player_id,first_name,last_name",
     },
   ],
@@ -220,13 +224,16 @@ exports[`ahl > league-players > response, upstream requests and KV writes; repea
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?season_id=eq.90&season_type=eq.regular&select=player_id,team_id,goals,assists,points,gp,shots,pp_goals,sh_goals,pim,plus_minus&order=points.desc&limit=600",
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?season_id=eq.90&season_type=eq.regular&select=player_id,team_id,goals,assists,points,gp,shots,pp_goals,sh_goals,pim,plus_minus&order=player_id.asc,team_id.asc",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goalie_seasons?season_id=eq.90&season_type=eq.regular&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against&order=sv_pct.desc&limit=80",
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goalie_seasons?season_id=eq.90&season_type=eq.regular&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against,shots_against,toi&order=player_id.asc,team_id.asc",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?select=player_id,first_name,last_name,position,team_id&limit=1500",
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?select=player_id,first_name,last_name,position,team_id&order=player_id.asc",
     },
   ],
 }
@@ -452,7 +459,7 @@ exports[`ahl > live/:gameId > missing required param 1`] = `
 exports[`ahl > live/:gameId > response, upstream requests and KV writes; repeat call 1`] = `
 {
   "body": {
-    "awayScore": 0,
+    "awayScore": 2,
     "awayTeamId": 323,
     "events": [
       {
@@ -649,7 +656,7 @@ exports[`ahl > live/:gameId > response, upstream requests and KV writes; repeat 
     ],
     "gameId": 1028992,
     "gameStatus": "final",
-    "homeScore": 3,
+    "homeScore": 4,
     "homeTeamId": 335,
   },
   "kvWrites": [
@@ -665,7 +672,7 @@ exports[`ahl > live/:gameId > response, upstream requests and KV writes; repeat 
       "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=1028992&key=ccb91f29d6744675&client_code=ahl&lang=en&league_id=",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_id=eq.1028992&select=home_team_id,away_team_id,game_state,game_status_code&limit=1",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_id=eq.1028992&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1",
     },
   ],
 }
@@ -1196,7 +1203,7 @@ exports[`ahl > player/landing (goalie, latest season) > response, upstream reque
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=eq.7001&select=*",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goalie_seasons?player_id=eq.7001&season_type=eq.regular&order=season_id.desc&limit=1&select=*",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goalie_seasons?player_id=eq.7001&season_type=eq.regular&order=season_id.desc,team_id.asc&limit=20&select=*",
     },
   ],
 }
@@ -1249,7 +1256,7 @@ exports[`ahl > player/landing (playoff season) > response, upstream requests and
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=eq.6681&select=*",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?player_id=eq.6681&season_id=eq.92&limit=1&select=*",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?player_id=eq.6681&season_id=eq.92&order=team_id.asc&select=*",
     },
   ],
 }
@@ -1312,7 +1319,7 @@ exports[`ahl > player/landing (skater) > response, upstream requests and KV writ
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=eq.6681&select=*",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?player_id=eq.6681&season_id=eq.90&limit=1&select=*",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?player_id=eq.6681&season_id=eq.90&order=team_id.asc&select=*",
     },
   ],
 }
@@ -1638,16 +1645,16 @@ exports[`ahl > players > response, upstream requests and KV writes; repeat call 
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?team_id=eq.335&season_id=eq.90&season_type=eq.regular&order=points.desc&limit=40",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_player_seasons?team_id=eq.335&season_id=eq.90&season_type=eq.regular&order=points.desc",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goalie_seasons?team_id=eq.335&season_id=eq.90&season_type=eq.regular&order=gp.desc&limit=5",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goalie_seasons?team_id=eq.335&season_id=eq.90&season_type=eq.regular&order=gp.desc",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?team_id=eq.335&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=80",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=1500",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=in.(6681,6682,7001)&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs",
     },
   ],
 }
@@ -1905,7 +1912,7 @@ exports[`ahl > prediction (French) > response, upstream requests and KV writes; 
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?season_id=eq.86&season_type=eq.regular",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ended_in",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_elo_ratings?team_id=in.(335,323)&select=team_id,rating",
@@ -2023,7 +2030,7 @@ exports[`ahl > prediction > response, upstream requests and KV writes; repeat ca
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?season_id=eq.86&season_type=eq.regular",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ended_in",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_elo_ratings?team_id=in.(335,323)&select=team_id,rating",
@@ -2376,6 +2383,7 @@ exports[`ahl > standings (default season) > response, upstream requests and KV w
       "goals_for": 130,
       "gp": 40,
       "l10L": 1,
+      "l10OTL": 0,
       "l10W": 2,
       "losses": 12,
       "ot_losses": 3,
@@ -2395,6 +2403,7 @@ exports[`ahl > standings (default season) > response, upstream requests and KV w
       "goals_for": 112,
       "gp": 40,
       "l10L": 2,
+      "l10OTL": 0,
       "l10W": 1,
       "losses": 17,
       "ot_losses": 4,
@@ -2422,7 +2431,7 @@ exports[`ahl > standings (default season) > response, upstream requests and KV w
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?season_id=eq.90&season_type=eq.regular&order=points.desc&limit=32",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score,ended_in",
     },
   ],
 }
@@ -2445,6 +2454,7 @@ exports[`ahl > standings (playoff season) > response, upstream requests and KV w
       "goals_for": 130,
       "gp": 40,
       "l10L": 1,
+      "l10OTL": 0,
       "l10W": 2,
       "losses": 12,
       "ot_losses": 3,
@@ -2464,6 +2474,7 @@ exports[`ahl > standings (playoff season) > response, upstream requests and KV w
       "goals_for": 112,
       "gp": 40,
       "l10L": 2,
+      "l10OTL": 0,
       "l10W": 1,
       "losses": 17,
       "ot_losses": 4,
@@ -2491,7 +2502,7 @@ exports[`ahl > standings (playoff season) > response, upstream requests and KV w
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?season_id=eq.92&season_type=eq.playoffs&order=points.desc&limit=32",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.92&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.92&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score,ended_in",
     },
   ],
 }
@@ -2514,6 +2525,7 @@ exports[`ahl > standings > response, upstream requests and KV writes; repeat cal
       "goals_for": 130,
       "gp": 40,
       "l10L": 1,
+      "l10OTL": 0,
       "l10W": 2,
       "losses": 12,
       "ot_losses": 3,
@@ -2533,6 +2545,7 @@ exports[`ahl > standings > response, upstream requests and KV writes; repeat cal
       "goals_for": 112,
       "gp": 40,
       "l10L": 2,
+      "l10OTL": 0,
       "l10W": 1,
       "losses": 17,
       "ot_losses": 4,
@@ -2560,7 +2573,7 @@ exports[`ahl > standings > response, upstream requests and KV writes; repeat cal
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_team_seasons?season_id=eq.90&season_type=eq.regular&order=points.desc&limit=32",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score,ended_in",
     },
   ],
 }
@@ -3270,7 +3283,7 @@ exports[`ahl > today > response, upstream requests and KV writes; repeat call 1`
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_date=gte.2026-01-15&season_id=eq.90&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&order=game_date.asc&limit=40",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_date=gte.2026-01-15&season_id=in.(90,92)&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&order=game_date.asc&limit=40",
     },
     {
       "referer": "https://theahl.com/",
@@ -3383,6 +3396,10 @@ exports[`echl > game-box > response, upstream requests and KV writes; repeat cal
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_id=eq.1028992&select=home_team_id,away_team_id",
+    },
+    {
+      "referer": "https://echl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=1028992&key=2c2b89ea7345cae8&client_code=echl&lang=en&league_id=",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=in.(6681,6682,7001)&select=player_id,first_name,last_name",
@@ -3520,13 +3537,16 @@ exports[`echl > league-players > response, upstream requests and KV writes; repe
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?season_id=eq.73&season_type=eq.regular&select=player_id,team_id,goals,assists,points,gp,shots,pp_goals,sh_goals,pim,plus_minus&order=points.desc&limit=600",
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?season_id=eq.73&season_type=eq.regular&select=player_id,team_id,goals,assists,points,gp,shots,pp_goals,sh_goals,pim,plus_minus&order=player_id.asc,team_id.asc",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goalie_seasons?season_id=eq.73&season_type=eq.regular&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against&order=sv_pct.desc&limit=80",
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goalie_seasons?season_id=eq.73&season_type=eq.regular&select=player_id,team_id,gp,wins,losses,ot_losses,gaa,sv_pct,shutouts,saves,goals_against,shots_against,toi&order=player_id.asc,team_id.asc",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?select=player_id,first_name,last_name,position,team_id&limit=1500",
+      "range": "0-999",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?select=player_id,first_name,last_name,position,team_id&order=player_id.asc",
     },
   ],
 }
@@ -3752,7 +3772,7 @@ exports[`echl > live/:gameId > missing required param 1`] = `
 exports[`echl > live/:gameId > response, upstream requests and KV writes; repeat call 1`] = `
 {
   "body": {
-    "awayScore": 0,
+    "awayScore": 2,
     "awayTeamId": 99,
     "events": [
       {
@@ -3949,7 +3969,7 @@ exports[`echl > live/:gameId > response, upstream requests and KV writes; repeat
     ],
     "gameId": 1028992,
     "gameStatus": "final",
-    "homeScore": 3,
+    "homeScore": 4,
     "homeTeamId": 8,
   },
   "kvWrites": [
@@ -3965,7 +3985,7 @@ exports[`echl > live/:gameId > response, upstream requests and KV writes; repeat
       "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=1028992&key=2c2b89ea7345cae8&client_code=echl&lang=en&league_id=",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_id=eq.1028992&select=home_team_id,away_team_id,game_state,game_status_code&limit=1",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_id=eq.1028992&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1",
     },
   ],
 }
@@ -4420,7 +4440,7 @@ exports[`echl > player/landing (goalie, latest season) > response, upstream requ
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=eq.7001&select=*",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goalie_seasons?player_id=eq.7001&season_type=eq.regular&order=season_id.desc&limit=1&select=*",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goalie_seasons?player_id=eq.7001&season_type=eq.regular&order=season_id.desc,team_id.asc&limit=20&select=*",
     },
   ],
 }
@@ -4473,7 +4493,7 @@ exports[`echl > player/landing (playoff season) > response, upstream requests an
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=eq.6681&select=*",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?player_id=eq.6681&season_id=eq.76&limit=1&select=*",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?player_id=eq.6681&season_id=eq.76&order=team_id.asc&select=*",
     },
   ],
 }
@@ -4536,7 +4556,7 @@ exports[`echl > player/landing (skater) > response, upstream requests and KV wri
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=eq.6681&select=*",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?player_id=eq.6681&season_id=eq.73&limit=1&select=*",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?player_id=eq.6681&season_id=eq.73&order=team_id.asc&select=*",
     },
   ],
 }
@@ -4862,16 +4882,16 @@ exports[`echl > players > response, upstream requests and KV writes; repeat call
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?team_id=eq.8&season_id=eq.73&season_type=eq.regular&order=points.desc&limit=40",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_player_seasons?team_id=eq.8&season_id=eq.73&season_type=eq.regular&order=points.desc",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goalie_seasons?team_id=eq.8&season_id=eq.73&season_type=eq.regular&order=gp.desc&limit=5",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goalie_seasons?team_id=eq.8&season_id=eq.73&season_type=eq.regular&order=gp.desc",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?team_id=eq.8&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=80",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=1500",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=in.(6681,6682,7001)&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs",
     },
   ],
 }
@@ -5129,7 +5149,7 @@ exports[`echl > prediction (French) > response, upstream requests and KV writes;
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?season_id=eq.70&season_type=eq.regular",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ended_in",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_elo_ratings?team_id=in.(8,99)&select=team_id,rating",
@@ -5247,7 +5267,7 @@ exports[`echl > prediction > response, upstream requests and KV writes; repeat c
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?season_id=eq.70&season_type=eq.regular",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ended_in",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_elo_ratings?team_id=in.(8,99)&select=team_id,rating",
@@ -5600,6 +5620,7 @@ exports[`echl > standings (default season) > response, upstream requests and KV 
       "goals_for": 130,
       "gp": 40,
       "l10L": 1,
+      "l10OTL": 0,
       "l10W": 2,
       "losses": 12,
       "ot_losses": 3,
@@ -5619,6 +5640,7 @@ exports[`echl > standings (default season) > response, upstream requests and KV 
       "goals_for": 112,
       "gp": 40,
       "l10L": 2,
+      "l10OTL": 0,
       "l10W": 1,
       "losses": 17,
       "ot_losses": 4,
@@ -5646,7 +5668,7 @@ exports[`echl > standings (default season) > response, upstream requests and KV 
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?season_id=eq.73&season_type=eq.regular&order=points.desc&limit=32",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score,ended_in",
     },
   ],
 }
@@ -5669,6 +5691,7 @@ exports[`echl > standings (playoff season) > response, upstream requests and KV 
       "goals_for": 130,
       "gp": 40,
       "l10L": 1,
+      "l10OTL": 0,
       "l10W": 2,
       "losses": 12,
       "ot_losses": 3,
@@ -5688,6 +5711,7 @@ exports[`echl > standings (playoff season) > response, upstream requests and KV 
       "goals_for": 112,
       "gp": 40,
       "l10L": 2,
+      "l10OTL": 0,
       "l10W": 1,
       "losses": 17,
       "ot_losses": 4,
@@ -5715,7 +5739,7 @@ exports[`echl > standings (playoff season) > response, upstream requests and KV 
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?season_id=eq.76&season_type=eq.playoffs&order=points.desc&limit=32",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.76&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.76&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score,ended_in",
     },
   ],
 }
@@ -5738,6 +5762,7 @@ exports[`echl > standings > response, upstream requests and KV writes; repeat ca
       "goals_for": 130,
       "gp": 40,
       "l10L": 1,
+      "l10OTL": 0,
       "l10W": 2,
       "losses": 12,
       "ot_losses": 3,
@@ -5757,6 +5782,7 @@ exports[`echl > standings > response, upstream requests and KV writes; repeat ca
       "goals_for": 112,
       "gp": 40,
       "l10L": 2,
+      "l10OTL": 0,
       "l10W": 1,
       "losses": 17,
       "ot_losses": 4,
@@ -5784,7 +5810,7 @@ exports[`echl > standings > response, upstream requests and KV writes; repeat ca
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_team_seasons?season_id=eq.73&season_type=eq.regular&order=points.desc&limit=32",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&game_state=eq.Final&order=game_id.desc&limit=1500&select=game_id,home_team_id,away_team_id,home_score,away_score,ended_in",
     },
   ],
 }
@@ -6493,7 +6519,7 @@ exports[`echl > today > response, upstream requests and KV writes; repeat call 1
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_date=gte.2026-01-15&season_id=eq.73&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&order=game_date.asc&limit=40",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_date=gte.2026-01-15&season_id=in.(73,76)&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&order=game_date.asc&limit=40",
     },
     {
       "referer": "https://echl.com/",

@@ -8,6 +8,7 @@
 import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction } from './hockeytechPrediction.js';
+import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull } from './hockeytechGame.js';
 
 // Elo constants for /pwhl/prediction -- match eyewall-pipeline/elo.py.
 const PWHL_ELO_INITIAL_RATING = 1500;
@@ -366,7 +367,8 @@ async function pollPWHLGame(env, game) {
   }
 
   // ── Process new events ───────────────────────────────────
-  for (const ev of newEvents) {
+  for (let i = lastState.eventCount; i < events.length; i++) {
+    const ev   = events[i];
     const type = ev.event;
     const d    = ev.details || {};
     const time = d.time || null;
@@ -444,8 +446,10 @@ async function pollPWHLGame(env, game) {
       }, `PWHL:${ppAbbr}`, 'penalty');
     }
 
-    if (type === 'goalie_change' && d.goalieComingIn === null) {
-      // Goalie pulled — notify the team that now has the EN opportunity
+    // Goalie pulled for an extra attacker — notify the team that now has
+    // the EN opportunity. Not a delayed-penalty trip to the bench
+    // (hockeytechGame.js).
+    if (type === 'goalie_change' && isExtraAttackerPull(events, i)) {
       const pulledTeamId  = parseInt(d.team_id, 10) || null;
       const benefitTeamId = pulledTeamId === homeId ? awayId : homeId;
       const benefitAbbr   = PWHL_TEAM_CODES[benefitTeamId] || String(benefitTeamId);
@@ -929,19 +933,48 @@ Only reference the two teams named above and the numbers given -- no player name
   // frontend already has home_team_id/away_team_id from the schedule fetch
   // and groups client-side, same flat-list convention as /pwhl/shots rather
   // than NHL boxscore's nested homeTeam/awayTeam shape.
+  //
+  // Every row carries player_name (2026-10): the game's own gameSummary
+  // lineup first, so a player who has since changed teams is still named,
+  // then pwhl_players by id. null when neither knows the player -- the
+  // client used to resolve names from the two teams' current rosters and
+  // showed "#jersey" for everyone who had moved (audit #2, game 329).
   if (url.pathname === '/pwhl/game-box') {
     const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
     if (!gameId) return badRequest('gameId param required');
 
-    // 24hr -- Final-game box scores don't change once ingested
-    return cachedJson(env, `pwhl:game-box:${gameId}`, 24 * 3600, async () => {
-      const [skaters, goalies] = await Promise.all([
+    // 24hr -- Final-game box scores don't change once ingested. 5 min when
+    // a row is still unnamed (gameSummary unreachable), so it fills in soon.
+    const ttl = (box) => ([...box.skaters, ...box.goalies].every(r => r.player_name) ? 24 * 3600 : 300);
+    // v2: entries cached before rows were named carry no player_name.
+    return cachedJson(env, `pwhl:game-box:v2:${gameId}`, ttl, async () => {
+      const [skaters, goalies, summary] = await Promise.all([
         sbRows(`${SB_URL}/rest/v1/pwhl_skater_game_box?game_id=eq.${gameId}&order=team_id.asc`),
         sbRows(`${SB_URL}/rest/v1/pwhl_goalie_game_box?game_id=eq.${gameId}&order=team_id.asc`),
+        fetchGameSummary(
+          `${HT_BASE}?feed=statviewfeed&view=gameSummary&game_id=${gameId}&key=${HT_KEY}&client_code=pwhl&lang=en&league_id=`,
+          HT_HDR
+        ),
       ]);
       if (skaters instanceof Response) return skaters;
       if (goalies instanceof Response) return goalies;
-      return { skaters, goalies };
+
+      const names = {};
+      for (const [id, p] of Object.entries(gameSummaryPlayers(summary))) names[id] = p.name;
+      const unnamed = [...new Set([...skaters, ...goalies].map(r => r.player_id))]
+        .filter(id => id != null && !names[id]);
+      if (unnamed.length) {
+        const rows = await sbRowsOr(
+          `${SB_URL}/rest/v1/pwhl_players?player_id=in.(${unnamed.join(',')})&select=player_id,first_name,last_name`,
+          []
+        );
+        for (const p of rows) {
+          const name = `${p.first_name || ''} ${p.last_name || ''}`.trim();
+          if (name) names[p.player_id] = name;
+        }
+      }
+      const withName = (r) => ({ ...r, player_name: names[r.player_id] || null });
+      return { skaters: skaters.map(withName), goalies: goalies.map(withName) };
     });
   }
 
@@ -1304,125 +1337,130 @@ Only reference the two teams named above and the numbers given -- no player name
   // Returns all PBP events (hits, penalties, faceoffs, goalie changes) for a
   // completed game with player names joined. Shot events are in /pwhl/shots.
   // TTL: 1 hour — game data is immutable once Final.
+  //
+  // Names (and a row's missing team_id) come from the game's own
+  // gameSummary lineup first (2026-10): pwhl_players only knows each
+  // player's team today, so a player who has since moved used to come back
+  // unnamed -- a 2025-26 game 328 penalty read "Unknown". pwhl_players by
+  // id is the fallback for anyone the summary doesn't list.
   if (url.pathname === '/pwhl/pbp') {
     const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
     if (!gameId) return badRequest('gameId param required');
     return cachedJson(env, `pwhl:pbp:${gameId}`, 3600, async () => {
-      // Fetch PBP events + game log (for team IDs) in parallel
-      const [rows, gameRows] = await Promise.all([
+      // PBP events + game log (for team IDs) + shots + gameSummary in parallel
+      const [rows, gameRows, allShots, summary] = await Promise.all([
         sbRows(`${SB_URL}/rest/v1/pwhl_pbp_events?game_id=eq.${gameId}&order=period_id.asc,time_seconds.asc&limit=500`),
         sbRows(`${SB_URL}/rest/v1/pwhl_game_log?game_id=eq.${gameId}&select=home_team_id,away_team_id&limit=1`),
+        sbRowsOr(
+          `${SB_URL}/rest/v1/pwhl_shot_events?game_id=eq.${gameId}&select=shooter_id,team_id,event_type,period_id,time_seconds,x_norm,y_norm,is_home&limit=400`,
+          []
+        ),
+        fetchGameSummary(
+          `${HT_BASE}?feed=statviewfeed&view=gameSummary&game_id=${gameId}&key=${HT_KEY}&client_code=pwhl&lang=en&league_id=`,
+          HT_HDR
+        ),
       ]);
       if (rows instanceof Response || gameRows instanceof Response) return sbError();
-      // Join player names, fetch shots + gameSummary — all in one block
       const gameRow = gameRows[0];
-      // Hoist playerMap so it's available to both the PBP annotation pass and the shots/summary pass
+      if (!gameRow) return rows;
+      const homeTeamId = gameRow.home_team_id;
+      const awayTeamId = gameRow.away_team_id;
+
+      // { player_id: { name, team_id } } -- shared by the PBP annotation
+      // pass and the shots/summary pass below.
       const playerMap = {};
-      if (gameRow) {
-        const teamIds = [gameRow.home_team_id, gameRow.away_team_id].filter(Boolean);
-        const roster = await sbRows(
-          `${SB_URL}/rest/v1/pwhl_players?team_id=in.(${teamIds.join(',')})&select=player_id,first_name,last_name,team_id&limit=120`
+      for (const [id, p] of Object.entries(gameSummaryPlayers(summary))) {
+        playerMap[id] = { name: p.name, team_id: p.teamId };
+      }
+      const unknownIds = [...new Set([
+        ...rows.flatMap(r => [r.player_id, r.secondary_player_id]),
+        ...allShots.map(sh => sh.shooter_id),
+      ])].filter(id => id != null && !playerMap[id]);
+      if (unknownIds.length) {
+        const players = await sbRowsOr(
+          `${SB_URL}/rest/v1/pwhl_players?player_id=in.(${unknownIds.join(',')})&select=player_id,first_name,last_name,team_id`,
+          []
         );
-        if (!(roster instanceof Response)) {
-          for (const p of roster) {
-            playerMap[p.player_id] = {
-              name:    `${p.first_name || ''} ${p.last_name || ''}`.trim(),
-              team_id: p.team_id,
-            };
-          }
-          const homeTeamId = gameRow.home_team_id;
-          const awayTeamId = gameRow.away_team_id;
-          for (const row of rows) {
-            const pm = row.player_id ? playerMap[row.player_id] : null;
-            if (pm?.name) row.player_name = pm.name;
-            const sm = row.secondary_player_id ? playerMap[row.secondary_player_id] : null;
-            if (sm?.name) row.secondary_player_name = sm.name;
-            if (row.team_id == null && pm?.team_id) row.team_id = pm.team_id;
-            row._home_team_id = homeTeamId;
-            row._away_team_id = awayTeamId;
-          }
+        for (const p of players) {
+          const name = `${p.first_name || ''} ${p.last_name || ''}`.trim();
+          if (!name) continue;
+          // A player's team today is only this game's team if it's one of
+          // the two that played -- otherwise she has moved, so no team.
+          const team_id = [homeTeamId, awayTeamId].includes(p.team_id) ? p.team_id : null;
+          playerMap[p.player_id] = { name, team_id };
         }
       }
-      if (gameRow) {
 
-        // Fetch shot events + gameSummary in parallel
-        const [allShots, summaryRes] = await Promise.all([
-          sbRowsOr(
-            `${SB_URL}/rest/v1/pwhl_shot_events?game_id=eq.${gameId}&select=shooter_id,team_id,event_type,period_id,time_seconds,x_norm,y_norm,is_home&limit=400`,
-            []
-          ),
-          fetch(
-            `${HT_BASE}?feed=statviewfeed&view=gameSummary&game_id=${gameId}&key=${HT_KEY}&client_code=pwhl&lang=en&league_id=`,
-            { headers: HT_HDR }
-          ),
-        ]);
+      for (const row of rows) {
+        const pm = row.player_id ? playerMap[row.player_id] : null;
+        if (pm?.name) row.player_name = pm.name;
+        const sm = row.secondary_player_id ? playerMap[row.secondary_player_id] : null;
+        if (sm?.name) row.secondary_player_name = sm.name;
+        if (row.team_id == null && pm?.team_id) row.team_id = pm.team_id;
+        row._home_team_id = homeTeamId;
+        row._away_team_id = awayTeamId;
+      }
 
-        // All shots for both teams (for OPP rink + drill-downs)
-        const namedShots = allShots.map(s => ({
-          ...s,
-          shooter_name: s.shooter_id && playerMap[s.shooter_id]
-            ? playerMap[s.shooter_id].name
-            : null,
-        }));
+      // All shots for both teams (for OPP rink + drill-downs)
+      const namedShots = allShots.map(s => ({
+        ...s,
+        shooter_name: s.shooter_id && playerMap[s.shooter_id]
+          ? playerMap[s.shooter_id].name
+          : null,
+      }));
 
-        // gameSummary: faceoff wins per skater + goalie stats
-        const faceoffStats = {};   // { player_id: { name, wins, attempts } }
-        const goalieStats  = [];   // [{ team_id, name, gp, saves, shots_against, toi }]
+      // gameSummary: faceoff wins per skater + goalie stats
+      const faceoffStats = {};   // { player_id: { name, wins, attempts } }
+      const goalieStats  = [];   // [{ team_id, name, gp, saves, shots_against, toi }]
 
-        if (summaryRes.ok) {
-          try {
-            let summaryText = await summaryRes.text();
-            if (summaryText.includes('(')) summaryText = summaryText.slice(summaryText.indexOf('(')+1, summaryText.lastIndexOf(')'));
-            const summary = JSON.parse(summaryText);
-
-            // Faceoffs: summary.skaters (array), each has .id, .stats.faceoffWins, .stats.faceoffAttempts
-            const skaters = summary.skaters || summary.homeTeam?.skaters?.concat(summary.visitingTeam?.skaters || []) || [];
-            for (const sk of skaters) {
-              const pid = sk.info?.id || sk.id;
-              const wins = parseInt(sk.stats?.faceoffWins || 0);
-              const att  = parseInt(sk.stats?.faceoffAttempts || sk.stats?.faceoffTaken || 0);
-              if (att > 0 && pid) {
-                faceoffStats[pid] = {
-                  name:     playerMap[pid]?.name || sk.info?.firstName + ' ' + sk.info?.lastName || `#${pid}`,
-                  wins,
-                  attempts: att,
-                  losses:   att - wins,
-                };
-              }
+      if (summary) {
+        try {
+          // Faceoffs: summary.skaters (array), each has .id, .stats.faceoffWins, .stats.faceoffAttempts
+          const skaters = summary.skaters || summary.homeTeam?.skaters?.concat(summary.visitingTeam?.skaters || []) || [];
+          for (const sk of skaters) {
+            const pid = sk.info?.id || sk.id;
+            const wins = parseInt(sk.stats?.faceoffWins || 0);
+            const att  = parseInt(sk.stats?.faceoffAttempts || sk.stats?.faceoffTaken || 0);
+            if (att > 0 && pid) {
+              faceoffStats[pid] = {
+                name:     playerMap[pid]?.name || sk.info?.firstName + ' ' + sk.info?.lastName || `#${pid}`,
+                wins,
+                attempts: att,
+                losses:   att - wins,
+              };
             }
+          }
 
-            // Goalies: summary.homeTeam/visitingTeam → goalies array
-            const processGoalies = (teamObj, team_id) => {
-              const goalies = teamObj?.goalies || [];
-              for (const g of goalies) {
-                const pid = g.info?.id || g.id;
-                goalieStats.push({
-                  team_id,
-                  player_id:    pid,
-                  name:         playerMap[pid]?.name || `${g.info?.firstName || ''} ${g.info?.lastName || ''}`.trim() || `#${pid}`,
-                  saves:        parseInt(g.stats?.saves || 0),
-                  shots_against: parseInt(g.stats?.shotsAgainst || g.stats?.shots || 0),
-                  goals_against: parseInt(g.stats?.goalsAgainst || 0),
-                  toi:          g.stats?.toi || g.stats?.timeOnIce || null,
-                });
-              }
-            };
-            processGoalies(summary.homeTeam    || summary.home,      gameRow.home_team_id);
-            processGoalies(summary.visitingTeam || summary.visiting,  gameRow.away_team_id);
-          } catch { /* gameSummary parse failure — carry on */ }
-        }
-
-        const payload = {
-          events:         rows,
-          opp_shots:      namedShots,
-          home_team_id:   gameRow.home_team_id,
-          away_team_id:   gameRow.away_team_id,
-          faceoff_stats:  faceoffStats,
-          goalie_stats:   goalieStats,
-        };
-        return payload;
+          // Goalies: summary.homeTeam/visitingTeam → goalies array
+          const processGoalies = (teamObj, team_id) => {
+            const goalies = teamObj?.goalies || [];
+            for (const g of goalies) {
+              const pid = g.info?.id || g.id;
+              goalieStats.push({
+                team_id,
+                player_id:    pid,
+                name:         playerMap[pid]?.name || `${g.info?.firstName || ''} ${g.info?.lastName || ''}`.trim() || `#${pid}`,
+                saves:        parseInt(g.stats?.saves || 0),
+                shots_against: parseInt(g.stats?.shotsAgainst || g.stats?.shots || 0),
+                goals_against: parseInt(g.stats?.goalsAgainst || 0),
+                toi:          g.stats?.toi || g.stats?.timeOnIce || null,
+              });
+            }
+          };
+          processGoalies(summary.homeTeam    || summary.home,      gameRow.home_team_id);
+          processGoalies(summary.visitingTeam || summary.visiting,  gameRow.away_team_id);
+        } catch { /* unexpected gameSummary shape — carry on */ }
       }
-      return rows;
+
+      const payload = {
+        events:         rows,
+        opp_shots:      namedShots,
+        home_team_id:   homeTeamId,
+        away_team_id:   awayTeamId,
+        faceoff_stats:  faceoffStats,
+        goalie_stats:   goalieStats,
+      };
+      return payload;
     });
   }
 

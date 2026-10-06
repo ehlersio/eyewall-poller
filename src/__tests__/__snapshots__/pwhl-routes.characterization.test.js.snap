@@ -126,6 +126,7 @@ exports[`game-box > HockeyTech and AI unavailable 1`] = `
         "game_id": 210,
         "goals_against": 3,
         "player_id": 6,
+        "player_name": "Gus Keeper",
         "saves": 25,
         "season_id": 8,
         "shots_against": 28,
@@ -139,6 +140,7 @@ exports[`game-box > HockeyTech and AI unavailable 1`] = `
         "game_id": 210,
         "goals": 1,
         "player_id": 36,
+        "player_name": "Alex Skater",
         "points": 2,
         "season_id": 8,
         "shots": 4,
@@ -149,7 +151,7 @@ exports[`game-box > HockeyTech and AI unavailable 1`] = `
   },
   "kvWrites": [
     {
-      "key": "pwhl:game-box:210",
+      "key": "pwhl:game-box:v2:210",
       "ttl": 86400,
     },
   ],
@@ -185,6 +187,7 @@ exports[`game-box > response, upstream requests and KV writes; repeat call 1`] =
         "game_id": 210,
         "goals_against": 3,
         "player_id": 6,
+        "player_name": "Gus Keeper",
         "saves": 25,
         "season_id": 8,
         "shots_against": 28,
@@ -198,6 +201,7 @@ exports[`game-box > response, upstream requests and KV writes; repeat call 1`] =
         "game_id": 210,
         "goals": 1,
         "player_id": 36,
+        "player_name": "Alex Skater",
         "points": 2,
         "season_id": 8,
         "shots": 4,
@@ -208,7 +212,7 @@ exports[`game-box > response, upstream requests and KV writes; repeat call 1`] =
   },
   "kvWrites": [
     {
-      "key": "pwhl:game-box:210",
+      "key": "pwhl:game-box:v2:210",
       "ttl": 86400,
     },
   ],
@@ -219,6 +223,10 @@ exports[`game-box > response, upstream requests and KV writes; repeat call 1`] =
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_goalie_game_box?game_id=eq.210&order=team_id.asc",
+    },
+    {
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
     },
   ],
 }
@@ -1791,6 +1799,13 @@ exports[`pbp (game not in the log) > response, upstream requests and KV writes; 
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.210&select=home_team_id,away_team_id&limit=1",
     },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_shot_events?game_id=eq.210&select=shooter_id,team_id,event_type,period_id,time_seconds,x_norm,y_norm,is_home&limit=400",
+    },
+    {
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
+    },
   ],
 }
 `;
@@ -1952,6 +1967,7 @@ exports[`pbp > response, upstream requests and KV writes; repeat call 1`] = `
         "player_id": 36,
         "player_name": "Alex Skater",
         "secondary_player_id": 7010,
+        "secondary_player_name": "Opp Center",
         "team_id": 1,
         "time_seconds": 120,
       },
@@ -1974,6 +1990,7 @@ exports[`pbp > response, upstream requests and KV writes; repeat call 1`] = `
         "game_id": 210,
         "period_id": 2,
         "player_id": 7010,
+        "player_name": "Opp Center",
         "secondary_player_id": 36,
         "secondary_player_name": "Alex Skater",
         "team_id": 2,
@@ -2075,7 +2092,7 @@ exports[`pbp > response, upstream requests and KV writes; repeat call 1`] = `
         "is_home": false,
         "period_id": 1,
         "shooter_id": 7010,
-        "shooter_name": null,
+        "shooter_name": "Opp Center",
         "team_id": 2,
         "time_seconds": 500,
         "x_norm": 70,
@@ -2098,14 +2115,14 @@ exports[`pbp > response, upstream requests and KV writes; repeat call 1`] = `
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.210&select=home_team_id,away_team_id&limit=1",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?team_id=in.(1,2)&select=player_id,first_name,last_name,team_id&limit=120",
-    },
-    {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_shot_events?game_id=eq.210&select=shooter_id,team_id,event_type,period_id,time_seconds,x_norm,y_norm,is_home&limit=400",
     },
     {
       "referer": "https://www.thepwhl.com/",
       "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?player_id=in.(37)&select=player_id,first_name,last_name,team_id",
     },
   ],
 }

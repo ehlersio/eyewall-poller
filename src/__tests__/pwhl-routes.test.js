@@ -487,7 +487,9 @@ describe('GET /pwhl/game-box', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
-  it('fetches skaters + goalies in parallel on a cache miss and returns them together', async () => {
+  // Real-game naming (gameSummary lineup first) is covered in
+  // pwhl-real-games.test.js; this pins the fallback when HockeyTech is down.
+  it('fetches skaters + goalies in parallel on a cache miss and returns them together, named from pwhl_players', async () => {
     const env = makeEnv()
     globalThis.fetch = vi.fn((url) => {
       if (String(url).includes('pwhl_skater_game_box')) {
@@ -495,6 +497,13 @@ describe('GET /pwhl/game-box', () => {
       }
       if (String(url).includes('pwhl_goalie_game_box')) {
         return Promise.resolve({ ok: true, json: async () => [{ game_id: 210, player_id: 99, team_id: 2, saves: 30 }] })
+      }
+      if (String(url).includes('view=gameSummary')) {
+        return Promise.resolve({ ok: false, status: 503, text: async () => '' })
+      }
+      if (String(url).includes('pwhl_players')) {
+        expect(String(url)).toContain('player_id=in.(1,99)')
+        return Promise.resolve({ ok: true, json: async () => [{ player_id: 1, first_name: 'Hilary', last_name: 'Knight' }] })
       }
       throw new Error(`unexpected fetch: ${url}`)
     })
@@ -506,8 +515,8 @@ describe('GET /pwhl/game-box', () => {
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({
-      skaters: [{ game_id: 210, player_id: 1, team_id: 1, goals: 2 }],
-      goalies: [{ game_id: 210, player_id: 99, team_id: 2, saves: 30 }],
+      skaters: [{ game_id: 210, player_id: 1, team_id: 1, goals: 2, player_name: 'Hilary Knight' }],
+      goalies: [{ game_id: 210, player_id: 99, team_id: 2, saves: 30, player_name: null }],
     })
   })
 
