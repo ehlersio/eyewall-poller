@@ -221,7 +221,7 @@ export async function handleEdge(request, env, url) {
   const key = `nhl:edge:v2:${kind}:${playerId}:${season}:${gameType}`;
 
   const cached = await kvGet(env, key);
-  if (cached) return cached.available ? json(cached) : errorJson(404, cached);
+  if (cached) return cached.available ? json(cached, { maxAge: TTL_CURRENT }) : errorJson(404, cached);
 
   const isPast = Number(season) < Number(await resolveNHLSeason(env));
   const ids = kind === 'team'
@@ -242,7 +242,7 @@ export async function handleEdge(request, env, url) {
 
   const body = { available: true, ...ids, ...data };
   await kvPut(env, key, body, isPast ? TTL_PAST : TTL_CURRENT);
-  return json(body);
+  return json(body, { maxAge: isPast ? TTL_PAST : TTL_CURRENT });
 }
 
 // ── League leaders ────────────────────────────────────────────────
@@ -318,7 +318,7 @@ export async function handleEdgeLeaders(request, env, url) {
   const key = `nhl:edge:v2:leaders:${season}:${gameType}`;
 
   const cached = await kvGet(env, key);
-  if (cached) return cached.available ? json(cached) : errorJson(404, cached);
+  if (cached) return cached.available ? json(cached, { maxAge: TTL_CURRENT }) : errorJson(404, cached);
 
   const isPast = Number(season) < Number(await resolveNHLSeason(env));
   const ids = { kind: 'leaders', season, gameType };
@@ -343,5 +343,5 @@ export async function handleEdgeLeaders(request, env, url) {
 
   const body = { available: true, ...ids, categories };
   await kvPut(env, key, body, isPast ? TTL_PAST : TTL_CURRENT);
-  return json(body);
+  return json(body, { maxAge: isPast ? TTL_PAST : TTL_CURRENT });
 }

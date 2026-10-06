@@ -6,7 +6,7 @@
  */
 
 import { penaltyText, penaltyDescription } from './penaltyText.js';
-import { kvGet, kvPut, json, nhlSeasonEnd, etDateString, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
+import { kvGet, kvPut, json, LIVE_MAX_AGE, nhlSeasonEnd, etDateString, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
 import { readCronHealth, readOpsHealth } from './ops.js';
@@ -2475,11 +2475,11 @@ async function handleNHLRoutes(request, env, ctx, url) {
   if (url.pathname === '/news' && request.method === 'GET') {
     const tc      = await getTeamConfig(request, env);
     const cached  = await kvGet(env, `news:${tc.abbr}`);
-    if (cached) return json(cached);
+    if (cached) return json(cached, { maxAge: 1800 }); // fetchNews()' TTL
     // Cache is cold — fetch in the background and return empty for now so the
     // client doesn't hang. Next request (after ~5s) will get real data.
     ctx.waitUntil(fetchNews(env, tc.abbr).catch(e => console.warn(`News bg fetch ${tc.abbr}:`, e.message)));
-    return json([]);
+    return json([], { maxAge: 0 }); // filled in the background: ask again soon
   }
 
   // On-demand schedule for any team.
@@ -2511,25 +2511,28 @@ async function handleNHLRoutes(request, env, ctx, url) {
     const tc     = await getTeamConfig(request, env);
     const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(tc.season);
     const isPast = isPastSeason(season, tc.season);
+    // A current-season schedule is re-stamped with live game states every
+    // poll, so the browser holds it no longer than a live route.
+    const maxAge = isPast ? HISTORICAL_SCHEDULE_TTL : LIVE_MAX_AGE;
     const cached = await kvGet(env, scheduleKey(tc.abbr, season));
-    if (cached) return json(cached);
+    if (cached) return json(cached, { maxAge });
 
     if (isPast) {
       try {
         const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${season}`);
         const games = data?.games || [];
         await kvPut(env, scheduleKey(tc.abbr, season), games, HISTORICAL_SCHEDULE_TTL);
-        return json(games);
+        return json(games, { maxAge });
       } catch (e) {
         console.warn(`Schedule fetch (historical) ${tc.abbr} season ${season}: ${e.message}`);
-        return json([]);
+        return json([], { maxAge: 0 });
       }
     }
 
     try {
       const data  = await nhlGet(`${NHL_BASE}/club-schedule-season/${tc.abbr}/${season}`);
       const games = await putCurrentSchedule(env, tc.abbr, season, data?.games || []);
-      return json(games);
+      return json(games, { maxAge });
     } catch (e) {
       console.warn(`Schedule fetch ${tc.abbr} season ${season}: ${e.message}`);
     }
@@ -2543,7 +2546,7 @@ async function handleNHLRoutes(request, env, ctx, url) {
         console.warn(`Schedule bg fetch ${tc.abbr} season ${season}: ${e.message}`);
       }
     })());
-    return json([]);
+    return json([], { maxAge: 0 });
   }
 
   // GET /roster?team=CAR
@@ -3637,6 +3640,7 @@ Only reference the two teams named above and the numbers given -- no player name
     const gameType = sbParam(url.searchParams.get('gameType'), { type: 'int', name: 'gameType' }) || '2';
     if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
     let map = await kvGet(env, `pp_units:${season}:${gameType}`);
+    const maxAge = 4 * 3600; // refreshPPUnits()' TTL
     if (!map) {
       try {
         map = await refreshPPUnits(env, { season, gameType });
@@ -3644,7 +3648,7 @@ Only reference the two teams named above and the numbers given -- no player name
         return errorJson(502, { error: e.message });
       }
     }
-    return json(map);
+    return json(map, { maxAge });
   }
 
   // Health
@@ -4068,7 +4072,7 @@ Only reference the two teams named above and the numbers given -- no player name
     // Serve from cache if available and not forced
     if (!forceRegen) {
       const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+      if (cached) return json(cached, { maxAge: 24 * 3600 });
     }
 
     // Rate-limited only on a cache miss: a cached answer costs no AI call,
@@ -4326,7 +4330,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     // Cache for 24hr (pre-game analysis refreshes daily in case of lineup changes)
     await kvPut(env, kvKey, result, 24 * 3600);
     console.log(`Prediction analysis generated for game ${gameId}`);
-    return json(result);
+    return json(result, { maxAge: 24 * 3600 });
   }
 
   // Send a test notification (protected)

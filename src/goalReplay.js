@@ -137,7 +137,7 @@ export async function handleGoalReplay(request, env, url) {
   const key = `nhl:goal-replay:v1:${gameId}:${eventId}`;
 
   const cached = await kvGet(env, key);
-  if (cached) return cached.available ? json(cached) : errorJson(404, cached);
+  if (cached) return cached.available ? json(cached, { maxAge: TTL_LIVE }) : errorJson(404, cached); // TTL_LIVE: the shorter
 
   const missing = async () => {
     const body = { available: false, gameId: Number(gameId), eventId };
@@ -180,6 +180,7 @@ export async function handleGoalReplay(request, env, url) {
     ...compactReplay(frames),
   };
   if (body.goalFrame == null) return missing();
-  await kvPut(env, key, body, FINAL_STATES.has(landing.gameState) ? TTL_FINAL : TTL_LIVE);
-  return json(body);
+  const ttl = FINAL_STATES.has(landing.gameState) ? TTL_FINAL : TTL_LIVE;
+  await kvPut(env, key, body, ttl);
+  return json(body, { maxAge: ttl });
 }

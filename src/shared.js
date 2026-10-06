@@ -353,8 +353,12 @@ export function secretMatches(provided, secret) {
 
 // ── Response helpers ──────────────────────────────────────────
 
-export function json(val) {
-  return Response.json(val, { headers: corsHeaders() });
+// `maxAge` (seconds) sets the browser cache lifetime: pass the route's KV
+// TTL. Without it the response gets withHttpCache()'s default.
+export function json(val, { maxAge } = {}) {
+  const headers = corsHeaders();
+  if (maxAge != null) headers['Cache-Control'] = cacheControl(maxAge);
+  return Response.json(val, { headers });
 }
 
 export function corsHeaders() {
@@ -528,13 +532,121 @@ export async function sbRosterRows(url) {
 // build() may return a Response instead (an error, a 404, a deliberately
 // uncached null), which goes back as-is and uncached. `ttl` is seconds, or
 // a function of the built data.
+// The browser may keep the response as long as KV does (`max-age` = the
+// TTL, see cacheControl()).
 export async function cachedJson(env, key, ttl, build) {
+  const ttlFor = data => (typeof ttl === 'function' ? ttl(data) : ttl);
   const cached = await kvGet(env, key);
-  if (cached) return json(cached);
+  if (cached) return json(cached, { maxAge: ttlFor(cached) });
   const data = await build();
   if (data instanceof Response) return data;
-  await kvPut(env, key, data, typeof ttl === 'function' ? ttl(data) : ttl);
-  return json(data);
+  const seconds = ttlFor(data);
+  await kvPut(env, key, data, seconds);
+  return json(data, { maxAge: seconds });
+}
+
+// ── HTTP caching (audit 2026-10-06 §5) ───────────────────────
+// Every GET JSON response carries `Cache-Control: public, max-age=N` and a
+// weak ETag, so the browser reuses a response for N seconds and then
+// revalidates it with If-None-Match (304, no body) instead of downloading
+// it again. N is the route's KV TTL (json()'s `maxAge`, which cachedJson()
+// fills in), capped at MAX_MAX_AGE; a route with no KV cache of its own
+// gets DEFAULT_MAX_AGE. Live-game routes (LIVE_PATHS) are capped at
+// LIVE_MAX_AGE whatever they ask for. POST/DELETE, errors, owner calls
+// (`secret=`, `force=`, an Authorization header) are `no-store`.
+export const DEFAULT_MAX_AGE = 30;
+// One hour at most. A KV entry is served with its full TTL even when it
+// expires a minute later, so a 24-hour max-age could leave a device a day
+// behind a /cache/bust or a nightly run; past an hour the ETag makes the
+// revalidation cheap anyway.
+export const MAX_MAX_AGE = 3600;
+// The app polls a live game every 10 s. Freshness is judged against the
+// response's second-granularity Date header, so a max-age equal to the
+// poll interval can still let the browser answer a poll with the previous
+// copy; half the interval leaves no such window.
+export const LIVE_MAX_AGE = 5;
+
+// Matched against the decoded path (the app sends /cache/schedule%3ACAR%3A...).
+const LIVE_PATHS = [
+  /^\/nhl\/today$/,
+  /^\/(pwhl|ahl|echl)\/today$/,
+  /^\/(pwhl|ahl|echl)\/live\//,
+  // AHL/ECHL schedules carry the live scorebar's scores (hockeytech.js live()).
+  /^\/(ahl|echl)\/schedule$/,
+  /^\/cache\/(pbp|boxscore|schedule):/,
+];
+
+export function cacheControl(maxAge) {
+  const seconds = Math.max(0, Math.min(Math.floor(Number(maxAge) || 0), MAX_MAX_AGE));
+  return `public, max-age=${seconds}`;
+}
+
+export function isLivePath(pathname) {
+  let path = pathname;
+  try { path = decodeURIComponent(pathname); } catch { /* keep it raw */ }
+  return LIVE_PATHS.some(re => re.test(path));
+}
+
+const ETAG_ENCODER = new TextEncoder();
+export async function weakEtag(body) {
+  const digest = await crypto.subtle.digest('SHA-1', ETAG_ENCODER.encode(body));
+  const hex = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+  return `W/"${hex}"`;
+}
+
+// If-None-Match uses weak comparison: W/"x" and "x" match.
+function etagMatches(ifNoneMatch, etag) {
+  if (!ifNoneMatch) return false;
+  const bare = t => t.trim().replace(/^W\//, '');
+  return ifNoneMatch.split(',').some(t => t.trim() === '*' || bare(t) === bare(etag));
+}
+
+function noStore(request, res, url) {
+  const method = request.method;
+  if (method !== 'GET' && method !== 'HEAD') return true;
+  if (res.status >= 400) return true;
+  return url.searchParams.has('secret') || url.searchParams.has('force') || request.headers.has('Authorization');
+}
+
+// Sets the caching headers on one response (see above). OPTIONS and
+// WebSocket upgrades pass through untouched.
+export async function applyHttpCache(request, res) {
+  // (A consumed body can't be re-wrapped; only a test double does that.)
+  if (!(res instanceof Response) || res.webSocket || res.bodyUsed || request.method === 'OPTIONS') return res;
+  const url = new URL(request.url);
+  const headers = new Headers(res.headers);
+  const init = status => ({ status, statusText: res.statusText, headers });
+
+  if (noStore(request, res, url)) {
+    headers.set('Cache-Control', 'no-store');
+    return new Response(res.body, init(res.status));
+  }
+  const isJson = (headers.get('Content-Type') || '').includes('application/json');
+  if (res.status !== 200 || !isJson) return new Response(res.body, init(res.status));
+
+  const live = isLivePath(url.pathname);
+  const current = headers.get('Cache-Control');
+  if (!current) {
+    headers.set('Cache-Control', cacheControl(live ? LIVE_MAX_AGE : DEFAULT_MAX_AGE));
+  } else if (live) {
+    const m = current.match(/max-age=(\d+)/);
+    if (!m || Number(m[1]) > LIVE_MAX_AGE) headers.set('Cache-Control', cacheControl(LIVE_MAX_AGE));
+  }
+  if (request.method !== 'GET') return new Response(res.body, init(res.status));
+
+  const body = await res.text();
+  const etag = await weakEtag(body);
+  headers.set('ETag', etag);
+  if (etagMatches(request.headers.get('If-None-Match'), etag)) {
+    headers.delete('Content-Type');
+    headers.delete('Content-Length');
+    return new Response(null, init(304));
+  }
+  return new Response(body, init(200));
+}
+
+export function withHttpCache(handler) {
+  return async (request, ...rest) => applyHttpCache(request, await handler(request, ...rest));
 }
 
 // ── JSONP unwrap ──────────────────────────────────────────────

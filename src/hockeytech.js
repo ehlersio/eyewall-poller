@@ -599,7 +599,7 @@ export function createHockeyTechLeague(cfg) {
         if (rows instanceof Response) return rows;
         await kvPut(env, kvKey, rows, 1800);
       }
-      return json(await live(env, rows));
+      return json(await live(env, rows)); // live scores: LIVE_MAX_AGE (shared.js LIVE_PATHS)
     }
 
     // GET /{league}/roster?teamId=444
@@ -1196,7 +1196,7 @@ export function createHockeyTechLeague(cfg) {
       const kvKey = `${key}:prediction:elo:${gameId}${localeKeySuffix(locale)}`;
       if (!forceRegen) {
         const cached = await kvGet(env, kvKey);
-        if (cached) return json(cached);
+        if (cached) return json(cached, { maxAge: 1800 });
       }
 
       // Rate-limited only on a cache miss: a cached answer costs no AI call,
@@ -1220,7 +1220,7 @@ export function createHockeyTechLeague(cfg) {
       if (error) return error;
 
       await kvPut(env, kvKey, result, 1800);
-      return json(result);
+      return json(result, { maxAge: 1800 });
     }
 
     // GET /{league}/team-seasons/compare?teamId=335&seasons=90,92
@@ -1352,9 +1352,9 @@ Only reference the two teams named above and the numbers given -- no player name
     // GET /{league}/news
     if (url.pathname === `${P}/news` && request.method === 'GET') {
       const cached = await kvGet(env, `${key}:news`);
-      if (cached) return json(cached);
+      if (cached) return json(cached, { maxAge: 1800 });
       ctx.waitUntil(fetchNews(env).catch(e => console.warn(`${label} news bg fetch:`, e.message)));
-      return json([]);
+      return json([], { maxAge: 0 }); // filled in the background: ask again soon
     }
 
     // POST /{league}/news/bust — invalidate the news cache so the next GET refetches
