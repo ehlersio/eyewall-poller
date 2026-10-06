@@ -449,6 +449,21 @@ describe.each(LEAGUES)('$key', (L) => {
       expect(globalThis.fetch).not.toHaveBeenCalled()
     })
 
+    // Regression (audit 2026-10-06, AHL/ECHL F1): the slate read stopped at
+    // 10 rows with no order=, so on a 12-16 game night an arbitrary 3-6
+    // games got no pushes at all.
+    it('reads the whole slate: every one of 14 games is polled, in game_id order', async () => {
+      const slate = Array.from({ length: 14 }, (_, i) => liveGame({ game_id: GAME_ID + i }))
+      installUpstream(L, { overrides: { game_log: slate } })
+      const { env } = makeRecordingEnv({ 'push:subs': subsFor() }, { VAPID_PRIVATE_KEY: 'k' })
+      await L.poll(env)
+      const gameLogUrl = globalThis.fetch.mock.calls.map(([u]) => String(u)).find(u => u.includes(`${L.key}_game_log?game_date=`))
+      expect(gameLogUrl).toContain('&order=game_id.asc')
+      expect(gameLogUrl).not.toContain('limit=10')
+      const polled = globalThis.fetch.mock.calls.map(([u]) => String(u)).filter(u => u.includes('gameCenterPlayByPlay'))
+      expect(polled).toHaveLength(14)
+    })
+
     it('live game: start, period, goal, hat-trick, power-play and pulled-goalie pushes; a second poll sends nothing new', async () => {
       installUpstream(L, { overrides: { game_log: [liveGame()] } })
       const { env, kvWrites } = makeRecordingEnv({ 'push:subs': subsFor() }, { VAPID_PRIVATE_KEY: 'k' })
