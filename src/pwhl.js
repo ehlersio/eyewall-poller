@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction, gameResult, endedInOf } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
@@ -341,6 +341,8 @@ async function pollPWHLGame(env, game) {
     const sessionKey = `pwhl:push:start:${gameId}`;
     if (!(await kvGet(env, sessionKey))) {
       await kvPut(env, sessionKey, true, 24 * 3600);
+      // Puck drop into pwhl_game_log, once (shared.js's patchGameLog()).
+      await patchGameLog(env, 'pwhl_game_log', gameId, gameLogLiveFields(game));
       // Notify both home and away subscribers
       for (const abbr of [homeAbbr, awayAbbr]) {
         await send({
@@ -489,6 +491,9 @@ async function pollPWHLGame(env, game) {
         : (await withLive(env, [game], { withEndedIn: true }))[0].ended_in;
       const fin = finalLabel(endedIn);
       const ot  = endedInSuffix(endedIn);
+      // The final into pwhl_game_log (ot/shootout, as pwhl_live_refresh.py
+      // writes), once, before the push that announces it.
+      await patchGameLog(env, 'pwhl_game_log', gameId, gameLogFinalFields(game, endedIn, { pwhl: true }));
 
       // Home team
       await send(hs > as ? {

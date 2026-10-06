@@ -225,6 +225,10 @@ function installUpstream(L, { failSupabase = false, failHosts = [], overrides = 
       return okJson(overrides[suffix] ?? supabaseRows(L, suffix, u.searchParams))
     }
     if (u.hostname === 'lscluster.hockeytech.com') {
+      // The scorebar is plain JSON (no callback=), read with res.json():
+      // an empty slate by default, so its 60s KV caching is exercised
+      // rather than every read failing to parse.
+      if (u.searchParams.get('view') === 'scorebar') return okJson({ SiteKit: { Scorebar: overrides.scorebar ?? [] } })
       return okText(`(${JSON.stringify(hockeytechPayload(L, u.searchParams.get('view')))})`)
     }
     return okText(rssXml(u.hostname))
@@ -435,12 +439,27 @@ describe.each(LEAGUES)('$key', (L) => {
     })
     const pushes = () => sendPushMock.mock.calls.map(([s, payload]) => ({ to: s.endpoint, ...payload }))
 
-    it('does nothing in the offseason', async () => {
+    // No calendar gate (2026-10, as #191 did for the PWHL): an Oct-Jun
+    // month check used to skip the poll outright. Out of season it reads
+    // an empty slate and stops.
+    it('out of season: reads the empty slate and stops', async () => {
       vi.setSystemTime(new Date('2026-07-15T16:00:00Z'))
-      installUpstream(L)
+      installUpstream(L, { overrides: { game_log: [] } })
       const { env } = makeRecordingEnv({ 'push:subs': subsFor() }, { VAPID_PRIVATE_KEY: 'k' })
       await L.poll(env)
-      expect(globalThis.fetch).not.toHaveBeenCalled()
+      const urls = globalThis.fetch.mock.calls.map(([u]) => String(u))
+      expect(urls).toHaveLength(2)
+      expect(urls[0]).toContain(`${L.key}_game_log?game_date=eq.2026-07-15`)
+      expect(urls[1]).toContain('view=scorebar')
+      expect(sendPushMock).not.toHaveBeenCalled()
+    })
+
+    it('in late September (preseason) the poll runs, where the month gate used to skip it', async () => {
+      vi.setSystemTime(new Date('2026-09-30T23:30:00Z'))
+      installUpstream(L, { overrides: { game_log: [liveGame()] } })
+      const { env } = makeRecordingEnv({ 'push:subs': subsFor() }, { VAPID_PRIVATE_KEY: 'k' })
+      await L.poll(env)
+      expect(globalThis.fetch.mock.calls.some(([u]) => String(u).includes('gameCenterPlayByPlay'))).toBe(true)
     })
 
     it('does nothing without a VAPID private key', async () => {
@@ -516,6 +535,72 @@ describe.each(LEAGUES)('$key', (L) => {
       // No PBP read for a game it has finished with (the scorebar reads
       // that find the day's games still happen every minute).
       expect(upstreamCalls().map(c => c.url).filter(u => u.includes('gameCenterPlayByPlay'))).toEqual([])
+    })
+
+    // C3 (2026-10): the poll writes puck drop and the final into
+    // {league}_game_log itself, once each -- the pipeline job that used to
+    // do it ran 3-4 times a day.
+    describe('game_log write-back', () => {
+      const patches = () => globalThis.fetch.mock.calls
+        .filter(([, o]) => o?.method === 'PATCH')
+        .map(([u, o]) => ({ url: String(u), headers: o.headers, body: JSON.parse(o.body) }))
+      const finalScorebar = [{ ID: String(GAME_ID), GameStatus: '4', GameStatusString: 'Final', GameStatusStringLong: 'Final OT', HomeGoals: '4', VisitorGoals: '3' }]
+
+      it('PATCHes the live state at puck drop and the final once, never per tick', async () => {
+        installUpstream(L, { overrides: { game_log: [liveGame()] } })
+        const { env } = makeRecordingEnv({ 'push:subs': subsFor() }, { VAPID_PRIVATE_KEY: 'k', SUPABASE_SERVICE_KEY: 'service-key' })
+        await L.poll(env)
+        expect(patches()).toEqual([{
+          url: `https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/${L.key}_game_log?game_id=eq.${GAME_ID}`,
+          headers: { apikey: 'service-key', Authorization: 'Bearer service-key', 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+          body: { home_score: 3, away_score: 0, game_state: 'Live', game_status_code: 2 },
+        }])
+
+        // A later live tick writes nothing.
+        globalThis.fetch.mockClear()
+        await L.poll(env)
+        expect(patches()).toEqual([])
+
+        // The scorebar has it final in OT before game_log does.
+        await env.CACHE.delete(`${L.key}:scorebar`)
+        installUpstream(L, { overrides: { game_log: [liveGame()], scorebar: finalScorebar } })
+        await L.poll(env)
+        expect(patches().map(p => p.body)).toEqual([
+          { home_score: 4, away_score: 3, game_state: 'Final', game_status_code: 4, ended_in: 'OT' },
+        ])
+
+        globalThis.fetch.mockClear()
+        await L.poll(env)
+        expect(patches()).toEqual([])
+      })
+
+      it('without SUPABASE_SERVICE_KEY: no PATCH, one log line per game', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        installUpstream(L, { overrides: { game_log: [liveGame()] } })
+        const { env } = makeRecordingEnv({ 'push:subs': subsFor() }, { VAPID_PRIVATE_KEY: 'k' })
+        await L.poll(env)
+        await env.CACHE.delete(`${L.key}:scorebar`)
+        installUpstream(L, { overrides: { game_log: [liveGame()], scorebar: finalScorebar } })
+        await L.poll(env)
+        expect(patches()).toEqual([])
+        expect(warn.mock.calls.filter(([m]) => String(m).includes('SUPABASE_SERVICE_KEY'))).toHaveLength(1)
+        // The pushes still went out.
+        expect(sendPushMock.mock.calls.some(([, p]) => p.title.includes('Win!'))).toBe(true)
+      })
+
+      it('a failed PATCH does not cost the game-over push', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+        installUpstream(L, { overrides: { game_log: [liveGame()] } })
+        const { env } = makeRecordingEnv({ 'push:subs': subsFor() }, { VAPID_PRIVATE_KEY: 'k', SUPABASE_SERVICE_KEY: 'service-key' })
+        await L.poll(env)
+        await env.CACHE.delete(`${L.key}:scorebar`)
+        installUpstream(L, { overrides: { game_log: [liveGame()], scorebar: finalScorebar } })
+        const routed = globalThis.fetch.getMockImplementation()
+        globalThis.fetch.mockImplementation(async (u, o) => (o?.method === 'PATCH' ? FAILED : routed(u, o)))
+        sendPushMock.mockClear()
+        await L.poll(env)
+        expect(sendPushMock.mock.calls.some(([, p]) => p.title.includes('Win!'))).toBe(true)
+      })
     })
 
     it('prunes subscriptions whose push endpoint has expired', async () => {

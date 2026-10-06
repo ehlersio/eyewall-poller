@@ -10,7 +10,7 @@ Cloudflare Workers backend for EyeWall Analytics — a hockey analytics platform
 - ESLint 9 (pinned — do not upgrade to 10 without checking peer deps on `eslint-plugin-react`/`eslint-plugin-react-hooks`)
 
 ## Sibling repos
-Lives in `eyewall/` alongside `eyewall-pipeline` (Python data pipeline) and `eyewall-analytics` (React frontend). This repo is the API layer between them — the pipeline writes to Supabase, this Worker reads from Supabase + live APIs and serves the frontend.
+Lives in `eyewall/` alongside `eyewall-pipeline` (Python data pipeline) and `eyewall-analytics` (React frontend). This repo is the API layer between them — the pipeline writes to Supabase, this Worker reads from Supabase + live APIs and serves the frontend. One exception (2026-10): the PWHL/AHL/ECHL pollers write puck drop and the final into `{league}_game_log` (`shared.js`'s `patchGameLog()`, `SUPABASE_SERVICE_KEY`), because the pipeline's 5-minute live refresh only ran a few times a day on GitHub. Keep those writes to the columns the pipeline's `*_live_refresh.py` write.
 
 ## Git branch hygiene (standing rule — read before any session)
 

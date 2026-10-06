@@ -258,6 +258,10 @@ function installUpstream({ failSupabase = false, failHosts = [], overrides = {} 
       return okJson(overrides[suffix] ?? supabaseRows(suffix, u.searchParams))
     }
     if (u.hostname === 'lscluster.hockeytech.com') {
+      // The scorebar is plain JSON (no callback=), read with res.json():
+      // an empty slate by default, so its 60s KV caching is exercised
+      // rather than every read failing to parse.
+      if (u.searchParams.get('view') === 'scorebar') return okJson({ SiteKit: { Scorebar: overrides.scorebar ?? [] } })
       return okText(`(${JSON.stringify(hockeytechPayload(u.searchParams.get('view')))})`)
     }
     return okText(rssXml(u.hostname))
