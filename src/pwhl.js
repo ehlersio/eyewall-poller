@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction, gameResult, endedInOf } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
@@ -738,8 +738,10 @@ Only reference the two teams named above and the numbers given -- no player name
       const reads = await Promise.all([
         sbRows(`${SB_URL}/rest/v1/pwhl_player_seasons?team_id=eq.${teamId}&season_id=eq.${season}&season_type=eq.regular&order=points.desc&limit=40`),
         sbRows(`${SB_URL}/rest/v1/pwhl_goalie_seasons?team_id=eq.${teamId}&season_id=eq.${season}&season_type=eq.regular&order=gp.desc&limit=5`),
-        // Current team roster (Roster tab); all players are fetched below for name resolution across seasons
-        sbRows(`${SB_URL}/rest/v1/pwhl_players?team_id=eq.${teamId}&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_city,shoots&limit=80`),
+        // Current team roster (Roster tab), minus players marked off it
+        // (sbRosterRows); all players are fetched below for name resolution
+        // across seasons
+        sbRosterRows(`${SB_URL}/rest/v1/pwhl_players?team_id=eq.${teamId}&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_city,shoots&limit=80`),
       ]);
       if (reads.some(r => r instanceof Response)) return sbError();
       const [skaters, goalies, rosterRaw] = reads;

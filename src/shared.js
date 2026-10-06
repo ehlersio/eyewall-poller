@@ -362,6 +362,22 @@ export async function sbRowsOr(url, fallback) {
   return rows instanceof Response ? fallback : rows;
 }
 
+// {ahl,echl,pwhl}_players.on_roster (eyewall-pipeline, 2026-10): the
+// nightly roster ingest sets it true for players on their team's roster feed
+// and false for the team's other rows (released, sent down, traded but not
+// yet moved). Roster lists hide only false, so a never-marked (null) row
+// still shows.
+export const ON_ROSTER_FILTER = 'on_roster=not.is.false';
+
+// sbRows for a team roster read (`url` already has a query string), minus
+// players marked off the roster. Until the owner adds the column PostgREST
+// rejects the filter (400); then, or on any other failure of the filtered
+// read, this is the unfiltered read.
+export async function sbRosterRows(url) {
+  const rows = await sbRows(`${url}&${ON_ROSTER_FILTER}`);
+  return rows instanceof Response ? sbRows(url) : rows;
+}
+
 // Serve `key` from KV, or run build(), cache its result and serve it.
 // build() may return a Response instead (an error, a 404, a deliberately
 // uncached null), which goes back as-is and uncached. `ttl` is seconds, or
