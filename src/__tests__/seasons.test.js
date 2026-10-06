@@ -26,6 +26,10 @@ import {
   nextSeasonHasImminentSchedule,
   resolvePWHLSeason,
   getAllPWHLSeasonTypes,
+  getAllPWHLSeasons,
+  hockeySeasonStartYear,
+  pwhlSeasonLabel,
+  pwhlSeasonStartYears,
   getAllAHLSeasons,
   getAllECHLSeasons,
   deriveSeasonType,
@@ -784,5 +788,81 @@ describe.each([
     kvGet.mockResolvedValue(null)
     globalThis.fetch.mockResolvedValue({ ok: false, status: 503 })
     expect(await getAll(env)).toBeNull()
+  })
+})
+
+// ── PWHL season labels ────────────────────────────────────────
+// Every season in HockeyTech's real list (OCT_1_BOOTSTRAP, unchanged on
+// 2026-10-06), labelled the way the app's hand-checked PWHL_SEASONS has
+// them. Before 2026-10 the comparison chips read 9 "2026-27 Playoffs",
+// 1 "2024-25" (a second one, next to 5), and the hidden 3 "Season 3".
+describe('PWHL season labels', () => {
+  const EXPECTED = {
+    11: { startYear: 2026, label: '2026-27' },
+    10: { startYear: 2026, label: '2026-27 Preseason' },
+    9: { startYear: 2025, label: '2025-26 Playoffs' },
+    8: { startYear: 2025, label: '2025-26' },
+    // Listed from 2025-06-01, but it leads into season 8.
+    7: { startYear: 2025, label: '2025-26 Preseason' },
+    6: { startYear: 2024, label: '2024-25 Playoffs' },
+    5: { startYear: 2024, label: '2024-25' },
+    4: { startYear: 2024, label: '2024-25 Preseason' },
+    3: { startYear: 2023, label: '2023-24 Playoffs' },
+    // "2024 Regular Season": the inaugural season, 2024-01-01 to 2024-05-27.
+    1: { startYear: 2023, label: '2023-24' },
+    // "2024 Preseason" (2023-11-01 to 2023-12-31): a preseason, not a
+    // showcase, leading into season 1.
+    2: { startYear: 2023, label: '2023-24 Preseason' },
+  }
+
+  it('hockeySeasonStartYear: July onwards is that year\'s season, January-June the previous year\'s', () => {
+    expect(hockeySeasonStartYear('2025-11-21')).toBe(2025)
+    expect(hockeySeasonStartYear('2024-01-01')).toBe(2023)
+    expect(hockeySeasonStartYear('2026-04-28')).toBe(2025)
+    expect(hockeySeasonStartYear('2026-07-01')).toBe(2026)
+    expect(hockeySeasonStartYear('2026-06-30')).toBe(2025)
+    expect(hockeySeasonStartYear(null)).toBeNull()
+  })
+
+  it('pwhlSeasonLabel formats each type', () => {
+    expect(pwhlSeasonLabel(2025, 'regular')).toBe('2025-26')
+    expect(pwhlSeasonLabel(2025, 'playoffs')).toBe('2025-26 Playoffs')
+    expect(pwhlSeasonLabel(2026, 'preseason')).toBe('2026-27 Preseason')
+    expect(pwhlSeasonLabel(2099, 'regular')).toBe('2099-00')
+    expect(pwhlSeasonLabel(null, 'regular')).toBeNull()
+  })
+
+  it('derives every listed season\'s year from its dates and type', () => {
+    const years = pwhlSeasonStartYears(PARSED_SEASONS)
+    expect(Object.fromEntries([...years].map(([id, y]) => [id, y]))).toEqual(
+      Object.fromEntries(Object.entries(EXPECTED).map(([id, e]) => [id, e.startYear])),
+    )
+  })
+
+  it('getAllPWHLSeasons lists every season, hidden ones included, with its label and start date', async () => {
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockResolvedValue(bootstrapResponse(OCT_1_BOOTSTRAP))
+    const seasons = await getAllPWHLSeasons(env)
+    expect(seasons).toHaveLength(11)
+    for (const s of seasons) {
+      expect({ id: s.seasonId, startYear: s.startYear, label: s.label }).toEqual({ id: s.seasonId, ...EXPECTED[s.seasonId] })
+    }
+    expect(seasons.find(s => s.seasonId === 3)).toEqual({
+      seasonId: 3, seasonType: 'playoffs', startYear: 2023, startDate: '2024-05-06', label: '2023-24 Playoffs',
+    })
+  })
+
+  it('labels a preseason whose regular season isn\'t listed yet from its own start date', () => {
+    const years = pwhlSeasonStartYears([
+      { id: '12', seasonType: 'preseason', start_date: '2027-10-01' },
+      { id: '11', seasonType: 'regular', start_date: '2026-12-04' },
+    ])
+    expect(years.get('12')).toBe(2027)
+  })
+
+  it('getAllPWHLSeasons returns null, not a guess, when the bootstrap is unavailable', async () => {
+    kvGet.mockResolvedValue(null)
+    globalThis.fetch.mockRejectedValue(new Error('network down'))
+    expect(await getAllPWHLSeasons(env)).toBeNull()
   })
 })

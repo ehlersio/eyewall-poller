@@ -165,8 +165,8 @@ describe('GET /config/seasons/comparison', () => {
     ]
     mockSupabaseFetch({ nhlRows, pwhlRows })
     getAllPWHLSeasons.mockResolvedValue([
-      { seasonId: 8, seasonType: 'regular', startYear: 2025 },
-      { seasonId: 9, seasonType: 'playoffs', startYear: 2025 },
+      { seasonId: 8, seasonType: 'regular', startYear: 2025, startDate: '2025-11-21', label: '2025-26' },
+      { seasonId: 9, seasonType: 'playoffs', startYear: 2025, startDate: '2026-04-28', label: '2025-26 Playoffs' },
     ])
 
     const env = makeEnv()
@@ -181,8 +181,8 @@ describe('GET /config/seasons/comparison', () => {
     ])
     expect(body.pwhl.activeTeamCount).toBe(12)
     expect(body.pwhl.seasons).toEqual([
-      { seasonId: 9, seasonType: 'playoffs', startYear: 2025, teamCount: 4, comparable: false },
-      { seasonId: 8, seasonType: 'regular',  startYear: 2025, teamCount: 8, comparable: true },
+      { seasonId: 9, seasonType: 'playoffs', startYear: 2025, label: '2025-26 Playoffs', teamCount: 4, comparable: false },
+      { seasonId: 8, seasonType: 'regular',  startYear: 2025, label: '2025-26', teamCount: 8, comparable: true },
     ])
 
     const cached = await env.CACHE.get('config:seasons:comparison')

@@ -27,7 +27,7 @@ import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWH
 // GET /config/seasons/comparison, one entry per league. NHL's team_seasons is
 // keyed by season/team and has no season metadata; PWHL/AHL/ECHL's
 // {league}_team_seasons are keyed by season_id/team_id and join season type
-// and start year from seasons.js. Active team counts come from the same code
+// and start year (PWHL: and a label) from seasons.js. Active team counts come from the same code
 // maps every roster-aware route uses -- never hardcoded, since PWHL's 2026-27
 // expansion changed its count.
 const COMPARISON_LEAGUES = [
@@ -64,7 +64,14 @@ async function comparisonSeasons(env, lg) {
       .sort(([a], [b]) => b - a)
       .map(([id, teams]) => ({
         ...(lg.meta
-          ? { seasonId: id, seasonType: metaById.get(id)?.seasonType ?? null, startYear: metaById.get(id)?.startYear ?? null }
+          ? {
+            seasonId: id,
+            seasonType: metaById.get(id)?.seasonType ?? null,
+            startYear: metaById.get(id)?.startYear ?? null,
+            // PWHL's metadata carries a display label (getAllPWHLSeasons());
+            // AHL/ECHL's don't, and their rows stay as they were.
+            ...(metaById.get(id)?.label ? { label: metaById.get(id).label } : {}),
+          }
           : { season: id }),
         teamCount: teams.size,
         comparable: teams.size > activeTeamCount / 2,

@@ -43,11 +43,11 @@ function yearLabel(startYear) {
  * season just played; for a preseason, last year's.
  *
  * `seasons` is getAllPWHLSeasons()/getAllAHLSeasons()/getAllECHLSeasons()'s
- * list: [{ seasonId, seasonType, startYear, startDate? }]. AHL/ECHL rows
- * carry startDate and are ordered by it. PWHL's don't (and its list skips
- * hidden seasons, which the current preseason can be), so PWHL goes by id:
- * HockeyTech numbers PWHL seasons in order (1 regular, 2 preseason,
- * 3 playoffs, ... 10 preseason, 11 regular).
+ * list: [{ seasonId, seasonType, startYear, startDate? }], ordered by
+ * startDate (every league's rows carry it since 2026-10; PWHL's list also
+ * includes hidden seasons such as the current preseason). Without dates it
+ * goes by id: HockeyTech mostly numbers seasons in order, though not
+ * always (PWHL season 2, the 2023-24 preseason, predates season 1).
  */
 export function priorRegularSeason(seasons, seasonId) {
   if (!Array.isArray(seasons)) return null;
@@ -112,17 +112,24 @@ function leagueAverage(rows, seasonText, floor) {
 }
 
 // One final game from a team's side: 'W', 'OT' (lost in overtime or a
-// shootout) or 'L' (lost in regulation). `endedIn` is the game log's
-// ended_in ('OT' | 'SO' | null) -- AHL/ECHL rows carry it; PWHL rows don't
-// (their OT/SO flags are ot/shootout), so a PWHL loss stays 'L'.
+// shootout) or 'L' (lost in regulation). `endedIn` is 'OT' | 'SO' | null
+// (endedInOf()).
 export function gameResult(myScore, oppScore, endedIn) {
   if (myScore > oppScore) return 'W';
   return endedIn === 'OT' || endedIn === 'SO' ? 'OT' : 'L';
 }
 
-// Streak from the season's Final games (newest first): W3, L2 or OT1. For
-// AHL/ECHL an OT/SO loss is its own 'OT' result (gameResult()); for the
-// PWHL every non-win extends a losing streak, OT/SO losses included.
+// How a game-log row ended: 'OT' | 'SO' | null. AHL/ECHL rows carry
+// ended_in; PWHL's pwhl_game_log has ot/shootout booleans instead.
+export function endedInOf(g) {
+  if (g?.ended_in === 'OT' || g?.ended_in === 'SO') return g.ended_in;
+  return g?.shootout ? 'SO' : g?.ot ? 'OT' : null;
+}
+
+// Streak from the season's Final games (newest first): W3, L2 or OT1. An
+// OT/SO loss is its own 'OT' result (gameResult()) in every league, the
+// NHL's streak code. (Before 2026-10 PWHL rows, which have no ended_in,
+// folded OT/SO losses into an 'L' streak.)
 function streakFor(games, teamId) {
   const results = games
     .filter(g => g.home_team_id === teamId || g.away_team_id === teamId)
@@ -130,7 +137,7 @@ function streakFor(games, teamId) {
       const isHomeG = g.home_team_id === teamId;
       const my = isHomeG ? g.home_score : g.away_score;
       const opp = isHomeG ? g.away_score : g.home_score;
-      return gameResult(my, opp, g.ended_in);
+      return gameResult(my, opp, endedInOf(g));
     });
   let streak = 0, streakType = '';
   for (const res of results) {

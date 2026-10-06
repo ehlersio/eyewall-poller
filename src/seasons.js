@@ -445,20 +445,89 @@ export async function getAllPWHLSeasonTypes(env) {
   }
 }
 
-// Full per-season metadata (id, type, startYear) for every non-hidden PWHL
-// season HockeyTech's bootstrap knows about. Unlike getAllPWHLSeasonTypes()
-// (id -> type only), this keeps startYear too — the season-comparison
-// picker (Session 64) needs a real label ("2024-25"), not just
-// "regular"/"playoffs". Shares fetchPWHLBootstrap's cache with
-// resolvePWHLSeason()/getAllPWHLSeasonTypes() — still one HockeyTech call
-// backing three questions. Returns null (not a thrown error) on failure,
+// ── PWHL season labels ────────────────────────────────────────
+// HockeyTech's PWHL season names don't share one convention ("2024 Regular
+// Season" is the 2023-24 inaugural season, "2026 Playoffs" are the 2025-26
+// playoffs), and a start date's calendar year isn't the season's either:
+// season 1 started 2024-01-01 and season 9 (playoffs) 2026-04-28. Labelling
+// by start-date year (before 2026-10) showed season 9 as "2026-27
+// Playoffs", season 1 as a second "2024-25" and the hidden season 3 as
+// "Season 3". So each season's year comes from its dates and type:
+//
+//   - regular, playoffs (and anything else): the hockey season its start
+//     date falls in -- July onwards is that year's season, January-June
+//     the previous year's. 2025-11-21 -> 2025-26, 2024-01-01 -> 2023-24,
+//     2026-04-28 (playoffs) -> 2025-26.
+//   - preseason: the regular season it leads into (findPWHLPreseasonFor()).
+//     Its own start date can sit in the season before: season 7 (2025-26
+//     Preseason) is listed from 2025-06-01. A preseason whose regular
+//     season isn't listed yet falls back to its own start date.
+//
+// No exceptions are needed for any of the eleven seasons HockeyTech lists
+// as of 2026-10-06 (1-11, checked in seasons.test.js against its own
+// list). If one ever is, add it here explicitly rather than another hand
+// list in the app.
+const SEASON_ROLLOVER_MONTH = 7;
+
+export function hockeySeasonStartYear(date) {
+  const m = /^(\d{4})-(\d{2})/.exec(date || '');
+  if (!m) return null;
+  const year = Number(m[1]);
+  return Number(m[2]) >= SEASON_ROLLOVER_MONTH ? year : year - 1;
+}
+
+// "2025-26", "2025-26 Playoffs", "2026-27 Preseason" -- the format the
+// app's PWHL season lists use.
+export function pwhlSeasonLabel(startYear, seasonType) {
+  if (!startYear) return null;
+  const base = `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`;
+  if (seasonType === 'playoffs') return `${base} Playoffs`;
+  if (seasonType === 'preseason') return `${base} Preseason`;
+  if (seasonType === 'showcase') return `${base} Showcase`;
+  return base;
+}
+
+// Pure: id -> hockey-season start year for every season in
+// fetchPWHLBootstrap()'s parsed seasons[] (see above).
+export function pwhlSeasonStartYears(seasons) {
+  const years = new Map();
+  for (const s of seasons) {
+    if (s.seasonType !== 'preseason') years.set(s.id, hockeySeasonStartYear(s.start_date));
+  }
+  for (const reg of seasons.filter(s => s.seasonType === 'regular')) {
+    const pre = findPWHLPreseasonFor(seasons, reg);
+    if (pre && years.get(reg.id) != null) years.set(pre.id, years.get(reg.id));
+  }
+  for (const s of seasons) {
+    if (!years.has(s.id)) years.set(s.id, hockeySeasonStartYear(s.start_date));
+  }
+  return years;
+}
+
+// Every PWHL season HockeyTech's bootstrap lists, as { seasonId,
+// seasonType, startYear, startDate, label } -- startYear is the hockey
+// season's (pwhlSeasonStartYears()), so 2023 for season 1, and label is
+// built from it. Hidden seasons are included: season 3 (2023-24 Playoffs)
+// is hidden from HockeyTech's standings but has team-season rows, and the
+// season-comparison route (Session 64) labels whatever seasons have rows.
+// /pwhl/prediction reads it too (prior regular season by startDate).
+// Shares fetchPWHLBootstrap's cache with resolvePWHLSeason()/
+// getAllPWHLSeasonTypes(). Returns null (not a thrown error) on failure,
 // same convention as getAllPWHLSeasonTypes().
 export async function getAllPWHLSeasons(env) {
   try {
     const { seasons } = await fetchPWHLBootstrap(env);
-    return seasons
-      .filter(s => !s.hide_in_standings)
-      .map(s => ({ seasonId: Number(s.id), seasonType: s.seasonType, startYear: s.startYear }));
+    const years = pwhlSeasonStartYears(seasons);
+    return seasons.map(s => {
+      const startYear = years.get(s.id) ?? s.startYear ?? null;
+      return {
+        seasonId: Number(s.id),
+        seasonType: s.seasonType,
+        startYear,
+        startDate: s.start_date || null,
+        label: pwhlSeasonLabel(startYear, s.seasonType),
+      };
+    });
   } catch (e) {
     console.warn(`PWHL season list resolve failed: ${e.message}`);
     return null;

@@ -18,12 +18,14 @@ vi.mock('../seasons.js', () => ({
   // 10 HockeyTech's current (2026-27 preseason), 11 next.
   getPWHLScheduleSeasonIds: vi.fn().mockResolvedValue([7, 8, 10, 11]),
   getAllPWHLSeasonTypes: vi.fn().mockResolvedValue({ 5: 'regular', 7: 'preseason', 8: 'regular', 9: 'playoffs', 10: 'preseason', 11: 'regular' }),
-  // Non-hidden seasons only, like the real one: 10 (preseason) is hidden.
+  // What the real one answers for these ids (hidden seasons included).
   getAllPWHLSeasons: vi.fn().mockResolvedValue([
-    { seasonId: 5, seasonType: 'regular', startYear: 2024 },
-    { seasonId: 8, seasonType: 'regular', startYear: 2025 },
-    { seasonId: 9, seasonType: 'playoffs', startYear: 2026 },
-    { seasonId: 11, seasonType: 'regular', startYear: 2026 },
+    { seasonId: 11, seasonType: 'regular', startYear: 2026, startDate: '2026-12-04', label: '2026-27' },
+    { seasonId: 10, seasonType: 'preseason', startYear: 2026, startDate: '2026-10-01', label: '2026-27 Preseason' },
+    { seasonId: 9, seasonType: 'playoffs', startYear: 2025, startDate: '2026-04-28', label: '2025-26 Playoffs' },
+    { seasonId: 8, seasonType: 'regular', startYear: 2025, startDate: '2025-11-21', label: '2025-26' },
+    { seasonId: 7, seasonType: 'preseason', startYear: 2025, startDate: '2025-06-01', label: '2025-26 Preseason' },
+    { seasonId: 5, seasonType: 'regular', startYear: 2024, startDate: '2024-11-25', label: '2024-25' },
   ]),
 }))
 
