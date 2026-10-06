@@ -20,20 +20,25 @@ import { vi } from 'vitest'
 // and any direct env.CACHE.get/put/delete calls in route handlers.
 export function makeFakeCache(initial = {}) {
   const store = new Map(Object.entries(initial).map(([k, v]) => [k, JSON.stringify(v)]))
+  const meta = new Map() // put()'s { metadata }, as real KV keeps it alongside the value
   return {
     async get(key) {
       return store.has(key) ? store.get(key) : null
     },
-    async put(key, value) {
+    async put(key, value, opts) {
       store.set(key, value)
+      if (opts?.metadata !== undefined) meta.set(key, opts.metadata)
+      else meta.delete(key)
     },
     async delete(key) {
       store.delete(key)
+      meta.delete(key)
     },
     // Real KV's getWithMetadata — poll() uses this (not plain get) to check
-    // the news cache age without deserializing the value.
+    // the news cache age without deserializing the value, and the standings
+    // age (fetchedAt metadata).
     async getWithMetadata(key) {
-      return { value: store.has(key) ? store.get(key) : null, metadata: null }
+      return { value: store.has(key) ? store.get(key) : null, metadata: meta.get(key) ?? null }
     },
     // Real KV's list({ prefix }) — GET /admin/health enumerates health:*
     // keys this way. Real KV paginates via cursor/list_complete; this fake

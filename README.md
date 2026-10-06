@@ -247,7 +247,7 @@ Key patterns:
 | `live:gameId` | 60s | Current live NHL game ID |
 | `pbp:{gameId}` | 60s live / 1hr final | NHL play-by-play |
 | `boxscore:{gameId}` | 60s live / 1hr final | NHL boxscore |
-| `standings` | 5min | NHL standings — `poll()` refetches only once this lapses, not every tick |
+| `standings` | 15min | NHL standings — `poll()` refetches once the stored copy is 5 min old (its `fetchedAt` KV metadata), not every tick, so the key is replaced before it expires. A miss (cold start, or the cron stopped) is fetched on demand by `/cache/standings` and `/prediction/analyze`, one shared fetch per isolate |
 | `news:{ABBR}` | 30min | NHL team news |
 | `pp_units:{season}:{gameType}` | 4hr | PP/PK unit rosters for one season and game type (2 regular season, 3 playoffs; per game type as of 2026-09) — the cron re-reads Supabase only once this lapses; `/pp-units/refresh` forces a re-read (e.g. right after a pipeline run). Season-scoped as of 2026-09 (was a single flat `pp_units:all`): the shot map can display a season other than the current one, and one key can only hold one season's units. Only the current season's regular-season units are kept warm by the cron; anything else is filled on first request |
 | `alerts:recent:{LEAGUE}` | 96h | Every alert the pollers sent for that league (NHL/PWHL/AHL/ECHL) in the last 72h, at most 400: `{team, vs, type, title, body, url, at}`. Collected during a cron run and written once per league at its end (`shared.js`'s `recordAlert`/`flushAlertLog`), for the app's notifications bell |
@@ -322,7 +322,7 @@ Key patterns:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/cache/:key` | Read any KV key (primary NHL data path) |
+| `GET` | `/cache/:key` | Read any KV key (primary NHL data path). 404 on a miss, except `standings`, which is fetched from the NHL, stored and returned (still 404 if that fetch fails); a `schedule:*` miss is filled in the background |
 | `POST` | `/cache/bust?key=&secret=` | Delete one KV entry so the next request rebuilds it from live code. `POLL_SECRET`-gated; GET is refused (405) so a stray link or prefetch can't delete anything. Returns `{ key, busted }` — `busted: false` means the key wasn't cached, not that the call failed. **Refuses `push:*` and `*:override`** (403): those hold real data — every push subscription, and deliberately-pinned season overrides — so busting them would destroy data rather than refresh it. Added 2026-09 after the `/players-search-index` paging fix deployed correctly but stayed invisible for its 6-hour TTL. |
 | `GET` | `/news?team=` | Team news feed |
 | `GET` | `/schedule?team=` | Team schedule |

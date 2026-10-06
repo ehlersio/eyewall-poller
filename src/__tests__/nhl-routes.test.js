@@ -39,7 +39,7 @@ vi.mock('../shared.js', async (importOriginal) => {
   return { ...actual, sendPush: sendPushMock, sendLiveActivityPush: sendLiveActivityPushMock }
 })
 
-import { handleNHL, poll, refreshPPUnits, oppGoalBody, periodIsOver, scoreboardBroadcasts, liveActivityState, startLiveActivities, applyScoreboardStates, scoreboardStates } from '../nhl.js'
+import { handleNHL, poll, refreshPPUnits, STANDINGS_TTL, STANDINGS_REFRESH_MS, oppGoalBody, periodIsOver, scoreboardBroadcasts, liveActivityState, startLiveActivities, applyScoreboardStates, scoreboardStates } from '../nhl.js'
 import { resolveNHLSeason } from '../seasons.js'
 
 beforeEach(() => {
@@ -195,6 +195,83 @@ describe('GET /cache/:key', () => {
     )
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ hello: 'world' })
+  })
+
+  // 2026-10-05: a standings miss used to 404 until the next cron tick.
+  describe('standings miss', () => {
+    const ROWS = [{ teamAbbrev: { default: 'CAR' }, points: 10 }, { teamAbbrev: { default: 'BOS' }, points: 8 }]
+    const getStandings = (env, ctx = makeCtx()) =>
+      handleNHL(makeRequest('/cache/standings'), env, ctx, new URL('https://example.com/cache/standings'))
+    const standingsCalls = () => globalThis.fetch.mock.calls.filter(([u]) => String(u).includes('/standings/now'))
+
+    it('fetches from the NHL, stores the rows with a fetchedAt, and returns them', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ standings: ROWS }) })
+      const env = makeEnv()
+
+      const res = await getStandings(env)
+
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual(ROWS)
+      const stored = await env.CACHE.getWithMetadata('standings')
+      expect(JSON.parse(stored.value)).toEqual(ROWS)
+      expect(typeof stored.metadata.fetchedAt).toBe('number')
+
+      const again = await getStandings(env)
+      expect(await again.json()).toEqual(ROWS)
+      expect(standingsCalls()).toHaveLength(1)
+    })
+
+    it('shares one NHL fetch between concurrent misses', async () => {
+      let release
+      const gate = new Promise(r => { release = r })
+      globalThis.fetch = vi.fn().mockImplementation(async () => {
+        await gate
+        return { ok: true, json: async () => ({ standings: ROWS }) }
+      })
+      const env = makeEnv()
+      const ctx = makeCtx()
+
+      const pending = [getStandings(env, ctx), getStandings(env, ctx), getStandings(env, ctx)]
+      await Promise.resolve()
+      release()
+      const responses = await Promise.all(pending)
+
+      expect(responses.map(r => r.status)).toEqual([200, 200, 200])
+      expect(standingsCalls()).toHaveLength(1)
+      expect(ctx._promises).toHaveLength(1)
+
+      // Settled, so the next miss fetches again rather than reusing it.
+      await env.CACHE.delete('standings')
+      await getStandings(env)
+      expect(standingsCalls()).toHaveLength(2)
+    })
+
+    it('is still a 404 when the NHL fetch fails, and stores nothing', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({}) })
+      const env = makeEnv()
+
+      const res = await getStandings(env)
+
+      expect(res.status).toBe(404)
+      expect(await env.CACHE.get('standings')).toBeNull()
+    })
+
+    it('is still a 404 when the NHL returns no standings, and stores nothing', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ standings: [] }) })
+      const env = makeEnv()
+
+      const res = await getStandings(env)
+
+      expect(res.status).toBe(404)
+      expect(await env.CACHE.get('standings')).toBeNull()
+    })
+
+    it('leaves other cold keys a plain 404 with no upstream fetch', async () => {
+      const env = makeEnv()
+      const res = await handleNHL(makeRequest('/cache/news:CAR'), env, makeCtx(), new URL('https://example.com/cache/news:CAR'))
+      expect(res.status).toBe(404)
+      expect(globalThis.fetch).not.toHaveBeenCalled()
+    })
   })
 })
 
@@ -2879,19 +2956,60 @@ describe('poll() — multi-team dual broadcast', () => {
     expect(aiCalls(globalThis.fetch)).toHaveLength(0)
   })
 
-  // Per-minute cron cost: standings are refetched only once their 5-min
-  // cache lapses, and the unread teamstats fetch is gone entirely.
+  // Per-minute cron cost: standings are refetched only once the stored
+  // copy is STANDINGS_REFRESH_MS old, and the unread teamstats fetch is
+  // gone entirely.
   function polledUrls() {
     return globalThis.fetch.mock.calls.map(([u]) => String(u))
   }
 
+  async function cacheWithStandings(fetchedAt) {
+    const cache = makeFakeCache()
+    await cache.put('standings', JSON.stringify([{ teamAbbrev: { default: 'CAR' } }]),
+      fetchedAt === undefined ? {} : { metadata: { fetchedAt } })
+    return cache
+  }
+
   it('skips the standings fetch while the cached copy is still fresh', async () => {
-    const env = makeEnv({ CACHE: makeFakeCache({ standings: [{ teamAbbrev: { default: 'CAR' } }] }) })
+    const env = makeEnv({ CACHE: await cacheWithStandings(Date.now() - STANDINGS_REFRESH_MS + 60_000) })
     mockScoreboardAndPbp({})
 
     await poll(env, makeCtx())
 
     expect(polledUrls().some(u => u.includes('/standings/now'))).toBe(false)
+  })
+
+  // 2026-10-05: the key used to expire after 5 min and only be refilled on
+  // the next tick, so /cache/standings 404'd for up to a minute every 5 min.
+  // Now the cron replaces it while it's still live.
+  it('refreshes standings that are due before the key expires, keeping it live past the next refresh', async () => {
+    expect(STANDINGS_TTL * 1000).toBeGreaterThanOrEqual(2 * STANDINGS_REFRESH_MS)
+    const cache = await cacheWithStandings(Date.now() - STANDINGS_REFRESH_MS - 1000)
+    const putSpy = vi.spyOn(cache, 'put')
+    const env = makeEnv({ CACHE: cache })
+    const rows = [{ teamAbbrev: { default: 'BOS' } }]
+    mockScoreboardAndPbp({})
+    const base = globalThis.fetch.getMockImplementation()
+    globalThis.fetch.mockImplementation((url) => String(url).includes('/standings/now')
+      ? Promise.resolve({ ok: true, json: async () => ({ standings: rows }) })
+      : base(url))
+
+    await poll(env, makeCtx())
+
+    expect(polledUrls().filter(u => u.includes('/standings/now'))).toHaveLength(1)
+    const [, value, opts] = putSpy.mock.calls.find(([k]) => k === 'standings')
+    expect(JSON.parse(value)).toEqual(rows)
+    expect(opts.expirationTtl).toBe(STANDINGS_TTL)
+    expect(Date.now() - opts.metadata.fetchedAt).toBeLessThan(5000)
+  })
+
+  it('treats a cached standings copy with no fetchedAt (written before the fix) as due', async () => {
+    const env = makeEnv({ CACHE: await cacheWithStandings(undefined) })
+    mockScoreboardAndPbp({})
+
+    await poll(env, makeCtx())
+
+    expect(polledUrls().some(u => u.includes('/standings/now'))).toBe(true)
   })
 
   it('fetches standings when the cache is cold, and never fetches team stats', async () => {
