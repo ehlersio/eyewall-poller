@@ -308,9 +308,14 @@ describe('GET /schedule', () => {
   it('cold cache, current season, NHL API down: answers [] (uncached) and retries once in the background', async () => {
     const putSpy = vi.fn()
     const env = makeEnv({ CACHE: { async get() { return null }, put: putSpy } })
+    // The retry runs off the request via waitUntil; hold its response until
+    // the test has checked the request-side behaviour, otherwise it can land
+    // before the assertions on a fast runner (it did on CI).
+    let releaseRetry
+    const retryResponse = new Promise(resolve => { releaseRetry = resolve })
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ games: [{ id: 2 }] }) })
+      .mockReturnValueOnce(retryResponse)
     const ctx = makeCtx()
 
     const res = await handleNHL(makeRequest('/schedule?team=UTA'), env, ctx, new URL('https://example.com/schedule?team=UTA'))
@@ -320,6 +325,7 @@ describe('GET /schedule', () => {
     expect(putSpy).not.toHaveBeenCalled() // the empty answer is never cached
     expect(ctx._promises.length).toBe(1)
 
+    releaseRetry({ ok: true, json: async () => ({ games: [{ id: 2 }] }) })
     await flushWaitUntil(ctx)
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
     expect(putSpy).toHaveBeenCalledWith('schedule:UTA:20252026', JSON.stringify([{ id: 2 }]), { expirationTtl: 600 })
