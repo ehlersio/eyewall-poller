@@ -68,6 +68,7 @@ describe('GET /health', () => {
           return null
         },
         async put() {},
+        async list() { return { keys: [] } },
       },
     })
 

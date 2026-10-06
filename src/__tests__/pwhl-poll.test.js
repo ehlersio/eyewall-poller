@@ -23,6 +23,7 @@ vi.mock('../seasons.js', async (importOriginal) => {
 })
 
 import { pollPWHL, PWHL_TEAM_CODES } from '../pwhl.js'
+import { getPWHLScheduleSeasonIds } from '../seasons.js'
 
 const GAME_ID = 300
 const HOME = 1 // BOS
@@ -63,6 +64,18 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+})
+
+describe('pollPWHL failures', () => {
+  // The cron tick records a poll that throws (health:cron:pwhl, ops.js);
+  // one that swallowed its own error looked healthy forever.
+  it('rethrows a failed tick so the cron can record it', async () => {
+    installFetch(gameRow())
+    vi.mocked(getPWHLScheduleSeasonIds).mockRejectedValueOnce(new Error('bootstrap down'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const env = makeEnv({ CACHE: makeFakeCache({ 'push:subs': subs }), VAPID_PRIVATE_KEY: 'k' })
+    await expect(pollPWHL(env)).rejects.toThrow('bootstrap down')
+  })
 })
 
 describe('pollPWHL slate query', () => {

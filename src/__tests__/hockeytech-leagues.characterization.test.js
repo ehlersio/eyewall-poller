@@ -45,6 +45,7 @@ vi.mock('../seasons.js', async (importOriginal) => {
 
 import { handleAHL, pollAHL, fetchAHLNews, AHL_TEAM_CODES } from '../ahl.js'
 import { handleECHL, pollECHL, fetchECHLNews, ECHL_TEAM_CODES } from '../echl.js'
+import { resolveAHLSeason, resolveECHLSeason } from '../seasons.js'
 
 const LEAGUES = [
   { key: 'ahl',  handle: handleAHL,  poll: pollAHL,  fetchNews: fetchAHLNews,  codes: AHL_TEAM_CODES,  season: 90, playoffSeason: 92, teamA: 335, teamB: 323 },
@@ -447,6 +448,17 @@ describe.each(LEAGUES)('$key', (L) => {
       const { env } = makeRecordingEnv({ 'push:subs': subsFor() })
       await L.poll(env)
       expect(globalThis.fetch).not.toHaveBeenCalled()
+    })
+
+    // The cron tick records a poll that throws (health:cron:<league>,
+    // ops.js); one that swallowed its own error looked healthy forever.
+    it('rethrows a failed tick so the cron can record it', async () => {
+      installUpstream(L)
+      const resolve = L.key === 'ahl' ? resolveAHLSeason : resolveECHLSeason
+      vi.mocked(resolve).mockRejectedValueOnce(new Error('season feed down'))
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const { env } = makeRecordingEnv({ 'push:subs': subsFor() }, { VAPID_PRIVATE_KEY: 'k' })
+      await expect(L.poll(env)).rejects.toThrow('season feed down')
     })
 
     // Regression (audit 2026-10-06, AHL/ECHL F1): the slate read stopped at

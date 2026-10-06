@@ -54,6 +54,7 @@ Before opening a PR, check whether the change affects anything `README.md` docum
 - Both exposed via `GET /config/seasons` (alongside the AHL/ECHL entries, see below). Consumed by `eyewall-analytics`'s `seasonClient.js` and `eyewall-pipeline`'s `season_lookup.py`.
 - Manual override escape hatch: `config:season:nhl:override` / `config:season:pwhl:override` KV keys, for if live resolution ever misjudges the real Sept/Oct season boundary — **that transition has never actually been observed by this logic yet.** Everything validated so far is the offseason case only.
 - `scheduled()` calls both resolvers every ~60s alongside `poll()`/`pollPWHL()` — cheap no-op except right after the 6hr TTL lapses, since both check cache first.
+- `scheduled()` runs `runScheduled()` (worker.js): each league's poll goes through `ops.js`'s `trackCron()`, which never throws and records `health:cron:<league>`, so one league failing can't skip the others or `flushAlertLog` (which sits in a `finally`). A poller must **throw** on a failed tick (not just log) for it to show up there and in the self-alert (`checkCronHealth()`, `worker-cron-<league>` via `/ops/notify`'s logic). See README "Ops alerts".
 
 ### `getAllPWHLSeasonTypes()` and `GET /config/seasons/pwhl-types` (Session 37)
 
