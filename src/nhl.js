@@ -5,6 +5,7 @@
  * Scheduled trigger calls poll() every 60s during the season.
  */
 
+import { penaltyText, penaltyDescription } from './penaltyText.js';
 import { kvGet, kvPut, json, finalLabel, endedInSuffix, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
@@ -610,6 +611,9 @@ async function detectAndNotify(env, game, pbp) {
   const periodLabel = n => n === 4 ? 'OT' : n === 5 ? 'SO' : `P${n}`;
 
   const pair = [`NHL:${homeAbbr}`, `NHL:${awayAbbr}`];
+  const rosterNames = new Map((pbp.rosterSpots || []).map(r =>
+    [String(r.playerId), `${r.firstName?.default || ''} ${r.lastName?.default || ''}`.trim()]));
+  const fullName = id => rosterNames.get(String(id)) || null;
   const notify = (abbr, payload, eventType) => broadcast(env, payload, `NHL:${abbr}`, eventType, pair);
 
   // ── Game just started ─────────────────────────────────────
@@ -772,11 +776,9 @@ async function detectAndNotify(env, game, pbp) {
     ppSent.add(`${stoppage}-${ppAbbr}`);
 
     const penalty = served.find(p => p.details?.eventOwnerTeamId === penTeamId);
-    const dur  = penalty.details?.duration || 2;
-    const desc = penalty.details?.descKey?.replace(/-/g, ' ') || 'penalty';
     await notify(ppAbbr, {
       title: `⚡ ${ppAbbr} Power Play!`,
-      body:  `${penAbbr} — ${dur} min ${desc}`,
+      body:  `${penAbbr} — ${penaltyText(penalty.details, fullName) || 'Penalty'}`,
       tag:   `pp-${liveId}-${penaltyKey(penalty)}`,
       url:   '/',
     }, 'penalty');
@@ -922,7 +924,8 @@ async function generateGameSummary(env, game) {
       });
       if (t === 'penalty') penalties.push({
         team: isCar ? TEAM_ABBR : oppAbbr,
-        desc: (p.details?.descKey || 'penalty').replace(/-/g, ' '),
+        // What for, not who: the prompt names only allowedNames' players.
+        desc: penaltyDescription(p.details?.descKey) || 'Penalty',
         mins: p.details?.duration || 2,
       });
     });
@@ -1796,9 +1799,12 @@ export function liveActivityState(game, pbp, { final = false } = {}) {
       const who = names[d.scoringPlayerId] || '';
       lastEvent = `GOAL · ${teamOf(last)} · ${who}${d.scoringPlayerTotal ? ` (${d.scoringPlayerTotal})` : ''} · ${when}`;
     } else {
-      const who = names[d.committedByPlayerId] || names[d.servedByPlayerId] || '';
-      const what = (d.descKey || 'penalty').replace(/-/g, ' ');
-      lastEvent = `PEN · ${teamOf(last)}${who ? ` · ${who}` : ''} · ${d.duration || 2} min ${what}`;
+      // Last names, as for a goal. Never the server's as the offender: a
+      // bench minor reads "Bench minor · ... · served by Hall". The Lock
+      // Screen shows one line (lineLimit 1), so the parts run most
+      // important first and iOS cuts the tail.
+      const text = penaltyText(d, id => names[id] || null);
+      lastEvent = `PEN · ${teamOf(last)}${text ? ` · ${text}` : ''}`;
     }
   }
 

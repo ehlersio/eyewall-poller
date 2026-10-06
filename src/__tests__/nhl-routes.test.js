@@ -41,6 +41,7 @@ vi.mock('../shared.js', async (importOriginal) => {
 
 import { handleNHL, poll, refreshPPUnits, oppGoalBody, periodIsOver, scoreboardBroadcasts, liveActivityState, startLiveActivities, applyScoreboardStates, scoreboardStates } from '../nhl.js'
 import { resolveNHLSeason } from '../seasons.js'
+import * as game2025021237 from './fixtures/nhl-2025021237-penalties.js'
 
 beforeEach(() => {
   globalThis.fetch = vi.fn()
@@ -2747,7 +2748,7 @@ describe('poll() — multi-team dual broadcast', () => {
 
     const first = await pollWith([play(630, 'faceoff'), interference])
     expect(first).toHaveLength(1)
-    expect(first[0].body).toBe('FLA — 2 min interference goalkeeper')
+    expect(first[0].body).toBe('FLA — Goaltender interference · 2 min')
     expect(first[0].tag).toBe('pp-2026020001-635')
 
     // A late-posted shot lands ahead of the penalty, pushing it past last
@@ -2759,7 +2760,28 @@ describe('poll() — multi-team dual broadcast', () => {
       play(630, 'faceoff'), play(633, 'shot-on-goal'), interference, play(637, 'faceoff'),
       play(643, 'penalty', { eventOwnerTeamId: 13, duration: 2, descKey: 'roughing' }, '08:36'),
     ])
-    expect(next.map(p => p.body)).toEqual(['FLA — 2 min roughing'])
+    expect(next.map(p => p.body)).toEqual(['FLA — Roughing · 2 min'])
+  })
+
+  it('credits a bench minor to the bench, not the player serving it (2025021237, P1 17:25)', async () => {
+    const env = makeEnv({
+      VAPID_PRIVATE_KEY: 'fake-key-for-test',
+      CACHE: makeFakeCache({
+        'push:subs': [subFor('BOS', 'https://push.example/bos-fan')],
+        'push:gamestate:2025021237': { homeScore: 0, awayScore: 0, playCount: 0, started: true, period: 1, goalScorers: {} },
+      }),
+    })
+    const { game, penaltyPlays, rosterSpots } = game2025021237
+    const liveGame = { ...game, gameState: 'LIVE', homeTeam: { ...game.homeTeam, score: 0 }, awayTeam: { ...game.awayTeam, score: 0 } }
+    sendPushMock.mockClear()
+    mockScoreboardAndPbp({ liveGames: [liveGame], pbpByGameId: {
+      '2025021237': { periodDescriptor: { number: 1 }, rosterSpots, plays: [penaltyPlays[0]] },
+    } })
+    await poll(env, makeCtx())
+    const pp = sendPushMock.mock.calls.map(([, payload]) => payload).filter(p => p.title.endsWith('Power Play!'))
+    expect(pp.map(p => `${p.title} ${p.body}`)).toEqual([
+      '⚡ BOS Power Play! CAR — Bench minor · Delay of game (unsuccessful challenge) · 2 min · served by Taylor Hall',
+    ])
   })
 
   it('sends no power-play push for offsetting penalties, misconducts or penalty shots', async () => {
@@ -2797,7 +2819,7 @@ describe('poll() — multi-team dual broadcast', () => {
 
     // Matching minors -- the second posting a poll after the first. Only
     // the first half, alone at that point, can go out.
-    expect(await pollWith(pen(40, 12, 'MIN', 2, 'slashing', '19:10'))).toEqual(['⚡ FLA Power Play! CAR — 2 min slashing'])
+    expect(await pollWith(pen(40, 12, 'MIN', 2, 'slashing', '19:10'))).toEqual(['⚡ FLA Power Play! CAR — Slashing · 2 min'])
     expect(await pollWith(pen(41, 13, 'MIN', 2, 'cross-checking', '19:10'))).toEqual([])
 
     // Misconduct and penalty shot alone.
@@ -2809,7 +2831,7 @@ describe('poll() — multi-team dual broadcast', () => {
       pen(60, 13, 'MIN', 2, 'roughing', '19:50'),
       pen(61, 13, 'MIN', 2, 'roughing', '19:50'),
       pen(62, 12, 'MIN', 2, 'roughing', '19:50'),
-    )).toEqual(['⚡ CAR Power Play! FLA — 2 min roughing'])
+    )).toEqual(['⚡ CAR Power Play! FLA — Roughing · 2 min'])
     // ... announced once, even as a further FLA minor at it posts late.
     expect(await pollWith(pen(63, 13, 'MIN', 2, 'unsportsmanlike-conduct', '19:50'))).toEqual([])
   })
@@ -3987,7 +4009,7 @@ describe('liveActivityState()', () => {
   it('builds the lock-screen state from the scoreboard game and pbp', () => {
     expect(liveActivityState(game, pbp)).toEqual({
       homeScore: 2, awayScore: 1, periodLabel: '2nd', clock: '07:58', inIntermission: false, status: 'live',
-      lastEvent: 'PEN · FLA · Tkachuk · 2 min high sticking',
+      lastEvent: 'PEN · FLA · Tkachuk · High-sticking · 2 min',
       strength: 'CAR PP',
     })
   })
@@ -3999,6 +4021,17 @@ describe('liveActivityState()', () => {
     expect(liveActivityState(game, pulled).strength).toBe('FLA 6v5')
     const playoffs = { ...game, gameType: 3 }
     expect(liveActivityState(playoffs, { ...pbp, periodDescriptor: { number: 5, periodType: 'OT' } }).periodLabel).toBe('2OT')
+  })
+
+  it('reads a bench minor as the bench’s, served by the player in the box (2025021237, P1 17:25)', () => {
+    const { game: real, penaltyPlays, rosterSpots } = game2025021237
+    const live = { ...real, homeTeam: { ...real.homeTeam, score: 0 }, awayTeam: { ...real.awayTeam, score: 0 } }
+    const at = n => liveActivityState(live, { periodDescriptor: { number: 1, periodType: 'REG' }, rosterSpots, plays: penaltyPlays.slice(0, n) }).lastEvent
+    expect(at(1)).toBe('PEN · CAR · Bench minor · Delay of game (unsuccessful challenge) · 2 min · served by Hall')
+    expect(at(2)).toBe('PEN · BOS · Kastelic · Goaltender interference · 2 min')
+    // No roster: no name at all, never a stand-in.
+    expect(liveActivityState(live, { plays: penaltyPlays.slice(0, 1) }).lastEvent)
+      .toBe('PEN · CAR · Bench minor · Delay of game (unsuccessful challenge) · 2 min')
   })
 
   it('skips an impossible situationCode and reads the last real one', () => {
