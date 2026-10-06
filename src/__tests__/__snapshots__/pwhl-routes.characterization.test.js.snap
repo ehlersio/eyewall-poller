@@ -3332,11 +3332,20 @@ exports[`players > response, upstream requests and KV writes; repeat call 1`] = 
 
 exports[`poll > a game already final the first time it is polled gets no game-over push 1`] = `
 {
-  "kvWrites": [],
+  "kvWrites": [
+    {
+      "key": "config:season:pwhl:bootstrap",
+      "ttl": 21600,
+    },
+  ],
   "pushes": [],
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=eq.8&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&order=game_id.asc&limit=50",
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=bootstrap&season=&game_id=&pageName=leadersExtended&key=446521baf8c38984&client_code=pwhl&site_id=0&league_id=&league_code=&conference=-1&division=-1&lang=en",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=in.(8)&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&order=game_id.asc&limit=50",
     },
   ],
 }
@@ -3379,7 +3388,7 @@ exports[`poll > a game followed live gets exactly one game-over push when it goe
   ],
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=eq.8&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&order=game_id.asc&limit=50",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=in.(8)&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&order=game_id.asc&limit=50",
     },
     {
       "referer": "https://www.thepwhl.com/",
@@ -3395,11 +3404,20 @@ exports[`poll > a game followed live gets exactly one game-over push when it goe
 
 exports[`poll > does nothing when today's schedule read fails 1`] = `
 {
-  "kvWrites": [],
+  "kvWrites": [
+    {
+      "key": "config:season:pwhl:bootstrap",
+      "ttl": 21600,
+    },
+  ],
   "pushes": [],
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=eq.8&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&order=game_id.asc&limit=50",
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=bootstrap&season=&game_id=&pageName=leadersExtended&key=446521baf8c38984&client_code=pwhl&site_id=0&league_id=&league_code=&conference=-1&division=-1&lang=en",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=in.(8)&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&order=game_id.asc&limit=50",
     },
   ],
 }
@@ -3408,6 +3426,10 @@ exports[`poll > does nothing when today's schedule read fails 1`] = `
 exports[`poll > live game: start, period, goal, hat-trick, power-play and pulled-goalie pushes; a second poll sends nothing new 1`] = `
 {
   "kvWrites": [
+    {
+      "key": "config:season:pwhl:bootstrap",
+      "ttl": 21600,
+    },
     {
       "key": "pwhl:push:start:210",
       "ttl": 86400,
@@ -3550,7 +3572,11 @@ exports[`poll > live game: start, period, goal, hat-trick, power-play and pulled
   ],
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=eq.8&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&order=game_id.asc&limit=50",
+      "referer": "https://www.thepwhl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=bootstrap&season=&game_id=&pageName=leadersExtended&key=446521baf8c38984&client_code=pwhl&site_id=0&league_id=&league_code=&conference=-1&division=-1&lang=en",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_date=eq.2026-01-15&season_id=in.(8)&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&order=game_id.asc&limit=50",
     },
     {
       "referer": "https://www.thepwhl.com/",

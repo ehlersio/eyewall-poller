@@ -519,12 +519,17 @@ describe('poll', () => {
   const finalGame = () => liveGame({ home_score: 4, away_score: 2, game_state: 'Final', game_status_code: 4 })
   const pushes = () => sendPushMock.mock.calls.map(([s, payload]) => ({ to: s.endpoint, ...payload }))
 
-  it('does nothing in the offseason', async () => {
+  // No month gate any more (it would have hidden an October preseason):
+  // out of season the poll reads an empty slate and stops there.
+  it('offseason: reads the day\'s slate, finds nothing and sends nothing', async () => {
     vi.setSystemTime(new Date('2026-08-15T16:00:00Z'))
     installUpstream()
     const { env } = makeRecordingEnv({ 'push:subs': subsFor() }, { VAPID_PRIVATE_KEY: 'k' })
     await pollPWHL(env)
-    expect(globalThis.fetch).not.toHaveBeenCalled()
+    const urls = upstreamCalls().map(c => c.url)
+    expect(urls.some(u => u.includes('pwhl_game_log?game_date=eq.2026-08-15'))).toBe(true)
+    expect(urls.some(u => u.includes('view=scorebar') || u.includes('gameCenterPlayByPlay'))).toBe(false)
+    expect(sendPushMock).not.toHaveBeenCalled()
   })
 
   it('does nothing without a VAPID private key', async () => {
