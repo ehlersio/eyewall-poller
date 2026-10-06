@@ -198,6 +198,18 @@ export function endedInSuffix(endedIn) {
   return endedIn === 'OT' || endedIn === 'SO' ? ` (${endedIn})` : '';
 }
 
+// ── NHL season end ────────────────────────────────────────────
+// July 1 of a season's END year (e.g. '20252026' -> 2026-07-01): the NHL
+// poll's "season over" cutoff, and the Worker's self-alert's notion of
+// "in season" (ops.js). A deliberately generous buffer past the latest
+// realistic Cup Final date -- only needs to be "safely after the season
+// can still be running", not exact to the day. Moved here from nhl.js
+// (2026-10) so ops.js can share it.
+export function nhlSeasonEnd(seasonId) {
+  const endYear = parseInt(String(seasonId).slice(4), 10) || (new Date().getFullYear() + 1);
+  return new Date(`${endYear}-07-01`);
+}
+
 // ── Response helpers ──────────────────────────────────────────
 
 export function json(val) {
@@ -207,7 +219,7 @@ export function json(val) {
 export function corsHeaders() {
   return {
     'Access-Control-Allow-Origin':  '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };
 }

@@ -280,7 +280,9 @@ export async function pollPWHL(env) {
       );
     }
   } catch (e) {
+    // Rethrown so the cron tick records it (health:cron:pwhl, ops.js).
     console.error('[PWHL poll] error:', e.message);
+    throw e;
   }
 }
 

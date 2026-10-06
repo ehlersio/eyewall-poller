@@ -231,7 +231,9 @@ export function createHockeyTechLeague(cfg) {
         );
       }
     } catch (e) {
+      // Rethrown so the cron tick records it (health:cron:<league>, ops.js).
       console.error(`[${label} poll] error:`, e.message);
+      throw e;
     }
   }
 

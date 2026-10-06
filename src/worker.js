@@ -22,6 +22,7 @@ import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js'
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_IDS } from './ahl.js';
 import { handleECHL, ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS, fetchECHLNews, pollECHL } from './echl.js';
 import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog } from './shared.js';
+import { handleOps, trackCron, checkCronHealth, readCronHealth, readOpsHealth, OPS_SUBS_KEY } from './ops.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
 
 // GET /config/seasons/comparison, one entry per league. NHL's team_seasons is
@@ -501,12 +502,28 @@ export async function handleRequest(request, env, ctx) {
   if (url.pathname === '/admin/health') {
     const user = await verifyAdminUser(request, env);
     if (!user) return new Response('Unauthorized', { status: 401 });
+    // health:cron:* (poller ticks) and health:ops:* (pipeline/Worker ops
+    // reports, ops.js) share the prefix but have their own blocks.
     const list = await env.CACHE.list({ prefix: 'health:' });
-    const records = await Promise.all(
-      list.keys.map(k => kvGet(env, k.name))
-    );
+    const newsKeys = list.keys.map(k => k.name)
+      .filter(n => !n.startsWith('health:cron:') && !n.startsWith('health:ops:'));
+    const [records, cron, ops, opsSubs] = await Promise.all([
+      Promise.all(newsKeys.map(n => kvGet(env, n))),
+      readCronHealth(env),
+      readOpsHealth(env),
+      kvGet(env, OPS_SUBS_KEY),
+    ]);
     const sources = records.filter(Boolean).sort((a, b) => a.key.localeCompare(b.key));
-    return json({ sources, checkedAt: new Date().toISOString() });
+    // The ops subscriber count only -- never the subscriptions themselves.
+    return json({ sources, cron, ops, opsSubscribers: (opsSubs || []).length, checkedAt: new Date().toISOString() });
+  }
+
+  // Owner ops alerts: /ops/notify (POLL_SECRET), /ops/subscribe and
+  // /ops/unsubscribe (owner session). See ops.js.
+  if (url.pathname.startsWith('/ops/')) {
+    const res = await handleOps(request, env, url);
+    if (res) return res;
+    return errorJson(404, { error: 'Not found' });
   }
 
   // Route PWHL endpoints
@@ -528,19 +545,33 @@ export async function handleRequest(request, env, ctx) {
   return handleNHL(request, env, ctx, url);
 }
 
-export default {
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(Promise.all([
-      poll(env, ctx),
-      pollPWHL(env).catch(e => console.error('PWHL poll error:', e.message)),
-      pollAHL(env).catch(e => console.error('AHL poll error:', e.message)),
-      pollECHL(env).catch(e => console.error('ECHL poll error:', e.message)),
+// One cron tick. Each league's poll is tracked on its own (trackCron
+// never throws, so an NHL API error can't skip the other leagues -- audit
+// 2026-10-06 Worker F4), the self-alert runs once the polls are done, and
+// the bell's alert log is flushed whatever happened.
+export async function runScheduled(env, ctx) {
+  try {
+    const [nhl, pwhl, ahl, echl] = await Promise.all([
+      trackCron(env, 'nhl', () => poll(env, ctx)),
+      trackCron(env, 'pwhl', () => pollPWHL(env)),
+      trackCron(env, 'ahl', () => pollAHL(env)),
+      trackCron(env, 'echl', () => pollECHL(env)),
       refreshPPUnits(env)
         .then(map => console.log(`PP units scheduled: ${Object.keys(map).length} teams`))
         .catch(e => console.error('PP units scheduled error:', e.message)),
       refreshSeasonsCache(env)
         .catch(e => console.error('Season cache refresh error:', e.message)),
-    ]).then(() => flushAlertLog(env)));
+    ]);
+    await checkCronHealth(env, { nhl, pwhl, ahl, echl })
+      .catch(e => console.error('Cron health check error:', e.message));
+  } finally {
+    await flushAlertLog(env).catch(e => console.error('Alert log flush error:', e.message));
+  }
+}
+
+export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runScheduled(env, ctx));
   },
   async fetch(request, env, ctx) {
     return handleRequest(request, env, ctx);

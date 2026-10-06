@@ -6,9 +6,10 @@
  */
 
 import { penaltyText, penaltyDescription } from './penaltyText.js';
-import { kvGet, kvPut, json, finalLabel, endedInSuffix, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
+import { kvGet, kvPut, json, nhlSeasonEnd, finalLabel, endedInSuffix, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
+import { readCronHealth, readOpsHealth } from './ops.js';
 import { resolveNHLSeason, resolvePWHLSeason, resolveAHLSeason, getAllAHLSeasons } from './seasons.js';
 import { buildCallupWatch, nameKey } from './callupWatch.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
@@ -2188,20 +2189,9 @@ async function pushLiveActivities(env, gameId, state, { end = false } = {}) {
 
 // ── Main poll (scheduled every 60s) ────────────────────────
 
-// Derives a July 1 cutoff from the resolved season's END year (e.g.
-// '20252026' → July 1, 2026), replacing what used to be an identical
-// hardcoded Date literal copy-pasted into all 32 TEAM_CONFIGS entries.
-// July 1 is a deliberately generous buffer past the latest realistic
-// Cup Final date — this only needs to be "safely after the season can
-// possibly still be running," not exact to the day.
-function seasonEndFor(seasonId) {
-  const endYear = parseInt(String(seasonId).slice(4), 10) || (new Date().getFullYear() + 1);
-  return new Date(`${endYear}-07-01`);
-}
-
 export async function poll(env, _ctx) {
   const season = await resolveNHLSeason(env);
-  if (new Date().getTime() > seasonEndFor(season).getTime()) { console.log('Season over'); return; }
+  if (Date.now() > nhlSeasonEnd(season).getTime()) { console.log('Season over'); return; }
 
   // 1. Schedule — still just this app's own default team specifically.
   // Pre-warms its cache; every other team's schedule is fetched on-demand
@@ -3649,12 +3639,15 @@ Only reference the two teams named above and the numbers given -- no player name
     const liveId   = await kvGet(env, 'live:gameId');
     const liveIds  = await kvGet(env, 'live:gameIds');
     const subs     = (await kvGet(env, 'push:subs')) || [];
+    const [cron, ops] = await Promise.all([readCronHealth(env), readOpsHealth(env)]);
     return json({
       ok: true,
       liveGameId:  liveId,        // this app's own team's live game, if any (back-compat)
       liveGameIds: liveIds || [], // every live NHL game right now, any team
       subscribers: subs.length,
       timestamp:   new Date().toISOString(),
+      cron, // per league: { lastPollAt, lastOkAt, lastError } (ops.js trackCron)
+      ops,  // per source: the latest /ops/notify report
     });
   }
 
