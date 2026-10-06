@@ -21,7 +21,7 @@ import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_IDS } from './ahl.js';
 import { handleECHL, ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS, fetchECHLNews, pollECHL } from './echl.js';
-import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog, sbParam, secretMatches, withParamErrors } from './shared.js';
+import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog, sbParam, secretMatches, withParamErrors, withHttpCache } from './shared.js';
 import { handleOps, trackCron, checkCronHealth, readCronHealth, readOpsHealth, OPS_SUBS_KEY } from './ops.js';
 import { maybeDispatchWorkflows } from './dispatch.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
@@ -84,8 +84,9 @@ async function comparisonSeasons(env, lg) {
   return { activeTeamCount, seasons };
 }
 
-// A bad query param anywhere (shared.js's sbParam()) is a 400.
-export const handleRequest = withParamErrors(routeRequest);
+// A bad query param anywhere (shared.js's sbParam()) is a 400. Every
+// response then gets its caching headers (shared.js's withHttpCache()).
+export const handleRequest = withHttpCache(withParamErrors(routeRequest));
 
 async function routeRequest(request, env, ctx) {
   const url = new URL(request.url);
@@ -138,7 +139,7 @@ async function routeRequest(request, env, ctx) {
   // See seasons.js for resolution + fallback logic.
   if (url.pathname === '/config/seasons') {
     const config = await getSeasonsConfig(env);
-    return json(config);
+    return json(config, { maxAge: 3600 }); // the resolvers' KV cache is 1-6 hr
   }
 
   // id -> season_type map for every PWHL season HockeyTech's bootstrap
@@ -155,7 +156,7 @@ async function routeRequest(request, env, ctx) {
         { status: 502, headers: corsHeaders() }
       );
     }
-    return json(types);
+    return json(types, { maxAge: 3600 }); // bootstrap KV cache: 6 hr
   }
 
   // Every AHL/ECHL season HockeyTech's feed knows about -- id, name, type,
@@ -168,7 +169,7 @@ async function routeRequest(request, env, ctx) {
     const isAhl = url.pathname === '/config/seasons/ahl-seasons';
     const seasons = isAhl ? await getAllAHLSeasons(env) : await getAllECHLSeasons(env);
     if (!seasons) return errorJson(502, { error: `${isAhl ? 'AHL' : 'ECHL'} seasons unavailable` });
-    return json(seasons);
+    return json(seasons, { maxAge: 3600 }); // seasons-feed KV cache: 6 hr
   }
 
   // Season-by-season "is this comparable yet" signal for the
@@ -231,7 +232,7 @@ async function routeRequest(request, env, ctx) {
   if (url.pathname === '/players-search-index') {
     const kvKey  = 'players-search-index';
     const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    if (cached) return json(cached, { maxAge: 21600 });
 
     const sbH = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
 
@@ -344,7 +345,7 @@ async function routeRequest(request, env, ctx) {
 
     const index = [...nhlIndex, ...pwhlIndex, ...ahlIndex, ...echlIndex];
     await kvPut(env, kvKey, index, 21600); // 6hr
-    return json(index);
+    return json(index, { maxAge: 21600 });
   }
 
   // GET /trivia/today?sport=nhl&team=CAR (team optional — omit for the
@@ -380,8 +381,9 @@ async function routeRequest(request, env, ctx) {
     // v2: entries cached under the old key could hold empty easy/medium
     // for a whole day (see the TTL below); a new key leaves them behind.
     const kvKey  = `trivia:v2:${today}:${sport}:${team || 'ALL'}:${locale}`;
+    // Browser max-age: the short TTL below, whichever one KV holds.
     const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    if (cached) return json(cached, { maxAge: 300 });
 
     // Every tier takes the most recent row on or before today, not an
     // exact-date match.
@@ -420,7 +422,7 @@ async function routeRequest(request, env, ctx) {
     const complete = published(easy) && (!team || published(medium));
     const ttl = complete ? 24 * 3600 : 300;
     await kvPut(env, kvKey, result, ttl);
-    return json(result);
+    return json(result, { maxAge: 300 });
   }
 
   // GET /news/latest?sport=nhl&team=CAR | ?sport=pwhl|ahl — cheap "is there
@@ -444,7 +446,7 @@ async function routeRequest(request, env, ctx) {
       const cached = await kvGet(env, kvKey);
       if (!cached) {
         ctx.waitUntil(fetchFn(env).catch(e => console.warn(`${sport.toUpperCase()} news bg fetch:`, e.message)));
-        return json({ latestId: null, publishedAt: null });
+        return json({ latestId: null, publishedAt: null }, { maxAge: 0 }); // filled in the background
       }
       const latest = cached[0] || null;
       return json({ latestId: latest?.link || latest?.title || null, publishedAt: latest?.publishedAt || null });
@@ -455,7 +457,7 @@ async function routeRequest(request, env, ctx) {
     const cached = await kvGet(env, `news:${team}`);
     if (!cached) {
       ctx.waitUntil(fetchNews(env, team).catch(e => console.warn(`News bg fetch ${team}:`, e.message)));
-      return json({ latestId: null, publishedAt: null });
+      return json({ latestId: null, publishedAt: null }, { maxAge: 0 }); // filled in the background
     }
     const latest = cached[0] || null;
     return json({ latestId: latest?.link || latest?.title || null, publishedAt: latest?.publishedAt || null });
@@ -482,7 +484,7 @@ async function routeRequest(request, env, ctx) {
     const season = isPwhl ? (await resolvePWHLSeason(env)).seasonId : await resolveNHLSeason(env);
     const kvKey  = `milestones:latest:${sport}:${season}`;
     const cached = await kvGet(env, kvKey);
-    if (cached) return json(cached);
+    if (cached) return json(cached, { maxAge: 3600 });
 
     const r = await fetch(
       `${SB_URL}/rest/v1/milestones?select=id,game_date&order=game_date.desc,id.desc&limit=1&is_pwhl=eq.${isPwhl}&season=eq.${season}`,
@@ -492,7 +494,7 @@ async function routeRequest(request, env, ctx) {
     const rows = await r.json();
     const result = { latestId: rows[0]?.id ?? null, gameDate: rows[0]?.game_date ?? null };
     await kvPut(env, kvKey, result, 3600); // 1hr — matches /milestones' own TTL
-    return json(result);
+    return json(result, { maxAge: 3600 });
   }
 
   // GET /admin/health — news-feed source health, gated to the app owner.

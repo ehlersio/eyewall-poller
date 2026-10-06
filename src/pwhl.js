@@ -1753,9 +1753,9 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
   // GET /pwhl/news
   if (url.pathname === '/pwhl/news' && request.method === 'GET') {
     const cached = await kvGet(env, 'pwhl:news');
-    if (cached) return json(cached);
+    if (cached) return json(cached, { maxAge: 1800 });
     ctx.waitUntil(fetchPWHLNews(env).catch(e => console.warn('PWHL news bg fetch:', e.message)));
-    return json([]);
+    return json([], { maxAge: 0 }); // filled in the background: ask again soon
   }
 
   // ── PWHL Live endpoints ───────────────────────────────────────────────────
@@ -2422,7 +2422,7 @@ Write in plain text, no markdown. 1-2 sentences max.`;
     const kvKey = `pwhl:prediction:elo:${gameId}${localeKeySuffix(locale)}`;
     if (!forceRegen) {
       const cached = await kvGet(env, kvKey);
-      if (cached) return json(cached);
+      if (cached) return json(cached, { maxAge: 1800 });
     }
 
     // Rate-limited only on a cache miss: a cached answer costs no AI call,
@@ -2451,7 +2451,7 @@ Write in plain text, no markdown. 1-2 sentences max.`;
     // inputs here (streaks, Corsi) can shift same-day as games finish, and
     // Session 51 explicitly rejected reusing the 24hr convention for this.
     await kvPut(env, kvKey, result, 1800);
-    return json(result);
+    return json(result, { maxAge: 1800 });
   }
 
   return new Response('EyeWall Poller', { status: 200 });

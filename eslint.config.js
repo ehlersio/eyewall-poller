@@ -11,6 +11,7 @@ export default [
         fetch:    'readonly',
         Request:  'readonly',
         Response: 'readonly',
+        Headers:  'readonly',
         URL:      'readonly',
         console:  'readonly',
         crypto:   'readonly',

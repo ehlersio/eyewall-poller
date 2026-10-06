@@ -22,6 +22,21 @@ Wrangler bundles all modules on deploy. The scheduled trigger (`* * * * *`) runs
 
 Bindings: `CACHE` (KV), `AI_ROUTE_LIMITER` (Rate Limit — guards the 4 unauthenticated AI-calling routes from public-cost abuse). AI generation (all narrative/scouting endpoints) went through a `[ai]` Workers AI binding until 2026-08; it's now a plain `fetch()` to OpenRouter (`OPENROUTER_API_KEY` secret) instead — see [Model provider](#model-provider-openrouter) below.
 
+### HTTP caching (2026-10)
+
+Every `GET` JSON response carries `Cache-Control: public, max-age=N` and a weak `ETag` (a SHA-1 of the body). A request whose `If-None-Match` matches gets a bodiless **304**, so the browser re-downloads a response only when it changed. `shared.js`'s `withHttpCache()` wraps `handleRequest` and sets these centrally; routes only say how long (`json(val, { maxAge })`, which `cachedJson()` fills in from its KV TTL).
+
+| Responses | `Cache-Control` |
+|---|---|
+| A KV-cached route (`cachedJson()`, or a hand-rolled `kvGet`/`kvPut` passing `maxAge`) | `max-age` = the route's KV TTL (300 s, 1800 s, 3600 s; data-dependent TTLs such as `/{ahl,echl}/shots`' 300/3600 follow the data), capped at **3600 s** (`MAX_MAX_AGE`): a KV hit is served with the full TTL even when the entry expires a minute later, so a longer max-age could leave a device a day behind a `/cache/bust` or a nightly run |
+| Live-game routes (`LIVE_PATHS`): `/nhl/today`, `/{pwhl,ahl,echl}/today`, `/{pwhl,ahl,echl}/live/:id`, `/{ahl,echl}/schedule` (live scores laid over it), `/cache/pbp:*`, `/cache/boxscore:*`, `/cache/schedule:*`; plus `/schedule` for the current/next season (re-stamped with live states every poll) | `max-age=10` (`LIVE_MAX_AGE`), whatever the KV TTL: the app polls a live game every 10 s |
+| A `GET` with no KV cache of its own (`/health`, `/cache/standings`, `/news/latest`, a build that is deliberately not cached such as an empty `/scorecard`) | `max-age=30` (`DEFAULT_MAX_AGE`) |
+| An empty answer whose cache is being filled in the background (`/news`, `/pwhl/news`, `/{ahl,echl}/news`, `/news/latest`, a failed `/schedule` fetch) | `max-age=0` |
+| `/alerts/recent` | its own `public, max-age=30`, unchanged |
+| `POST`/`DELETE`, any 4xx/5xx, a request with `secret=` or `force=`, or with an `Authorization` header (`/admin/health`) | `no-store`, no `ETag` |
+
+The CORS preflight (`OPTIONS`) is untouched. Cloudflare's edge does not cache Worker responses, so these headers only reach the browser (and any proxy in between).
+
 ## Live Season Resolution
 
 Added 2026-07, replacing what used to be a yearly manual flip of `NHL_SEASON`/`PWHL_CURRENT_SEASON` across this repo, the frontend, and the pipeline. `seasons.js` is the single source of truth for "what season is it right now" — everything else (this repo's own `nhl.js`/`pwhl.js`, the frontend's `teamConfig.js`/`pwhlConfig.js`, the pipeline's `season_lookup.py`) reads from it rather than resolving independently.
@@ -154,6 +169,7 @@ Test files:
 - `src/__tests__/hockeytech-traded-and-today.test.js` (added 2026-10) — traded AHL players (Graeme Clarke, Laurent Brossoit, 2025-26) combined in `/ahl/league-players` and `/ahl/player/landing` from both the per-team and league-wide row shapes, and `/echl/today` finding the 2026 preseason and the 2026-27 opener from the real scorebar before `echl_game_log` has them.
 - `src/__tests__/pwhl-poll.test.js` (added 2026-09) — `pollPWHL`'s game-over push, same two cases as the AHL/ECHL poll tests above, plus (2026-10) the slate read covering every schedule season id (a preseason game in October gets its push; the poll used to filter on the current regular season only, behind a Nov–Jun month gate). Until 2026-09 that push never fired for any HockeyTech league, because the poll only handed live games to the per-game handler.
 - `src/__tests__/apns-push.test.js` (added 2026-09, native iOS push) — `subId()`'s token-over-endpoint precedence, `sendPush()`'s platform dispatch, and `sendAPNsPush()` itself: real ES256 JWT signing + the actual APNs request shape (host selection by `APNS_ENV`, `apns-topic`/`apns-push-type` headers, `aps.alert` + merged custom data body), the config-missing guard, 410→`'expired'` mapping, and the KV-cached-JWT reuse path. Uses a disposable P-256 keypair generated fresh per run (Node's `crypto.generateKeyPairSync`) — not a real APNs credential. Real end-to-end delivery is still unverified against Apple's actual push gateway pending `APNS_KEY_ID`/`APNS_TEAM_ID`/`APNS_AUTH_KEY` (see [Secrets](#secrets)) and a physical-device test build.
+- `src/__tests__/http-cache.test.js` (added 2026-10) — `withHttpCache()`: `max-age` from a KV-backed route's TTL (and the one-hour cap), `/nhl/today` and a live `/cache/` read at `LIVE_MAX_AGE`, the 30 s default, `/alerts/recent`'s own header, a 304 on a matching `If-None-Match` (weak comparison), and `no-store` on a POST, 4xx/5xx and owner requests.
 - `src/__tests__/penaltyText.test.js` (added 2026-10) — `penaltyText.js`, the readable penalty text in the power-play push and the Live Activity's last event (same wording as eyewall-analytics' `utils/penaltyText.js`): a bench minor reads "Bench minor · Delay of game (unsuccessful challenge) · 2 min · served by Taylor Hall" rather than naming the player serving it as the offender, a name the roster lacks is left out, and an unknown `descKey` reads as its own words. Fixtures are the real penalty plays of game 2025021237 (`src/__tests__/fixtures/`).
 
 Every NHL, PWHL, AHL and ECHL route is now covered by a characterization suite above. A new route should get a row in its league's suite (`ROUTES`), then `npx vitest run -u` for that file to record its snapshots.
