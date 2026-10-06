@@ -295,6 +295,26 @@ async function sbRowsOrThrow(path) {
   return r.json();
 }
 
+// Every row of a Supabase read, a 1,000-row page at a time -- its per-
+// request cap, which `limit=` cannot raise: /goalie-shots asked for 2,000
+// and served exactly 1,000 of a starter's 1,317 shots, silently and cached
+// for an hour (audit 2026-10-06, Worker F2). `path` needs a stable order=
+// so the pages don't overlap. Throws like sbRowsOrThrow(); the same loop
+// as hockeytech.js's sbAllRows() and /nhl/shots below.
+async function sbAllRowsOrThrow(path) {
+  const PAGE = 1000;
+  const all = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const r = await fetch(`${SB_URL}/rest/v1/${path}`, {
+      headers: { ...sbHeaders(), Range: `${offset}-${offset + PAGE - 1}`, 'Range-Unit': 'items', Prefer: 'count=none' },
+    });
+    if (!r.ok) throw new Error(`Supabase ${r.status}: ${path}`);
+    const rows = await r.json();
+    all.push(...rows);
+    if (rows.length < PAGE) return all;
+  }
+}
+
 // Prediction win-probability model (2026-09: Elo, see below) — both
 // /prediction/analyze branches (in-season and true-preseason) used to run
 // a hand-tuned scorecard (fixed weights on points/GF-GA/PP%/possession/
@@ -2615,10 +2635,12 @@ export async function handleNHL(request, env, ctx, url) {
         'games_played,war,rapm,rapm_toi_min,ev_off_pct,xgf_per60,xga_per60,hdca_per60,' +
         'goals_per60,a1_per60,pp_icetime,pk_icetime,game_score';
 
+      // Paged: 2025-26 has 939 skaters with WAR, a season or two from the
+      // 1,000-row cap that would silently drop the rest from the Stats tab.
       async function fetchAnalytics(forSeason) {
         const [rows, poRows] = await Promise.all([
-          sbRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.2&war=not.is.null&select=${ANA_COLS}&limit=2000`),
-          sbRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.3&select=${PO_COLS}&limit=2000`).catch(() => []),
+          sbAllRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.2&war=not.is.null&select=${ANA_COLS}&order=player_id.asc`),
+          sbAllRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.3&select=${PO_COLS}&order=player_id.asc`).catch(() => []),
         ]);
         return { rows, poRows };
       }
@@ -2688,10 +2710,10 @@ export async function handleNHL(request, env, ctx, url) {
       // player only shoots for one team per row.
       let rows;
       try {
-        rows = await sbRowsOrThrow(
+        rows = await sbAllRowsOrThrow(
           `shot_events?player_id=eq.${playerId}&season=eq.${season}` +
           `&game_type=eq.${gameType}&team=eq.${team}` +
-          `&select=x,y,event_type,period,time_in_period,shot_type&limit=2000`
+          `&select=x,y,event_type,period,time_in_period,shot_type&order=id.asc`
         );
       } catch (e) {
         return errorJson(502, { error: e.message });
@@ -2780,9 +2802,10 @@ export async function handleNHL(request, env, ctx, url) {
     return cachedJson(env, `nhl:goalie-shots:${goalieId}:${season}:${gameType}`, 3600, async () => {
       let rows;
       try {
-        rows = await sbRowsOrThrow(
+        // Paged: a starter faces 1,300+ shots a season, past the 1,000-row cap.
+        rows = await sbAllRowsOrThrow(
           `shot_events?goalie_id=eq.${goalieId}&season=eq.${season}&game_type=eq.${gameType}` +
-          `&select=x,y,event_type,period,time_in_period,shot_type,team&limit=2000`
+          `&select=x,y,event_type,period,time_in_period,shot_type,team&order=id.asc`
         );
       } catch (e) {
         return errorJson(502, { error: e.message });
