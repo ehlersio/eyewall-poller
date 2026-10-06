@@ -230,24 +230,28 @@ export async function fetchPWHLNews(env) {
 // Checks for live PWHL games, fetches PBP, detects events,
 // and sends push notifications to subscribers.
 
-// Periods when PWHL season is active (roughly Nov–Jun)
-function pwhlSeasonActive() {
-  const now   = new Date();
-  const month = now.getUTCMonth() + 1; // 1-12
-  return month >= 11 || month <= 6;
-}
-
 // game_log rows with live status/scores from HockeyTech's scorebar -- see
 // fetchScorebar() in shared.js for why game_log alone lags.
 const PWHL_SCOREBAR = { client: 'pwhl', base: HT_BASE, key: HT_KEY, siteId: '0', leagueId: '', headers: HT_HDR };
 const withLive = (env, rows, opts) => withLiveScorebar(env, PWHL_SCOREBAR, rows, opts);
 
+// No calendar gate: a Nov-Jun month check used to skip the poll, which
+// would have hidden the 2026-27 preseason (Nov 22-30 is inside it, but an
+// October preseason would not be) on top of the season-id filter below.
+// Out of season the only cost is one empty game_log read a minute.
 export async function pollPWHL(env) {
-  if (!pwhlSeasonActive()) { console.log('[PWHL poll] Off-season — skipping'); return; }
   if (!env.VAPID_PRIVATE_KEY) return;
 
   try {
-    const { seasonId: pwhlSeason } = await resolvePWHLSeason(env);
+    const current = await resolvePWHLSeason(env);
+    // Every season id a game today could be logged under: the current
+    // regular season, the bootstrap's own current id (a playoffs or
+    // preseason id once HockeyTech flips to it), and the next season and
+    // its preseason -- the same set /pwhl/today reads. resolvePWHLSeason()
+    // deliberately prefers the most recent REGULAR season, so filtering on
+    // it alone meant no push could ever fire for a playoff or preseason
+    // game (audit 2026-10-06, PWHL F1).
+    const seasonIds = await getPWHLScheduleSeasonIds(env, current);
 
     // Get today's date in Eastern time
     const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -257,7 +261,7 @@ export async function pollPWHL(env) {
     // games max) -- same shape as the AHL/ECHL poll in hockeytech.js,
     // which actually hit the old limit=10.
     const logged = await sbRowsOr(
-      `${SB_URL}/rest/v1/pwhl_game_log?game_date=eq.${todayStr}&season_id=eq.${pwhlSeason}` +
+      `${SB_URL}/rest/v1/pwhl_game_log?game_date=eq.${todayStr}&season_id=in.(${seasonIds.join(',')})` +
       `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code` +
       `&order=game_id.asc&limit=50`,
       []

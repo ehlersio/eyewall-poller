@@ -17,6 +17,8 @@ vi.mock('../seasons.js', async (importOriginal) => {
   return {
     ...actual,
     resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
+    // current regular season 8, 2026-27 preseason 10, next regular season 11
+    getPWHLScheduleSeasonIds: vi.fn().mockResolvedValue([8, 10, 11]),
   }
 })
 
@@ -73,6 +75,36 @@ describe('pollPWHL slate query', () => {
     const url = globalThis.fetch.mock.calls.map(([u]) => String(u)).find(u => u.includes('/rest/v1/pwhl_game_log?game_date='))
     expect(url).toContain('&order=game_id.asc')
     expect(url).not.toContain('limit=10')
+  })
+})
+
+// Regression (audit 2026-10-06, PWHL F1): the slate read filtered on
+// resolvePWHLSeason()'s id alone -- by design the most recent REGULAR
+// season -- so a game logged under a playoffs or preseason season_id was
+// never polled and nobody got a push for it. A Nov-Jun month gate on top
+// would have skipped an October preseason outright.
+describe('pollPWHL season ids', () => {
+  it('a preseason game logged under the preseason id, in October, is polled and gets its puck-drop push', async () => {
+    vi.setSystemTime(new Date('2026-10-25T23:30:00Z'))
+    const env = makeEnv({ VAPID_PRIVATE_KEY: 'k', CACHE: makeFakeCache({ 'push:subs': subs }) })
+    const preseasonRow = gameRow({ season_id: 10 })
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input)
+      if (url.includes('/rest/v1/pwhl_game_log')) {
+        // Only the schedule-wide filter finds the row; season_id=eq.8 would not.
+        return { ok: true, json: async () => (url.includes('season_id=in.(8,10,11)') ? [preseasonRow] : []) }
+      }
+      if (url.includes('view=scorebar')) return { ok: true, json: async () => ({ SiteKit: { Scorebar: [] } }) }
+      if (url.includes('gameCenterPlayByPlay')) return { ok: true, text: async () => `(${JSON.stringify(PBP)})` }
+      return { ok: true, json: async () => ({}), text: async () => '({})' }
+    })
+
+    await pollPWHL(env)
+
+    const slateUrl = globalThis.fetch.mock.calls.map(([u]) => String(u)).find(u => u.includes('/rest/v1/pwhl_game_log'))
+    expect(slateUrl).toContain('game_date=eq.2026-10-25&season_id=in.(8,10,11)')
+    expect(pbpFetched()).toBe(true)
+    expect(sent().map(p => p.tag)).toEqual([`pwhl-start-${GAME_ID}`, `pwhl-start-${GAME_ID}`])
   })
 })
 
