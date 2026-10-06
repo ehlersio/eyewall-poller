@@ -6,7 +6,7 @@
  */
 
 import { penaltyText, penaltyDescription } from './penaltyText.js';
-import { kvGet, kvPut, json, nhlSeasonEnd, etDateString, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
+import { kvGet, kvPut, json, nhlSeasonEnd, etDateString, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
 import { readCronHealth, readOpsHealth } from './ops.js';
@@ -2441,7 +2441,10 @@ export async function playerNames(ids) {
   return names;
 }
 
-export async function handleNHL(request, env, ctx, url) {
+// A bad query param anywhere below is a 400 (shared.js's sbParam()).
+export const handleNHL = withParamErrors(handleNHLRoutes);
+
+async function handleNHLRoutes(request, env, ctx, url) {
 
   // One goal's player and puck tracking for the app's goal replay
   // (Video | Tracking) -- see goalReplay.js.
@@ -2458,7 +2461,7 @@ export async function handleNHL(request, env, ctx, url) {
   // Manual news refresh (protected)
   if (url.pathname === '/news/refresh') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     const tc    = await getTeamConfig(request, env);
     const items = await fetchNews(env, tc.abbr);
     return json({ ok: true, count: items.length, team: tc.abbr });
@@ -2506,7 +2509,7 @@ export async function handleNHL(request, env, ctx, url) {
   // keep the short one (see putCurrentSchedule / isPastSeason).
   if (url.pathname === '/schedule' && request.method === 'GET') {
     const tc     = await getTeamConfig(request, env);
-    const season = url.searchParams.get('season') || String(tc.season);
+    const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(tc.season);
     const isPast = isPastSeason(season, tc.season);
     const cached = await kvGet(env, scheduleKey(tc.abbr, season));
     if (cached) return json(cached);
@@ -2601,7 +2604,7 @@ export async function handleNHL(request, env, ctx, url) {
   // ══════════════════════════════════════════════════════════════════════
 
   if (url.pathname === '/player-analytics') {
-    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
     return cachedJson(env, `nhl:player-analytics:${season}`, 3600, async () => {
       const ANA_COLS = 'player_id,team,war,rapm,rapm_toi_min,ev_off_pct,ev_def_inv,pp_xgf60,pk_xga60_inv,pp_icetime,pk_icetime,' +
         'finishing,goals_per60,a1_per60,xgf_per60,penalties_per60,competition,teammates,game_score,' +
@@ -2707,10 +2710,10 @@ export async function handleNHL(request, env, ctx, url) {
   // docs/game_type_column.sql): regular season unless gameType=3. Preseason
   // is never offered. Until 2026-09 they read all three together.
   if (url.pathname === '/player-shots') {
-    const playerId = url.searchParams.get('playerId');
-    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const team     = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-    const gameType = url.searchParams.get('gameType') || '2';
+    const playerId = sbParam(url.searchParams.get('playerId'), { type: 'int', name: 'playerId' });
+    const season   = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
+    const team     = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const gameType = sbParam(url.searchParams.get('gameType'), { type: 'int', name: 'gameType' }) || '2';
     if (!playerId) return badRequest('playerId required');
     if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
 
@@ -2755,8 +2758,8 @@ export async function handleNHL(request, env, ctx, url) {
   // live NHL API here instead of Supabase's game_log (the Worker doesn't
   // otherwise read game_log).
   if (url.pathname === '/nhl/shots') {
-    const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const team   = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
     return cachedJson(env, `nhl:shots:v3:${team}:${season}`, 3600, async () => {
       let gameIds;
       try {
@@ -2808,9 +2811,9 @@ export async function handleNHL(request, env, ctx, url) {
   }
 
   if (url.pathname === '/goalie-shots') {
-    const goalieId = url.searchParams.get('goalieId');
-    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const gameType = url.searchParams.get('gameType') || '2';
+    const goalieId = sbParam(url.searchParams.get('goalieId'), { type: 'int', name: 'goalieId' });
+    const season   = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
+    const gameType = sbParam(url.searchParams.get('gameType'), { type: 'int', name: 'gameType' }) || '2';
     if (!goalieId) return badRequest('goalieId required');
     if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
 
@@ -2831,7 +2834,7 @@ export async function handleNHL(request, env, ctx, url) {
   }
 
   if (url.pathname === '/goalie-analytics') {
-    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
     return cachedJson(env, `nhl:goalie-analytics:${season}`, 3600, async () => {
       const GOALIE_COLS = 'player_id,team,games_played,gsax,gsax_per60,qs_pct,qs,' +
         'ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,' +
@@ -2903,9 +2906,9 @@ export async function handleNHL(request, env, ctx, url) {
   // season). A failed read is a 502, not cached, rather than an empty list
   // cached for an hour.
   if (url.pathname === '/team-lines') {
-    const team     = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const gameType = url.searchParams.get('gameType') || '2';
+    const team     = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const season   = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
+    const gameType = sbParam(url.searchParams.get('gameType'), { type: 'int', name: 'gameType' }) || '2';
     if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
     return cachedJson(env, `nhl:team-lines:${team}:${season}:${gameType}`, 3600, async () => {
       try {
@@ -2935,7 +2938,7 @@ export async function handleNHL(request, env, ctx, url) {
   // per-entry `details` object (eyewall-pipeline's
   // docs/session_injury_details_history.sql) -- any of the four can be null.
   if (url.pathname === '/injuries') {
-    const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const team   = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || DEFAULT_TEAM_ABBR;
     return cachedJson(env, `nhl:injuries:${team}`, 3600, async () => {
       let rows;
       try {
@@ -2963,8 +2966,8 @@ export async function handleNHL(request, env, ctx, url) {
   // this AHL season and the last regular one, and a year of this team's
   // nhl_transactions. 1hr KV, like /injuries.
   if (url.pathname === '/nhl/callup-watch') {
-    const team = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-    const ahlTeamId = parseInt(url.searchParams.get('ahlTeamId') || '0', 10);
+    const team = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const ahlTeamId = parseInt(sbParam(url.searchParams.get('ahlTeamId'), { type: 'int', name: 'ahlTeamId' }) || '0', 10);
     if (!/^[A-Z]{2,3}$/.test(team)) return badRequest('invalid team');
     if (!ahlTeamId) return badRequest('ahlTeamId param required');
 
@@ -3072,7 +3075,7 @@ export async function handleNHL(request, env, ctx, url) {
   // before it's interpolated into the PostgREST `or=` filter string.
   if (url.pathname === '/transactions') {
     const scope = url.searchParams.get('scope') === 'league' ? 'league' : 'team';
-    const team  = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const team  = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || DEFAULT_TEAM_ABBR;
     if (scope === 'team' && !/^[A-Z]{2,3}$/.test(team)) {
       return badRequest('invalid team');
     }
@@ -3107,7 +3110,7 @@ export async function handleNHL(request, env, ctx, url) {
   // interpolated into the PostgREST filter). 1hr KV; neither a failed read
   // (`unavailable: true`) nor a not-found is cached.
   if (url.pathname === '/trades/tree') {
-    const tx = url.searchParams.get('tx') || '';
+    const tx = sbParam(url.searchParams.get('tx'), { type: 'id', name: 'tx' }) || '';
     if (!/^\d{1,12}$/.test(tx)) {
       return badRequest('invalid tx');
     }
@@ -3136,9 +3139,9 @@ export async function handleNHL(request, env, ctx, url) {
   // before being interpolated into the PostgREST query. 1hr KV; a failed
   // read returns an empty summary and is NOT cached.
   if (url.pathname === '/scratches') {
-    const team        = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
-    const seasonParam = url.searchParams.get('season');
-    const gameType    = url.searchParams.get('gameType') || '2';
+    const team        = (sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' }) || DEFAULT_TEAM_ABBR).toUpperCase();
+    const seasonParam = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
+    const gameType    = sbParam(url.searchParams.get('gameType'), { type: 'int', name: 'gameType' }) || '2';
     if (!/^[A-Z]{2,3}$/.test(team) || (seasonParam && !/^\d{8}$/.test(seasonParam)) || !['2', '3'].includes(gameType)) {
       return badRequest('invalid team, season, or gameType');
     }
@@ -3172,7 +3175,7 @@ export async function handleNHL(request, env, ctx, url) {
   }
 
   if (url.pathname === '/game-xg') {
-    const gameId = url.searchParams.get('gameId');
+    const gameId = sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' });
     if (!gameId) return badRequest('gameId required');
 
     return cachedJson(env, `nhl:game-xg:${gameId}`, 1800, async () => {
@@ -3193,10 +3196,10 @@ export async function handleNHL(request, env, ctx, url) {
   // omitted means every type, as before. It used to be ignored, so
   // ?gameType=2 still returned preseason rows (Phase 0 follow-up).
   if (url.pathname === '/game-log') {
-    const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const limit  = url.searchParams.get('limit'); // optional passthrough — omitted means unlimited
-    const gameType = url.searchParams.get('gameType');
+    const team   = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
+    const limit  = sbParam(url.searchParams.get('limit'), { type: 'int', name: 'limit' }); // optional passthrough — omitted means unlimited
+    const gameType = sbParam(url.searchParams.get('gameType'), { type: 'int', name: 'gameType' });
     if (gameType && !['1', '2', '3'].includes(gameType)) return badRequest('invalid gameType');
     return cachedJson(env, `nhl:game-log:${team}:${season}:${gameType || 'all'}:${limit || 'all'}`, 3600, async () => {
       let rows;
@@ -3217,9 +3220,9 @@ export async function handleNHL(request, env, ctx, url) {
 
   // Regular season unless gameType=3 -- see /player-shots above.
   if (url.pathname === '/xg-trend') {
-    const team     = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const gameType = url.searchParams.get('gameType') || '2';
+    const team     = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const season   = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
+    const gameType = sbParam(url.searchParams.get('gameType'), { type: 'int', name: 'gameType' }) || '2';
     if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
     return cachedJson(env, `nhl:xg-trend:${team}:${season}:${gameType}`, 3600, async () => {
       let rows;
@@ -3237,7 +3240,7 @@ export async function handleNHL(request, env, ctx, url) {
   }
 
   if (url.pathname === '/team-seasons') {
-    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
     return cachedJson(env, `nhl:team-seasons:${season}`, 3600, async () => {
       // magic_number/tragic_number/clinched/eliminated are playoff_race.py's
       // nightly forecast (Session 57). Deliberately not selecting
@@ -3289,8 +3292,8 @@ export async function handleNHL(request, env, ctx, url) {
   // gap as its own "not yet available" state rather than this route
   // guessing at placeholder zeros.
   if (url.pathname === '/team-seasons/compare') {
-    const team    = url.searchParams.get('team');
-    const seasons = (url.searchParams.get('seasons') || '').split(',').map(s => s.trim()).filter(Boolean);
+    const team    = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' });
+    const seasons = sbParamList(url.searchParams.get('seasons'), { type: 'int', name: 'seasons' });
     if (!team || seasons.length === 0) {
       return badRequest('team and seasons (comma-separated) are required');
     }
@@ -3318,8 +3321,8 @@ export async function handleNHL(request, env, ctx, url) {
   // convention as /team-seasons/compare above, not this route's job to
   // guess at.
   if (url.pathname === '/team-seasons/compare-teams') {
-    const teams  = (url.searchParams.get('teams') || '').split(',').map(s => s.trim()).filter(Boolean);
-    const season = url.searchParams.get('season');
+    const teams  = sbParamList(url.searchParams.get('teams'), { type: 'abbr', name: 'teams' });
+    const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
     if (teams.length !== 2 || !season) {
       return badRequest('teams (exactly two, comma-separated) and season are required');
     }
@@ -3358,7 +3361,7 @@ export async function handleNHL(request, env, ctx, url) {
   // (e.g. a 2026-27 expansion matchup) instead of claiming a "last 10"
   // sample that doesn't exist.
   if (url.pathname === '/team-seasons/head-to-head') {
-    const teams = (url.searchParams.get('teams') || '').split(',').map(s => s.trim()).filter(Boolean);
+    const teams = sbParamList(url.searchParams.get('teams'), { type: 'abbr', name: 'teams' });
     if (teams.length !== 2) {
       return badRequest('teams (exactly two, comma-separated) are required');
     }
@@ -3458,9 +3461,9 @@ Only reference the two teams named above and the numbers given -- no player name
   // Serves both getPowerRankingsNarrative (limit=1) and getPowerRankingsHistory
   // (limit=28) on the frontend — same table/filter/order, different limit.
   if (url.pathname === '/power-rankings') {
-    const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-    const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const limit  = Math.min(parseInt(url.searchParams.get('limit') || '28', 10) || 28, 100);
+    const team   = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
+    const limit  = Math.min(parseInt(sbParam(url.searchParams.get('limit'), { type: 'int', name: 'limit' }) || '28', 10) || 28, 100);
     return cachedJson(env, `nhl:power-rankings:${team}:${season}:${limit}`, 3600, async () => {
       let rows;
       try {
@@ -3480,7 +3483,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Serves both getGameMatchup and getGamePrediction on the frontend —
   // same table/filter/row, different text field.
   if (url.pathname === '/game-predictions') {
-    const gameId = url.searchParams.get('gameId');
+    const gameId = sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' });
     if (!gameId) return badRequest('gameId required');
     // One row per (game_id, locale) since eyewall-pipeline's
     // docs/session_locale_predictions.sql -- without the filter, limit=1
@@ -3503,8 +3506,8 @@ Only reference the two teams named above and the numbers given -- no player name
   }
 
   if (url.pathname === '/game-summary') {
-    const gameId = url.searchParams.get('gameId');
-    const team   = url.searchParams.get('team')?.toUpperCase();
+    const gameId = sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' });
+    const team   = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase();
     if (!gameId || !team) return badRequest('gameId and team required');
     // French/English localization, Track B Phase B2 -- defaults to 'en' for
     // any missing/unrecognized value rather than erroring, same posture as
@@ -3530,8 +3533,8 @@ Only reference the two teams named above and the numbers given -- no player name
   }
 
   if (url.pathname === '/player-scouting') {
-    const playerId = url.searchParams.get('playerId');
-    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const playerId = sbParam(url.searchParams.get('playerId'), { type: 'int', name: 'playerId' });
+    const season   = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
     if (!playerId) return badRequest('playerId required');
     const locale = url.searchParams.get('locale') === 'fr' ? 'fr' : 'en'; // Track B Phase B2
 
@@ -3556,8 +3559,8 @@ Only reference the two teams named above and the numbers given -- no player name
     // bulk 2000-row response: the frontend only ever needs one player's
     // blurb at a time (player popup), so a light second lookup fits with
     // less disruption than a bulk join nobody would otherwise use.
-    const playerId = url.searchParams.get('playerId');
-    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
+    const playerId = sbParam(url.searchParams.get('playerId'), { type: 'int', name: 'playerId' });
+    const season   = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
     if (!playerId) return badRequest('playerId required');
     const locale = url.searchParams.get('locale') === 'fr' ? 'fr' : 'en'; // Track B Phase B2
 
@@ -3578,9 +3581,9 @@ Only reference the two teams named above and the numbers given -- no player name
   }
 
   if (url.pathname === '/team-skaters') {
-    const team     = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
-    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const gameType = url.searchParams.get('gameType') || '2';
+    const team     = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || DEFAULT_TEAM_ABBR;
+    const season   = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
+    const gameType = sbParam(url.searchParams.get('gameType'), { type: 'int', name: 'gameType' }) || '2';
     return cachedJson(env, `nhl:team-skaters:${team}:${season}:${gameType}`, 3600, async () => {
       let rows;
       try {
@@ -3630,8 +3633,8 @@ Only reference the two teams named above and the numbers given -- no player name
   // is accepted, any past season the ticker never warms — the first
   // request for one pays a single Supabase read and caches it for 4h.
   if (url.pathname === '/special-teams') {
-    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const gameType = url.searchParams.get('gameType') || '2';
+    const season   = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
+    const gameType = sbParam(url.searchParams.get('gameType'), { type: 'int', name: 'gameType' }) || '2';
     if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
     let map = await kvGet(env, `pp_units:${season}:${gameType}`);
     if (!map) {
@@ -3839,7 +3842,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Manual poll
   if (url.pathname === '/poll') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     await poll(env, ctx);
     await flushAlertLog(env);
     return json({ ok: true, polled: new Date().toISOString() });
@@ -3848,7 +3851,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Manual social post test (protected)
   if (url.pathname === '/social/test') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     const testSummary = {
       won: true, carScore: 4, oppScore: 2, oppAbbr: 'BOS',
       isHome: true, cfPct: 58, narrative: 'The Canes controlled this one from the drop of the puck.',
@@ -3869,7 +3872,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Fires waitUntil for each team so they all compute in parallel without blocking.
   if (url.pathname === '/moneypuck/refresh/all') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     const teams = Object.keys(TEAM_CONFIGS);
     await env.CACHE.delete('moneypuck:raw'); // clear shared raw cache once
     for (const abbr of teams) {
@@ -3897,7 +3900,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // called parseAtom() on all of them.
   if (url.pathname === '/atom/ingest' && request.method === 'POST') {
     const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     let bundle;
     try {
       bundle = await request.json();
@@ -3948,7 +3951,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // GitHub Actions fetches the CSV and POSTs it here once daily.
   if (url.pathname === '/moneypuck/ingest' && request.method === 'POST') {
     const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     let csvText;
     try {
       csvText = await request.text();
@@ -3982,7 +3985,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // MoneyPuck analytics endpoint
   if (url.pathname === '/moneypuck/refresh') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     const tc = await getTeamConfig(request, env);
     await env.CACHE.delete(`moneypuck:skaters:${tc.abbr}`);
     await env.CACHE.delete('moneypuck:raw');
@@ -3997,9 +4000,9 @@ Only reference the two teams named above and the numbers given -- no player name
   // Refresh PP/PK unit compositions from Supabase → KV
   if (url.pathname === '/pp-units/refresh') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
-    const season   = url.searchParams.get('season') || String(await resolveNHLSeason(env));
-    const gameType = url.searchParams.get('gameType') || '2';
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
+    const season   = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
+    const gameType = sbParam(url.searchParams.get('gameType'), { type: 'int', name: 'gameType' }) || '2';
     if (!['2', '3'].includes(gameType)) return badRequest('invalid gameType');
     ctx.waitUntil(
       refreshPPUnits(env, { force: true, season, gameType })
@@ -4013,7 +4016,7 @@ Only reference the two teams named above and the numbers given -- no player name
 
   if (url.pathname === '/summary/generate') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     const tc       = await getTeamConfig(request, env);
     const schedule = await kvGet(env, scheduleKey(tc.abbr, tc.season));
     const recent   = (schedule || [])
@@ -4041,11 +4044,11 @@ Only reference the two teams named above and the numbers given -- no player name
   // ── Pre-game prediction analysis ─────────────────────────────
   // GET /prediction/analyze?gameId=XXX — public, billed-AI route; rate-limited below (no secret check — this is called directly from the frontend)
   if (url.pathname === '/prediction/analyze') {
-    const gameId    = url.searchParams.get('gameId');
+    const gameId    = sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' });
     const forceRegen = url.searchParams.get('force') === '1';
     // Forced regeneration is a billed AI call that skips the cache: owner
     // only (audit 2026-10-06 Worker F7).
-    if (forceRegen && (!env.POLL_SECRET || url.searchParams.get('secret') !== env.POLL_SECRET)) return unauthorized();
+    if (forceRegen && !secretMatches(url.searchParams.get('secret'), env.POLL_SECRET)) return unauthorized();
     if (!gameId) return badRequest('gameId required');
     const tc = await getTeamConfig(request, env);
 
@@ -4329,7 +4332,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   // Send a test notification (protected)
   if (url.pathname === '/push/test') {
     const secret = url.searchParams.get('secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     await broadcast(env, {
       title: '🚨 Test Notification',
       body:  'EyeWall Analytics push notifications are working!',
@@ -4342,8 +4345,8 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   // ── Period narrative (cached per game+period, shared across all users) ──
   // Public, billed-AI route; rate-limited below (no secret check — called directly from the frontend)
   if (url.pathname === '/summary/narrative') {
-    const gameId = url.searchParams.get('gameId');
-    const period = url.searchParams.get('period'); // 'game' or period number
+    const gameId = sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' });
+    const period = sbParam(url.searchParams.get('period'), { type: 'id', name: 'period' }); // 'game' or period number
     if (!gameId || !period) return badRequest('gameId and period required');
     // Key includes carAbbr so each team gets its own cached perspective
     const carAbbrKey = (url.searchParams.get('carAbbr') || 'UNK').toUpperCase();
@@ -4523,7 +4526,7 @@ ${periodLines}
   // GET /draft/rankings?category=1   (1=NA Skater, 2=Intl Skater, 3=NA Goalie, 4=Intl Goalie)
   // GET /draft/rankings              (returns all 4 categories, keyed by category_id)
   if (url.pathname === '/draft/rankings') {
-    const category = url.searchParams.get('category');
+    const category = sbParam(url.searchParams.get('category'), { type: 'id', name: 'category' });
     const kvKey    = category ? `draft:rankings:2026:${category}` : 'draft:rankings:2026:all';
     // Rankings are stable — cache 24hr
     return cachedJson(env, kvKey, 24 * 3600, async () => {
@@ -4552,8 +4555,8 @@ ${periodLines}
   // GET /draft/picks?team=CAR     — filtered by team
   // GET /draft/picks?round=1      — filtered by round
   if (url.pathname === '/draft/picks') {
-    const team  = url.searchParams.get('team')?.toUpperCase();
-    const round = url.searchParams.get('round');
+    const team  = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase();
+    const round = sbParam(url.searchParams.get('round'), { type: 'int', name: 'round' });
 
     // Short TTL while draft is in progress or unresolved (including zero
     // results, e.g. a round that hasn't happened yet — this must NOT get
@@ -4577,7 +4580,7 @@ ${periodLines}
   // GET /draft/order              — full R1 order (all 32 teams)
   // GET /draft/order?team=CAR     — just this team's known slots
   if (url.pathname === '/draft/order') {
-    const team   = url.searchParams.get('team')?.toUpperCase();
+    const team   = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase();
     return cachedJson(env, `draft:order:2026:${team || 'all'}`, 24 * 3600, async () => {
       let filter = '?order=pick_overall.asc&limit=32';
       if (team) filter += `&team_abbrev=eq.${team}`;
@@ -4602,7 +4605,7 @@ ${periodLines}
   // validated before it's interpolated into the PostgREST filter.
   if (url.pathname === '/draft/pick-history') {
     const PICK_HISTORY_DRAFTS = 5;
-    const team = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
+    const team = (sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' }) || DEFAULT_TEAM_ABBR).toUpperCase();
     if (!/^[A-Z]{2,3}$/.test(team)) {
       return badRequest('invalid team');
     }
@@ -4683,8 +4686,8 @@ async function divisionOdds(env, team, latest) {
 
   if (url.pathname === '/playoff-odds') {
     const HISTORY_MAX = 250; // > one regular season of nightly runs
-    const team   = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
-    const season = url.searchParams.get('season');
+    const team   = (sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' }) || DEFAULT_TEAM_ABBR).toUpperCase();
+    const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
     if (!/^[A-Z]{2,3}$/.test(team) || (season && !/^\d{8}$/.test(season))) {
       return badRequest('invalid team or season');
     }
@@ -4740,8 +4743,8 @@ async function divisionOdds(env, team, latest) {
   // `unavailable: true` and is NOT cached; neither is an empty result, so
   // the first game night shows up at once.
   if (url.pathname === '/injury-impact') {
-    const team   = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
-    const season = url.searchParams.get('season');
+    const team   = (sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' }) || DEFAULT_TEAM_ABBR).toUpperCase();
+    const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
     if (!/^[A-Z]{2,3}$/.test(team) || (season && !/^\d{8}$/.test(season))) {
       return badRequest('invalid team or season');
     }
@@ -4778,7 +4781,7 @@ async function divisionOdds(env, team, latest) {
   // failed read (`unavailable: true`) nor an empty result is cached, so the
   // first nightly write shows up at once. `game` must be a 10-digit NHL id.
   if (url.pathname === '/probable-starters') {
-    const gameId = url.searchParams.get('game') || '';
+    const gameId = sbParam(url.searchParams.get('game'), { type: 'int', name: 'game' }) || '';
     if (!/^\d{10}$/.test(gameId)) {
       return badRequest('invalid game');
     }
@@ -4811,7 +4814,7 @@ async function divisionOdds(env, team, latest) {
   // shows up at once. `team` is validated before it's interpolated into the
   // PostgREST filter.
   if (url.pathname === '/projected-lines') {
-    const team = (url.searchParams.get('team') || DEFAULT_TEAM_ABBR).toUpperCase();
+    const team = (sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' }) || DEFAULT_TEAM_ABBR).toUpperCase();
     if (!/^[A-Z]{2,3}$/.test(team)) {
       return badRequest('invalid team');
     }
@@ -4907,10 +4910,10 @@ async function divisionOdds(env, team, latest) {
   // resolvePWHLSeason()'s numeric seasonId, e.g. 8) -- it was just never
   // queried on here.
   if (url.pathname === '/milestones') {
-    const team  = url.searchParams.get('team')?.toUpperCase();
+    const team  = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase();
     const sport = url.searchParams.get('sport')?.toLowerCase();
     const isPwhl = sport === 'pwhl';
-    const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10) || 50, 100);
+    const limit = Math.min(parseInt(sbParam(url.searchParams.get('limit'), { type: 'int', name: 'limit' }) || '50', 10) || 50, 100);
     const season = isPwhl ? (await resolvePWHLSeason(env)).seasonId : await resolveNHLSeason(env);
 
     return cachedJson(env, `milestones:${sport || 'nhl'}:${team || 'all'}:${limit}:${season}`, 3600, async () => {
@@ -4937,7 +4940,7 @@ async function divisionOdds(env, team, latest) {
   // side), so this proxies through the Worker like every other NHL API
   // call in this app.
   if (url.pathname === '/player/landing') {
-    const playerId = url.searchParams.get('id');
+    const playerId = sbParam(url.searchParams.get('id'), { type: 'int', name: 'id' });
     if (!playerId) return badRequest('id required');
 
     return cachedJson(env, `player:landing:${playerId}`, 3600, async () => {
@@ -4958,7 +4961,7 @@ async function divisionOdds(env, team, latest) {
   // Returns: { analysis: string }
   if (url.pathname === '/draft/analyze' && request.method === 'POST') {
     const secret = request.headers.get('X-Poll-Secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
 
     let body;
     try {

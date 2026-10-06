@@ -3288,7 +3288,7 @@ exports[`injury-impact > Supabase unavailable 1`] = `
 exports[`injury-impact > missing or invalid param 1`] = `
 {
   "body": {
-    "error": "invalid team or season",
+    "error": "invalid team",
   },
   "status": 400,
   "upstream": [],
