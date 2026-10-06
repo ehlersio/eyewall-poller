@@ -7,7 +7,7 @@
 
 import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
-import { buildHockeyTechPrediction } from './hockeytechPrediction.js';
+import { buildHockeyTechPrediction, gameResult, endedInOf } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 
 // Elo constants for /pwhl/prediction -- match eyewall-pipeline/elo.py.
@@ -539,19 +539,21 @@ export async function handlePWHL(request, env, ctx, url) {
       ]);
       if (rows instanceof Response) return rows;
 
-      // Compute L10 and streak per team from recent game log
+      // L10 and streak per team from the game log, newest first. Each game
+      // is 'W', 'OT' (an OT/SO loss, from the ot/shootout flags) or 'L' (a
+      // regulation loss): l10OTL counts OT/SO losses and an OT/SO loss
+      // starts or extends an 'OT' streak, never an 'L' one -- the NHL's
+      // streak codes, same as /{ahl,echl}/standings. Before 2026-10 a run
+      // of OT/SO and regulation losses read as one 'L' streak.
       const teamStats = {};
       for (const g of games) {
-        for (const [tid,, myScore, oppScore] of [
-          [g.home_team_id, g.away_team_id, g.home_score, g.away_score],
-          [g.away_team_id, g.home_team_id, g.away_score, g.home_score],
+        for (const [tid, myScore, oppScore] of [
+          [g.home_team_id, g.home_score, g.away_score],
+          [g.away_team_id, g.away_score, g.home_score],
         ]) {
           if (!tid) continue;
-          if (!teamStats[tid]) teamStats[tid] = { games: [], streak: 0, streakType: '' };
-          const won   = myScore > oppScore;
-          const extra = g.ot || g.shootout;
-          const result = won ? 'W' : extra ? 'O' : 'L'; // O = OT loss
-          teamStats[tid].games.push(result);
+          if (!teamStats[tid]) teamStats[tid] = { games: [] };
+          teamStats[tid].games.push(gameResult(myScore, oppScore, endedInOf(g)));
         }
       }
       // L10: last 10 games (already desc by game_id, so first 10 = most recent)
@@ -560,13 +562,12 @@ export async function handlePWHL(request, env, ctx, url) {
         if (!ts) return r;
         const last10 = ts.games.slice(0, 10);
         const l10W   = last10.filter(x => x === 'W').length;
-        const l10OTL = last10.filter(x => x === 'O').length;
+        const l10OTL = last10.filter(x => x === 'OT').length;
         const l10L   = last10.filter(x => x === 'L').length;
-        // Streak: consecutive same result from most recent
         let streak = 0, streakType = '';
         for (const res of ts.games) {
-          if (!streakType) { streakType = res === 'W' ? 'W' : 'L'; streak = 1; }
-          else if ((res === 'W' && streakType === 'W') || (res !== 'W' && streakType === 'L')) streak++;
+          if (!streakType) { streakType = res; streak = 1; }
+          else if (res === streakType) streak++;
           else break;
         }
         return { ...r, l10W, l10OTL, l10L, streakType, streakCount: streak };

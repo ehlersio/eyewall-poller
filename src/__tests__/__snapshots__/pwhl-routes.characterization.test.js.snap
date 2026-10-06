@@ -3596,7 +3596,7 @@ exports[`prediction (force regenerate) > response, upstream requests and KV writ
 {
   "body": {
     "awayAbbr": "MIN",
-    "awayStreak": "L1",
+    "awayStreak": "OT1",
     "awayTeamId": 2,
     "awayWinPct": 45,
     "corsiCaveat": "All-situations shot-attempt share (goals+shots+blocked), not 5-on-5 filtered.",
@@ -3662,7 +3662,7 @@ MIN stats:
 - PP%: 17.0%
 - PK%: 79.0%
 - Shot-attempt share (Corsi For%, all situations): 47.1%
-- Current streak: L1
+- Current streak: OT1 (consecutive overtime/shootout losses)
 
 Head-to-head this season: BOS 1-2
 Expected score (Pythagorean): BOS 3.0 - MIN 2.2
@@ -3712,7 +3712,7 @@ exports[`prediction > response, upstream requests and KV writes; repeat call 1`]
 {
   "body": {
     "awayAbbr": "MIN",
-    "awayStreak": "L1",
+    "awayStreak": "OT1",
     "awayTeamId": 2,
     "awayWinPct": 45,
     "corsiCaveat": "All-situations shot-attempt share (goals+shots+blocked), not 5-on-5 filtered.",
@@ -3778,7 +3778,7 @@ MIN stats:
 - PP%: 17.0%
 - PK%: 79.0%
 - Shot-attempt share (Corsi For%, all situations): 47.1%
-- Current streak: L1
+- Current streak: OT1 (consecutive overtime/shootout losses)
 
 Head-to-head this season: BOS 1-2
 Expected score (Pythagorean): BOS 3.0 - MIN 2.2
@@ -4658,7 +4658,7 @@ exports[`standings (default season) > HockeyTech and AI unavailable 1`] = `
       "season_id": 8,
       "season_type": "regular",
       "streakCount": 1,
-      "streakType": "L",
+      "streakType": "OT",
       "team_id": 2,
       "wins": 12,
     },
@@ -4724,7 +4724,7 @@ exports[`standings (default season) > response, upstream requests and KV writes;
       "season_id": 8,
       "season_type": "regular",
       "streakCount": 1,
-      "streakType": "L",
+      "streakType": "OT",
       "team_id": 2,
       "wins": 12,
     },
@@ -4788,7 +4788,7 @@ exports[`standings > HockeyTech and AI unavailable 1`] = `
       "season_id": 8,
       "season_type": "regular",
       "streakCount": 1,
-      "streakType": "L",
+      "streakType": "OT",
       "team_id": 2,
       "wins": 12,
     },
@@ -4854,7 +4854,7 @@ exports[`standings > response, upstream requests and KV writes; repeat call 1`] 
       "season_id": 8,
       "season_type": "regular",
       "streakCount": 1,
-      "streakType": "L",
+      "streakType": "OT",
       "team_id": 2,
       "wins": 12,
     },
