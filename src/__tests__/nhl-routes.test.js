@@ -1878,6 +1878,71 @@ describe('POST /team-seasons/head-to-head/narrative', () => {
   })
 })
 
+// Supabase caps every response at 1,000 rows whatever limit= asks for.
+// /goalie-shots served exactly 1,000 of Andersen's 1,317 2025-26 shots
+// (audit 2026-10-06, Worker F2); /player-analytics and /player-shots had
+// the same limit=2000 shape. A fake Supabase that honours the Range header
+// hands back two pages; the route must return their union.
+function pagedSupabase(pageOf) {
+  globalThis.fetch = vi.fn(async (url, opts = {}) => {
+    const range = opts.headers?.Range
+    expect(range).toMatch(/^\d+-\d+$/)
+    const from = Number(range.split('-')[0])
+    return { ok: true, json: async () => pageOf(from, String(url)) }
+  })
+}
+const rowsFrom = (from, count, extra = {}) => Array.from({ length: count }, (_, i) => ({ id: from + i + 1, ...extra }))
+
+describe('Supabase paging past the 1,000-row cap', () => {
+  it('/goalie-shots returns every page (1,000 + 317 rows), in a stable order, with no limit=', async () => {
+    pagedSupabase((from) => (from === 0 ? rowsFrom(0, 1000) : from === 1000 ? rowsFrom(1000, 317) : []))
+    const res = await handleNHL(
+      makeRequest('/goalie-shots?goalieId=8475883&season=20252026'), makeEnv(), makeCtx(),
+      new URL('https://example.com/goalie-shots?goalieId=8475883&season=20252026')
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toHaveLength(1317)
+    expect(body[0].id).toBe(1)
+    expect(body[1316].id).toBe(1317)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    const [url, opts] = globalThis.fetch.mock.calls[1]
+    expect(String(url)).toContain('shot_events?goalie_id=eq.8475883&season=eq.20252026&game_type=eq.2&')
+    expect(String(url)).toContain('&order=id.asc')
+    expect(String(url)).not.toContain('limit=')
+    expect(opts.headers.Range).toBe('1000-1999')
+    expect(opts.headers['Range-Unit']).toBe('items')
+  })
+
+  it('/player-analytics pages the regular-season read (1,000 + 40 skaters) and the playoff read', async () => {
+    pagedSupabase((from, url) => {
+      if (url.includes('game_type=eq.3')) return from === 0 ? rowsFrom(0, 3) : []
+      return from === 0 ? rowsFrom(0, 1000, { war: 1 }) : from === 1000 ? rowsFrom(1000, 40, { war: 1 }) : []
+    })
+    const res = await handleNHL(
+      makeRequest('/player-analytics?season=20252026'), makeEnv(), makeCtx(),
+      new URL('https://example.com/player-analytics?season=20252026')
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.rows).toHaveLength(1040)
+    expect(body.poRows).toHaveLength(3)
+    const urls = globalThis.fetch.mock.calls.map(([u]) => String(u))
+    expect(urls.filter(u => u.includes('game_type=eq.2'))).toHaveLength(2)
+    expect(urls.every(u => u.includes('&order=player_id.asc') && !u.includes('limit='))).toBe(true)
+  })
+
+  it('/player-shots pages too', async () => {
+    pagedSupabase((from) => (from === 0 ? rowsFrom(0, 1000) : from === 1000 ? rowsFrom(1000, 12) : []))
+    const res = await handleNHL(
+      makeRequest('/player-shots?playerId=8478427&season=20252026&team=CAR'), makeEnv(), makeCtx(),
+      new URL('https://example.com/player-shots?playerId=8478427&season=20252026&team=CAR')
+    )
+    expect(await res.json()).toHaveLength(1012)
+    expect(String(globalThis.fetch.mock.calls[0][0])).toContain('&order=id.asc')
+  })
+})
+
 describe('GET /player-shots', () => {
   it('400s when playerId is missing', async () => {
     const env = makeEnv()
