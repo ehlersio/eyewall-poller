@@ -186,6 +186,72 @@ export function endedInFromStatus(status) {
   return null;
 }
 
+// ── Live state written back to {league}_game_log (2026-10) ───────────
+// The pipeline's live-score-refresh.yml was meant to keep game_log's live
+// columns current every 5 min; GitHub ran it 3-4 times a day, so a game's
+// final sat unrecorded for hours and /standings' streaks and /lastgame
+// read it as unplayed (audit 2026-10-06 §4). The HockeyTech pollers now
+// write the two moments that matter themselves -- puck drop and the final,
+// once each, from the same gates that send those pushes -- with the same
+// columns live-score-refresh writes. Needs SUPABASE_SERVICE_KEY (the
+// anon key can't write); without it this logs once per game and skips.
+// Never throws: a failed write must not cost the game's pushes.
+export async function patchGameLog(env, table, gameId, fields) {
+  if (!env.SUPABASE_SERVICE_KEY) {
+    const logged = `gamelog:patch:no-key:${table}:${gameId}`;
+    if (!(await env.CACHE.get(logged))) {
+      console.warn(`[${table}] SUPABASE_SERVICE_KEY not set: not writing game ${gameId} back to game_log`);
+      await kvPut(env, logged, true, 24 * 3600);
+    }
+    return false;
+  }
+  try {
+    const res = await fetch(`${SB_URL}/rest/v1/${table}?game_id=eq.${gameId}`, {
+      method: 'PATCH',
+      headers: {
+        apikey: env.SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify(fields),
+    });
+    if (!res.ok) {
+      console.warn(`[${table}] game ${gameId} PATCH failed: ${res.status}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn(`[${table}] game ${gameId} PATCH error: ${e.message}`);
+    return false;
+  }
+}
+
+// The puck-drop and final writes. `game` is the poller's row with the
+// scorebar overlay (withLiveScorebar). AHL/ECHL game_log keeps OT/SO in
+// `ended_in`; PWHL's in two booleans, `ot` and `shootout` -- the same
+// columns each league's live refresh in eyewall-pipeline writes.
+export function gameLogLiveFields(game) {
+  return {
+    home_score: game.home_score ?? 0,
+    away_score: game.away_score ?? 0,
+    game_state: 'Live',
+    game_status_code: game.game_status_code ?? null,
+  };
+}
+
+export function gameLogFinalFields(game, endedIn, { pwhl = false } = {}) {
+  const base = {
+    home_score: game.home_score ?? 0,
+    away_score: game.away_score ?? 0,
+    game_state: 'Final',
+    game_status_code: 4,
+  };
+  return pwhl
+    ? { ...base, ot: endedIn === 'OT', shootout: endedIn === 'SO' }
+    : { ...base, ended_in: endedIn === 'OT' || endedIn === 'SO' ? endedIn : null };
+}
+
 // The label for a finished game in every league: 'Final' after regulation,
 // 'Final/OT' or 'Final/SO' otherwise. `endedIn` is 'OT' | 'SO' | anything
 // else (NHL's gameOutcome.lastPeriodType 'REG', null).

@@ -44,6 +44,8 @@ simple       = { limit = 10, period = 60 }
 #                         above, removed -- see shared.js's generateText())
 #   GITHUB_DISPATCH_TOKEN — fine-grained PAT, Actions: write on eyewall-pipeline;
 #                         dispatch.js starts the pipeline's daily workflows (optional)
+#   SUPABASE_SERVICE_KEY — writes HockeyTech puck drops/finals into {league}_game_log
+#                         (shared.js's patchGameLog(); optional, reads use the anon key)
 #
 # View current secrets: wrangler secret list
 # Set a secret:        wrangler secret put POLL_SECRET

@@ -3394,10 +3394,6 @@ exports[`poll > a game followed live gets exactly one game-over push when it goe
       "referer": "https://www.thepwhl.com/",
       "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameCenterPlayByPlay&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
     },
-    {
-      "referer": "https://www.thepwhl.com/",
-      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=modulekit&view=scorebar&numberofdaysback=1&numberofdaysahead=1&limit=100&league_id=&key=446521baf8c38984&client_code=pwhl&site_id=0&lang=en",
-    },
   ],
 }
 `;
@@ -3431,7 +3427,15 @@ exports[`poll > live game: start, period, goal, hat-trick, power-play and pulled
       "ttl": 21600,
     },
     {
+      "key": "pwhl:scorebar",
+      "ttl": 60,
+    },
+    {
       "key": "pwhl:push:start:210",
+      "ttl": 86400,
+    },
+    {
+      "key": "gamelog:patch:no-key:pwhl_game_log:210",
       "ttl": 86400,
     },
     {
@@ -6143,6 +6147,10 @@ exports[`today > response, upstream requests and KV writes; repeat call 1`] = `
     {
       "key": "config:season:pwhl:bootstrap",
       "ttl": 21600,
+    },
+    {
+      "key": "pwhl:scorebar",
+      "ttl": 60,
     },
     {
       "key": "pwhl:today:8",

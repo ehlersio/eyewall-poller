@@ -37,7 +37,7 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
@@ -46,13 +46,6 @@ import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
 // ELO_HOME_ADVANTAGE). hockeytech_elo.py writes the ratings these apply to.
 const ELO_INITIAL_RATING = 1500;
 const ELO_HOME_ADVANTAGE = 35;
-
-// Both leagues' regular season starts early October and playoffs run
-// through June.
-function seasonActive() {
-  const month = new Date().getUTCMonth() + 1; // 1-12
-  return month >= 10 || month <= 6;
-}
 
 /**
  * @param {object} cfg
@@ -188,8 +181,11 @@ export function createHockeyTechLeague(cfg) {
   // pollPWHL/pollPWHLGame/broadcastPWHL in pwhl.js. PBP event shapes
   // (goal/penalty/goalie_change) confirmed identical across AHL, ECHL and
   // PWHL against real completed games (AHL 1028925, ECHL 24296).
+  // No calendar gate (2026-10): an Oct-Jun month check used to skip the
+  // poll, the same hidden date gate #191 removed from the PWHL poll. Out of
+  // season the cost is one empty game_log read and one (60s-cached)
+  // scorebar read a minute.
   async function poll(env) {
-    if (!seasonActive()) { console.log(`[${label} poll] Off-season — skipping`); return; }
     if (!env.VAPID_PRIVATE_KEY) return;
 
     try {
@@ -285,6 +281,8 @@ export function createHockeyTechLeague(cfg) {
       const sessionKey = `${key}:push:start:${gameId}`;
       if (!(await kvGet(env, sessionKey))) {
         await kvPut(env, sessionKey, true, 24 * 3600);
+        // Puck drop into game_log, once (shared.js's patchGameLog()).
+        await patchGameLog(env, `${key}_game_log`, gameId, gameLogLiveFields(game));
         for (const abbr of [homeAbbr, awayAbbr]) {
           await send({
             title: `🏒 ${label} Game Starting!`,
@@ -427,6 +425,8 @@ export function createHockeyTechLeague(cfg) {
           : (await live(env, [game], { withEndedIn: true }))[0].ended_in;
         const fin = finalLabel(endedIn);
         const ot  = endedInSuffix(endedIn);
+        // The final into game_log, once, before the push that announces it.
+        await patchGameLog(env, `${key}_game_log`, gameId, gameLogFinalFields(game, endedIn));
 
         await send(hs > as ? {
           title: `🏆 ${homeAbbr} Win! ${homeAbbr} ${hs}–${as} ${awayAbbr}${ot}`,

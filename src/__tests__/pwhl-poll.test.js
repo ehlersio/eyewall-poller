@@ -169,3 +169,48 @@ describe('pollPWHL game-over push', () => {
     expect(pbpFetched()).toBe(false)
   })
 })
+
+// C3 (2026-10): puck drop and the final written into pwhl_game_log by the
+// poll itself, once each, with the columns pwhl_live_refresh.py writes
+// (PWHL keeps OT/SO in `ot`/`shootout`, not `ended_in`).
+describe('pwhl_game_log write-back', () => {
+  const patches = () => globalThis.fetch.mock.calls
+    .filter(([, o]) => o?.method === 'PATCH')
+    .map(([u, o]) => ({ url: String(u), auth: o.headers.Authorization, body: JSON.parse(o.body) }))
+  const finalSO = [{ ID: String(GAME_ID), GameStatus: '4', GameStatusString: 'Final', GameStatusStringLong: 'Final SO', HomeGoals: '3', VisitorGoals: '2' }]
+
+  it('PATCHes the live state at puck drop and the final once', async () => {
+    installFetch(gameRow())
+    const env = makeEnv({ CACHE: makeFakeCache({ 'push:subs': subs }), VAPID_PRIVATE_KEY: 'k', SUPABASE_SERVICE_KEY: 'svc' })
+    await pollPWHL(env)
+    expect(patches()).toEqual([{
+      url: `https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.${GAME_ID}`,
+      auth: 'Bearer svc',
+      body: { home_score: 1, away_score: 0, game_state: 'Live', game_status_code: 2 },
+    }])
+
+    globalThis.fetch.mockClear()
+    await pollPWHL(env)
+    expect(patches()).toEqual([])
+
+    await env.CACHE.delete('pwhl:scorebar')
+    installFetch(gameRow(), finalSO)
+    await pollPWHL(env)
+    expect(patches().map(p => p.body)).toEqual([
+      { home_score: 3, away_score: 2, game_state: 'Final', game_status_code: 4, ot: false, shootout: true },
+    ])
+
+    globalThis.fetch.mockClear()
+    await pollPWHL(env)
+    expect(patches()).toEqual([])
+  })
+
+  it('without SUPABASE_SERVICE_KEY: no PATCH, the pushes still go out', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installFetch(gameRow())
+    const env = makeEnv({ CACHE: makeFakeCache({ 'push:subs': subs }), VAPID_PRIVATE_KEY: 'k' })
+    await pollPWHL(env)
+    expect(patches()).toEqual([])
+    expect(sent().some(p => p.title.includes('Game Starting'))).toBe(true)
+  })
+})
