@@ -372,7 +372,7 @@ const ROUTES = [
   { name: 'summary/generate (no completed game cached)', path: `/summary/generate?secret=${SECRET}` },
   { name: 'prediction/analyze (in season)',  path: `/prediction/analyze?gameId=${GAME_ID}&team=CAR`, kv: { standings: STANDINGS_NOW } },
   { name: 'prediction/analyze (preseason fallback)', path: `/prediction/analyze?gameId=${GAME_ID}&team=CAR`, kv: { standings: STANDINGS_LAST_SEASON } },
-  { name: 'prediction/analyze (force regenerate)', path: `/prediction/analyze?gameId=${GAME_ID}&team=CAR&force=1`, kv: { standings: STANDINGS_NOW }, notCached: true },
+  { name: 'prediction/analyze (force regenerate)', path: `/prediction/analyze?gameId=${GAME_ID}&team=CAR&force=1&secret=${SECRET}`, kv: { standings: STANDINGS_NOW }, notCached: true },
   { name: 'prediction/analyze (game not in schedule)', path: '/prediction/analyze?gameId=1&team=CAR', kv: { standings: STANDINGS_NOW } },
   { name: 'prediction/analyze (no gameId)',  path: '/prediction/analyze' },
   { name: 'prediction/analyze (in season, French)', path: `/prediction/analyze?gameId=${GAME_ID}&team=CAR&locale=fr`, kv: { standings: STANDINGS_NOW } },

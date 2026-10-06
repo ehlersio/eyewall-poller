@@ -145,6 +145,22 @@ describe('nextSeasonHasImminentSchedule', () => {
     expect(result).toBe(true)
   })
 
+  it('returns false when the first game is long past -- a season already played is not "next"', async () => {
+    globalThis.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ games: [{ gameDate: isoDaysFromNow(-365) }, { gameDate: isoDaysFromNow(-200) }] }),
+    })
+    expect(await nextSeasonHasImminentSchedule('20262027')).toBe(false)
+  })
+
+  it('still returns true when the first (preseason) game was a few weeks ago', async () => {
+    globalThis.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ games: [{ gameDate: isoDaysFromNow(-14) }, { gameDate: isoDaysFromNow(20) }] }),
+    })
+    expect(await nextSeasonHasImminentSchedule('20262027')).toBe(true)
+  })
+
   it('returns false when no schedule has been published yet (empty games array)', async () => {
     globalThis.fetch.mockResolvedValue({ ok: true, json: async () => ({ games: [] }) })
     const result = await nextSeasonHasImminentSchedule('20272028')
@@ -214,15 +230,16 @@ describe('resolveNHLSeason', () => {
     )
   })
 
-  it('rejects a candidate season with zero games played (the pre-season-gap case) and uses the fallback when next season is not yet imminent', async () => {
+  it('rejects a candidate season with zero games played (the pre-season-gap case) and uses the season before it while its schedule is not yet imminent', async () => {
     kvGet.mockResolvedValue(null)
     globalThis.fetch.mockResolvedValue({
       ok: true,
       json: async () => ({ standings: [{ seasonId: '20262027', gamesPlayed: 0 }] }),
     })
     const result = await resolveNHLSeason(env)
-    expect(result).toBe('20252026') // FALLBACK_NHL_SEASON, not the empty new season
-    expect(kvPut).not.toHaveBeenCalled()
+    expect(result).toBe('20252026') // the candidate's prior season, not the empty new one
+    // Cached for an hour only, so the candidate takes over soon after it's imminent.
+    expect(kvPut).toHaveBeenCalledWith(env, 'config:season:nhl', expect.objectContaining({ seasonId: '20252026', source: 'live-prior' }), 3600)
   })
 
   it('looks ahead to next season once its schedule is imminent, even though standings still only has real data for the season before it', async () => {
@@ -260,15 +277,9 @@ describe('resolveNHLSeason', () => {
     )
   })
 
-  it('bases the lookahead on the fallback, not the rejected candidate itself, when standings gives a zero-games candidate', async () => {
-    // Confirms `base = resolved || FALLBACK_NHL_SEASON` actually falls
-    // through correctly when the standings candidate is rejected (resolved
-    // stays null) -- the naive `resolved + 10001` would break here (null
-    // isn't a number). Coincidentally lands on the same 20262027 as the
-    // "accepts a live candidate" lookahead test above, since
-    // FALLBACK_NHL_SEASON + 1 year == 20252026 + 1 year either way -- the
-    // point of this test is exercising the null-resolved code path, not a
-    // different target season.
+  it('a zero-games candidate whose own schedule is imminent becomes current', async () => {
+    // The look-ahead is anchored on the standings candidate itself (audit
+    // 2026-10-06 Worker F3), not on the fallback seed.
     kvGet.mockResolvedValue(null)
     globalThis.fetch.mockImplementation((url) => {
       if (url.includes('/standings/now')) {
@@ -288,6 +299,44 @@ describe('resolveNHLSeason', () => {
     const result = await resolveNHLSeason(env)
     expect(result).toBe('20262027')
     expect(kvPut).toHaveBeenCalled()
+  })
+
+  // Regression (audit 2026-10-06 Worker F3): in Sept 2027, with the seed
+  // still 20252026, standings/now says 20272028 with 0 games played. The
+  // look-ahead used to run from the seed (-> 20262027, whose first game
+  // a year earlier still counted as "imminent"), so 20272028 was never
+  // considered until regular-season games had been played.
+  describe('Sept 2027, stale seed', () => {
+    afterEach(() => { vi.useRealTimers() })
+    const schedules = {
+      20262027: [{ gameDate: '2026-09-20' }, { gameDate: '2027-04-15' }],
+      20272028: [{ gameDate: '2027-09-21' }, { gameDate: '2028-04-14' }],
+    }
+    const install = () => globalThis.fetch.mockImplementation((url) => {
+      if (url.includes('/standings/now')) {
+        return Promise.resolve({ ok: true, json: async () => ({ standings: [{ seasonId: 20272028, gamesPlayed: 0 }] }) })
+      }
+      const season = url.match(/club-schedule-season\/[A-Z]+\/(\d{8})/)?.[1]
+      return Promise.resolve({ ok: true, json: async () => ({ games: schedules[season] || [] }) })
+    })
+
+    it('resolves 20272028 once its preseason is within the look-ahead', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2027-09-05T12:00:00Z'))
+      kvGet.mockResolvedValue(null)
+      install()
+      expect(await resolveNHLSeason(env)).toBe('20272028')
+    })
+
+    it('resolves 20262027 (the candidate\'s prior season, not the seed) before then', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2027-08-01T12:00:00Z'))
+      kvGet.mockResolvedValue(null)
+      install()
+      expect(await resolveNHLSeason(env)).toBe('20262027')
+      // 20262027's schedule is never read as "next season".
+      expect(globalThis.fetch.mock.calls.map(([u]) => u).some(u => u.endsWith('/20262027'))).toBe(false)
+    })
   })
 
   it('falls back gracefully on a non-OK HTTP response', async () => {

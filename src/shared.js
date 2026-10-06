@@ -276,6 +276,21 @@ export function nhlSeasonEnd(seasonId) {
   return new Date(`${endYear}-07-01`);
 }
 
+// ── Eastern-time date ─────────────────────────────────────────
+// Today's date where the leagues live (YYYY-MM-DD), not the viewer's and
+// not UTC: an 8pm PT game is still "today" at 04:00 UTC the next morning.
+// Built from Intl parts. The old idiom parsed a localized string back
+// with new Date(), so the result depended on the machine's own time zone
+// and the engine's string parsing -- correct on Workers (UTC) by luck
+// (Phase 0 follow-up, 2026-10-06).
+const ET_DATE_FORMAT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+export function etDateString(now = new Date()) {
+  const parts = Object.fromEntries(ET_DATE_FORMAT.formatToParts(now.getTime()).map(p => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 // ── Response helpers ──────────────────────────────────────────
 
 export function json(val) {
@@ -386,9 +401,14 @@ export function localeKeySuffix(locale) {
   return locale === 'fr' ? ':fr' : '';
 }
 
+// A slow upstream used to hold the request (and, from generateGameSummary,
+// the cron tick) until the platform killed it (audit 2026-10-06 Worker F7).
+export const AI_TIMEOUT_MS = 25000;
+
 export async function generateText(env, { messages, max_tokens = 1024 } = {}) {
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
+    signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     headers: {
       'Authorization': `Bearer ${env.OPENROUTER_API_KEY}`,
       'Content-Type': 'application/json',

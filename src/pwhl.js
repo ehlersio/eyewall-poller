@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction, gameResult, endedInOf } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
@@ -254,8 +254,7 @@ export async function pollPWHL(env) {
     const seasonIds = await getPWHLScheduleSeasonIds(env, current);
 
     // Get today's date in Eastern time
-    const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const todayStr = nowET.toISOString().slice(0, 10);
+    const todayStr = etDateString();
 
     // Find today's games. Ordered and capped well above a PWHL slate (6
     // games max) -- same shape as the AHL/ECHL poll in hockeytech.js,
@@ -680,8 +679,6 @@ export async function handlePWHL(request, env, ctx, url) {
   // server-side). Prompt is hand-rolled here, not shared with nhl.js's
   // version -- see that route's comment for why.
   if (url.pathname === '/pwhl/team-seasons/head-to-head/narrative' && request.method === 'POST') {
-    const limited = await checkAiRateLimit(env, request, 'pwhl-h2h-narrative');
-    if (limited) return limited;
 
     let body;
     try { body = await request.json(); } catch {
@@ -697,6 +694,12 @@ export async function handlePWHL(request, env, ctx, url) {
 
     const kvKey  = `pwhl:h2h-narrative:${[teamA, teamB].slice().sort((a, b) => a - b).join(',')}`;
     return cachedJson(env, kvKey, 24 * 3600, async () => {
+      // Rate-limited only on a cache miss: a cached answer costs no AI call,
+      // and counting it used to 429 a user browsing cached results (audit
+      // 2026-10-06 Worker F7).
+      const limited = await checkAiRateLimit(env, request, 'pwhl-h2h-narrative');
+      if (limited) return limited;
+
       const aDisplay = teamADisplay || String(teamA);
       const bDisplay = teamBDisplay || String(teamB);
       const streakLine = currentStreak
@@ -1776,8 +1779,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
         : `season_id=in.(${seasonIds.join(',')})`;
 
       // Get today's date in Eastern time (games stored as Eastern dates in pwhl_game_log)
-      const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const todayStr = nowET.toISOString().slice(0, 10); // YYYY-MM-DD
+      const todayStr = etDateString();
 
       // Today's games, or the next day that has some -- see the AHL/ECHL
       // route in hockeytech.js for why (an empty "no games today" is the
@@ -2177,8 +2179,6 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
   // Caches in KV so subsequent users get the pre-generated text.
   // Public, billed-AI route; rate-limited below (no secret check — called directly from the frontend)
   if (url.pathname === '/pwhl/summary/narrative' && request.method === 'POST') {
-    const limited = await checkAiRateLimit(env, request, 'pwhl-summary-narrative');
-    if (limited) return limited;
     const gameId    = url.searchParams.get('gameId') || '';
     const periodKey = url.searchParams.get('period') || '1';
     // Include carAbbr in cache key so each team gets its own perspective
@@ -2186,6 +2186,12 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
 
     const cacheKey = `pwhl:narrative:${periodKey}:${gameId}:${carAbbrKey}`;
     return cachedJson(env, cacheKey, 24 * 3600, async () => {
+      // Rate-limited only on a cache miss: a cached answer costs no AI call,
+      // and counting it used to 429 a user browsing cached results (audit
+      // 2026-10-06 Worker F7).
+      const limited = await checkAiRateLimit(env, request, 'pwhl-summary-narrative');
+      if (limited) return limited;
+
       let body;
       try { body = await request.json(); } catch {
         return badRequest('Invalid JSON');
@@ -2398,12 +2404,13 @@ Write in plain text, no markdown. 1-2 sentences max.`;
   // Public, billed-AI route; rate-limited below (no secret check — called
   // directly from the frontend, same pattern as /pwhl/scout).
   if (url.pathname === '/pwhl/prediction') {
-    const limited = await checkAiRateLimit(env, request, 'pwhl-prediction');
-    if (limited) return limited;
 
     const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
     if (!gameId) return badRequest('gameId required');
     const forceRegen = url.searchParams.get('force') === '1';
+    // Forced regeneration is a billed AI call that skips the cache: owner
+    // only (audit 2026-10-06 Worker F7).
+    if (forceRegen && (!env.POLL_SECRET || url.searchParams.get('secret') !== env.POLL_SECRET)) return unauthorized();
 
     // French gets its own key (':fr'); English keeps the original one.
     const locale = requestLocale(url);
@@ -2414,6 +2421,12 @@ Write in plain text, no markdown. 1-2 sentences max.`;
       const cached = await kvGet(env, kvKey);
       if (cached) return json(cached);
     }
+
+    // Rate-limited only on a cache miss: a cached answer costs no AI call,
+    // and counting it used to 429 a user browsing cached results (audit
+    // 2026-10-06 Worker F7).
+    const limited = await checkAiRateLimit(env, request, 'pwhl-prediction');
+    if (limited) return limited;
 
     const gameRows = await sbRows(`${SB_URL}/rest/v1/pwhl_game_log?game_id=eq.${gameId}&select=game_id,season_id,home_team_id,away_team_id`);
     if (gameRows instanceof Response) return gameRows;
