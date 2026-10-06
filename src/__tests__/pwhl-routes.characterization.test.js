@@ -373,7 +373,7 @@ const ROUTES = [
   { name: 'summary/narrative (period)', method: 'POST', path: `/pwhl/summary/narrative?gameId=${GAME_ID}&period=1&carAbbr=BOS`, body: NARRATIVE_BODY },
   { name: 'preview',                          path: `/pwhl/preview?gameId=${GAME_ID}`, missing: '/pwhl/preview' },
   { name: 'prediction',                       path: `/pwhl/prediction?gameId=${GAME_ID}`, missing: '/pwhl/prediction' },
-  { name: 'prediction (force regenerate)',    path: `/pwhl/prediction?gameId=${GAME_ID}&force=1`, notCached: true },
+  { name: 'prediction (force regenerate)',    path: `/pwhl/prediction?gameId=${GAME_ID}&force=1&secret=${SECRET}`, notCached: true },
   { name: 'unknown route',                    path: '/pwhl/no-such-route' },
 ]
 

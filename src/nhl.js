@@ -6,7 +6,7 @@
  */
 
 import { penaltyText, penaltyDescription } from './penaltyText.js';
-import { kvGet, kvPut, json, nhlSeasonEnd, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
+import { kvGet, kvPut, json, nhlSeasonEnd, etDateString, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
 import { readCronHealth, readOpsHealth } from './ops.js';
@@ -520,12 +520,7 @@ Write the analysis now. Mention the single most decisive factor from last season
 
 
 // ── Scoreboard (/nhl/today) ───────────────────────────────────
-// Today's date where the league lives, not the viewer's and not UTC: an
-// 8pm PT game is still "today" at 04:00 UTC the next morning.
-function etDateString(now = new Date()) {
-  return new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }))
-    .toISOString().slice(0, 10);
-}
+// Today's date is shared.js's etDateString().
 
 // NHL's /score/now is NOT "today" — in the offseason it jumps to whatever
 // date it considers current (2026-09-15: it served Sept 29's regular-season
@@ -2783,7 +2778,10 @@ export async function handleNHL(request, env, ctx, url) {
           // (/nhl/goal-replay), which is what lets the "All N" view offer
           // them at all. Null on a row whose game predates the column and
           // hasn't been re-processed; the app reads that as "no replay".
-          `&select=game_id,event_id,team,x,y,event_type,period,time_in_period,shot_type,player_id,goalie_id,assist1_id,assist2_id,blocker_id&order=game_id.asc`,
+          // Paged on a total order: game_id alone ties within a game, and
+          // Postgres may then return a tied row on two pages and skip
+          // another (as #192 fixed for the goalie/player shot routes).
+          `&select=game_id,event_id,team,x,y,event_type,period,time_in_period,shot_type,player_id,goalie_id,assist1_id,assist2_id,blocker_id&order=game_id.asc,id.asc`,
           { 'Range': `${offset}-${offset + PAGE - 1}`, 'Range-Unit': 'items', 'Prefer': 'count=none' }
         );
         if (rows instanceof Response) return rows;
@@ -3191,15 +3189,20 @@ export async function handleNHL(request, env, ctx, url) {
 
   // Serves both getGameLogInsights and getTeamGameLog on the frontend —
   // same table+filter (team+season), union of both callers' select columns.
+  // gameType= (1 preseason, 2 regular, 3 playoffs) filters on game_type;
+  // omitted means every type, as before. It used to be ignored, so
+  // ?gameType=2 still returned preseason rows (Phase 0 follow-up).
   if (url.pathname === '/game-log') {
     const team   = url.searchParams.get('team')?.toUpperCase() || DEFAULT_TEAM_ABBR;
     const season = url.searchParams.get('season') || String(await resolveNHLSeason(env));
     const limit  = url.searchParams.get('limit'); // optional passthrough — omitted means unlimited
-    return cachedJson(env, `nhl:game-log:${team}:${season}:${limit || 'all'}`, 3600, async () => {
+    const gameType = url.searchParams.get('gameType');
+    if (gameType && !['1', '2', '3'].includes(gameType)) return badRequest('invalid gameType');
+    return cachedJson(env, `nhl:game-log:${team}:${season}:${gameType || 'all'}:${limit || 'all'}`, 3600, async () => {
       let rows;
       try {
         rows = await sbRowsOrThrow(
-          `game_log?season=eq.${season}&team=eq.${team}&order=game_id.asc` +
+          `game_log?season=eq.${season}&team=eq.${team}` + (gameType ? `&game_type=eq.${gameType}` : '') + `&order=game_id.asc` +
           `&select=game_id,game_date,opponent,team_score,opp_score,home_team,` +
           `team_scored_first,pp_goals,pp_opps,pk_goals_against,pk_opps,game_type` +
           (limit ? `&limit=${limit}` : '')
@@ -3395,8 +3398,6 @@ export async function handleNHL(request, env, ctx, url) {
   // despite being structurally close), and each league's narrative voice
   // has already diverged (this file has no "Sticks" persona; pwhl.js does).
   if (url.pathname === '/team-seasons/head-to-head/narrative' && request.method === 'POST') {
-    const limited = await checkAiRateLimit(env, request, 'h2h-narrative');
-    if (limited) return limited;
 
     let body;
     try { body = await request.json(); } catch {
@@ -3411,6 +3412,12 @@ export async function handleNHL(request, env, ctx, url) {
     }
 
     return cachedJson(env, `nhl:h2h-narrative:${[teamA, teamB].slice().sort().join(',')}`, 24 * 3600, async () => {
+      // Rate-limited only on a cache miss: a cached answer costs no AI call,
+      // and counting it used to 429 a user browsing cached results (audit
+      // 2026-10-06 Worker F7).
+      const limited = await checkAiRateLimit(env, request, 'h2h-narrative');
+      if (limited) return limited;
+
       const aDisplay = teamADisplay || teamA;
       const bDisplay = teamBDisplay || teamB;
       const streakLine = currentStreak
@@ -3999,7 +4006,9 @@ Only reference the two teams named above and the numbers given -- no player name
         .then(map => console.log(`PP units done (${season}, ${gameType}): ${Object.keys(map).length} teams`))
         .catch(e => console.error('PP units error:', e.message))
     );
-    return json({ ok: true, status: `refreshing — check /cache/pp_units:${season}:${gameType} in ~5s` });
+    // /special-teams reads the same pp_units key (the /cache/ allow-list
+    // doesn't serve pp_units:, so pointing there 403'd).
+    return json({ ok: true, status: `refreshing — check /special-teams?season=${season}&gameType=${gameType} in ~5s` });
   }
 
   if (url.pathname === '/summary/generate') {
@@ -4032,10 +4041,11 @@ Only reference the two teams named above and the numbers given -- no player name
   // ── Pre-game prediction analysis ─────────────────────────────
   // GET /prediction/analyze?gameId=XXX — public, billed-AI route; rate-limited below (no secret check — this is called directly from the frontend)
   if (url.pathname === '/prediction/analyze') {
-    const limited = await checkAiRateLimit(env, request, 'prediction-analyze');
-    if (limited) return limited;
     const gameId    = url.searchParams.get('gameId');
     const forceRegen = url.searchParams.get('force') === '1';
+    // Forced regeneration is a billed AI call that skips the cache: owner
+    // only (audit 2026-10-06 Worker F7).
+    if (forceRegen && (!env.POLL_SECRET || url.searchParams.get('secret') !== env.POLL_SECRET)) return unauthorized();
     if (!gameId) return badRequest('gameId required');
     const tc = await getTeamConfig(request, env);
 
@@ -4057,6 +4067,12 @@ Only reference the two teams named above and the numbers given -- no player name
       const cached = await kvGet(env, kvKey);
       if (cached) return json(cached);
     }
+
+    // Rate-limited only on a cache miss: a cached answer costs no AI call,
+    // and counting it used to 429 a user browsing cached results (audit
+    // 2026-10-06 Worker F7).
+    const limited = await checkAiRateLimit(env, request, 'prediction-analyze');
+    if (limited) return limited;
 
     const schedule  = await scheduleWithFetch(env, tc.abbr, tc.season);
 
@@ -4326,8 +4342,6 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
   // ── Period narrative (cached per game+period, shared across all users) ──
   // Public, billed-AI route; rate-limited below (no secret check — called directly from the frontend)
   if (url.pathname === '/summary/narrative') {
-    const limited = await checkAiRateLimit(env, request, 'summary-narrative');
-    if (limited) return limited;
     const gameId = url.searchParams.get('gameId');
     const period = url.searchParams.get('period'); // 'game' or period number
     if (!gameId || !period) return badRequest('gameId and period required');
@@ -4336,6 +4350,12 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     const kvKey  = `narrative:${period}:${gameId}:${carAbbrKey}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
+
+    // Rate-limited only on a cache miss: a cached answer costs no AI call,
+    // and counting it used to 429 a user browsing cached results (audit
+    // 2026-10-06 Worker F7).
+    const limited = await checkAiRateLimit(env, request, 'summary-narrative');
+    if (limited) return limited;
 
     // Stats payload sent by the client
     let stats;

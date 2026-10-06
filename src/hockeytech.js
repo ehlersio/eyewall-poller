@@ -37,7 +37,7 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
@@ -191,8 +191,7 @@ export function createHockeyTechLeague(cfg) {
     try {
       const { seasonId } = await cfg.resolveSeason(env);
 
-      const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const todayStr = nowET.toISOString().slice(0, 10);
+      const todayStr = etDateString();
 
       // Every game on the slate: the AHL/ECHL schedule 12-16 games on a
       // busy night and this read used to stop at 10 with no order=, so
@@ -1182,12 +1181,13 @@ export function createHockeyTechLeague(cfg) {
     // and head-to-head (hockeytechPrediction.js); streaks count every
     // non-win as a loss, same as /standings.
     if (url.pathname === `${P}/prediction`) {
-      const limited = await checkAiRateLimit(env, request, `${key}-prediction`);
-      if (limited) return limited;
 
       const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
       if (!gameId) return badRequest('gameId required');
       const forceRegen = url.searchParams.get('force') === '1';
+      // Forced regeneration is a billed AI call that skips the cache: owner
+      // only (audit 2026-10-06 Worker F7).
+      if (forceRegen && (!env.POLL_SECRET || url.searchParams.get('secret') !== env.POLL_SECRET)) return unauthorized();
 
       // French gets its own key (':fr'); English keeps the original one.
       // ':elo' so predictions cached under the old point-split win % aren't
@@ -1198,6 +1198,12 @@ export function createHockeyTechLeague(cfg) {
         const cached = await kvGet(env, kvKey);
         if (cached) return json(cached);
       }
+
+      // Rate-limited only on a cache miss: a cached answer costs no AI call,
+      // and counting it used to 429 a user browsing cached results (audit
+      // 2026-10-06 Worker F7).
+      const limited = await checkAiRateLimit(env, request, `${key}-prediction`);
+      if (limited) return limited;
 
       const gameRows = await sbRows(`${table('game_log')}?game_id=eq.${gameId}&select=game_id,season_id,home_team_id,away_team_id`);
       if (gameRows instanceof Response) return gameRows;
@@ -1289,8 +1295,6 @@ export function createHockeyTechLeague(cfg) {
     // the payload it already fetched plus display names -- the Worker has
     // no team-name map (the frontend's {league}Config.js does).
     if (url.pathname === `${P}/team-seasons/head-to-head/narrative` && request.method === 'POST') {
-      const limited = await checkAiRateLimit(env, request, `${key}-h2h-narrative`);
-      if (limited) return limited;
 
       let body;
       try { body = await request.json(); } catch {
@@ -1306,6 +1310,12 @@ export function createHockeyTechLeague(cfg) {
 
       const kvKey = `${key}:h2h-narrative:${[teamA, teamB].slice().sort((a, b) => a - b).join(',')}`;
       return cachedJson(env, kvKey, 24 * 3600, async () => {
+        // Rate-limited only on a cache miss: a cached answer costs no AI call,
+        // and counting it used to 429 a user browsing cached results (audit
+        // 2026-10-06 Worker F7).
+        const limited = await checkAiRateLimit(env, request, `${key}-h2h-narrative`);
+        if (limited) return limited;
+
         const aDisplay = teamADisplay || String(teamA);
         const bDisplay = teamBDisplay || String(teamB);
         const streakLine = currentStreak
@@ -1395,8 +1405,7 @@ Only reference the two teams named above and the numbers given -- no player name
     if (url.pathname === `${P}/today`) {
       const season = await seasonParam(url, env);
       return cachedJson(env, `${key}:today:${season}`, 60, async () => {
-        const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-        const todayStr = nowET.toISOString().slice(0, 10);
+        const todayStr = etDateString();
         const seasonIds = await todaySeasonIds(env, season);
 
         // Today's games, or the next day that has some. One query either
@@ -1585,8 +1594,7 @@ Only reference the two teams named above and the numbers given -- no player name
         // used to answer null teams, 'pre' and 0-0 for a game in progress
         // (audit 2026-10-06, AHL/ECHL F4).
         if (!gameRow) {
-          const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-          const todayStr = nowET.toISOString().slice(0, 10);
+          const todayStr = etDateString();
           gameRow = (await upcomingFromScorebar(env, todayStr)).find(g => g.game_id === gameId) || null;
         }
 

@@ -87,11 +87,18 @@ const SCHEDULE_LOOKAHEAD_TEAM = 'CAR';
 // actual games to be played — see resolveNHLSeason's comment for why
 // gamesPlayed alone is too late a signal for that use case.
 const SCHEDULE_LOOKAHEAD_DAYS = 21;
+// ...and its first game isn't this many days or more in the past. A season
+// whose first game is long gone is not "next season" -- without this, a
+// look-ahead from a stale seed read last year's schedule as imminent
+// (audit 2026-10-06 Worker F3). 60 days still covers a preseason that
+// started weeks before standings shows any games played.
+const SCHEDULE_LOOKBACK_DAYS = 60;
 
 // ── NHL ───────────────────────────────────────────────────────
 
 // Does `seasonId` have a published schedule with its first game (any
-// gameType, preseason included) within SCHEDULE_LOOKAHEAD_DAYS of today?
+// gameType, preseason included) within SCHEDULE_LOOKAHEAD_DAYS of today,
+// and not more than SCHEDULE_LOOKBACK_DAYS ago?
 // Never throws — any failure (bad response, network error, no schedule
 // published yet) resolves false, same "don't guess" posture as the rest
 // of this module.
@@ -109,7 +116,10 @@ export async function nextSeasonHasImminentSchedule(seasonId) {
     if (!firstDate) return false;
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() + SCHEDULE_LOOKAHEAD_DAYS);
-    return new Date(firstDate) <= cutoff;
+    const earliest = new Date();
+    earliest.setDate(earliest.getDate() - SCHEDULE_LOOKBACK_DAYS);
+    const first = new Date(firstDate);
+    return first <= cutoff && first >= earliest;
   } catch {
     return false;
   }
@@ -134,23 +144,48 @@ export async function resolveNHLSeason(env) {
     // correct for "does this season have real stats," but far too late
     // for schedule/roster-facing UI, which should show the new season
     // once its schedule exists and is imminent, not once it's underway.
-    // The look-ahead below covers that gap: it always checks one season
-    // past whatever gamesPlayed accepted (or the fallback, if it didn't),
-    // since that's the only season that could plausibly be imminent.
+    // The look-ahead below covers that gap.
+    //
+    // It is anchored on the standings candidate, never the fallback seed
+    // (audit 2026-10-06 Worker F3):
+    //  - candidate with games played: it's current; the season after it
+    //    takes over once that season's schedule is imminent.
+    //  - candidate with 0 games played (standings flips to the new season
+    //    before its first regular-season game): the candidate itself takes
+    //    over once its schedule is imminent; until then the season before
+    //    it is current. Anchoring this on the seed instead meant that in
+    //    Sept 2027 (standings 20272028, 0 GP, seed 20252026) the resolver
+    //    looked at 20262027 and never considered 20272028 until games
+    //    were played.
+    //  - no candidate at all: the seed's next season, as before.
     let resolved = null;
     if (candidate && gamesPlayed > 0) {
       resolved = String(candidate);
-    } else {
+      const next = String(Number(candidate) + 10001);
+      if (await nextSeasonHasImminentSchedule(next)) resolved = next;
+    } else if (candidate) {
       console.warn(
         `NHL season resolve: candidate=${candidate} totalGamesPlayed=${gamesPlayed} — ` +
-        `no real data behind this candidate, checking look-ahead before falling back`
+        `no real data yet, checking whether its schedule is imminent`
       );
-    }
-
-    const base = resolved || FALLBACK_NHL_SEASON;
-    const nextCandidate = String(Number(base) + 10001);
-    if (await nextSeasonHasImminentSchedule(nextCandidate)) {
-      resolved = nextCandidate;
+      if (await nextSeasonHasImminentSchedule(String(candidate))) {
+        resolved = String(candidate);
+      } else {
+        // The season before the candidate is still the current one. Read
+        // off the live candidate, not a guess, but cached for an hour only
+        // so the candidate takes over soon after it becomes imminent.
+        const prior = String(Number(candidate) - 10001);
+        console.warn(`NHL season resolve: ${candidate} not imminent yet — using ${prior}`);
+        await kvPut(
+          env, 'config:season:nhl',
+          { seasonId: prior, resolvedAt: new Date().toISOString(), source: 'live-prior' },
+          3600
+        );
+        return prior;
+      }
+    } else {
+      const next = String(Number(FALLBACK_NHL_SEASON) + 10001);
+      if (await nextSeasonHasImminentSchedule(next)) resolved = next;
     }
 
     if (!resolved) {

@@ -20,6 +20,7 @@ export default [
         TextDecoder:  'readonly',
         performance:  'readonly',
         caches:       'readonly',
+        AbortSignal:  'readonly',
       },
     },
     rules: {
