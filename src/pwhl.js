@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction, gameResult, endedInOf } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
@@ -20,7 +20,7 @@ const PWHL_ELO_HOME_ADVANTAGE = 35;
 // so this fallback mainly matters for direct/manual endpoint calls and
 // during the frontend's own live-lookup rollout.
 async function seasonParam(url, env) {
-  const raw = url.searchParams.get('season');
+  const raw = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
   if (raw) return parseInt(raw, 10);
   return (await resolvePWHLSeason(env)).seasonId;
 }
@@ -540,7 +540,10 @@ function broadcastPWHL(env, payload, teamKey, eventType, pair) {
   return broadcastToTeam(env, payload, teamKey, eventType, { pair, tag: 'PWHL push', send: sendPush });
 }
 
-export async function handlePWHL(request, env, ctx, url) {
+// A bad query param anywhere below is a 400 (shared.js's sbParam()).
+export const handlePWHL = withParamErrors(handlePWHLRoutes);
+
+async function handlePWHLRoutes(request, env, ctx, url) {
   // ── PWHL endpoints ─────────────────────────────────────────────────────────
 
   if (url.pathname === '/pwhl/standings') {
@@ -600,8 +603,8 @@ export async function handlePWHL(request, env, ctx, url) {
   // requested team are simply absent from the response array; the frontend
   // already knows which seasons it asked for and renders the gap itself.
   if (url.pathname === '/pwhl/team-seasons/compare') {
-    const teamId  = parseInt(url.searchParams.get('teamId') || '0', 10);
-    const seasons = (url.searchParams.get('seasons') || '').split(',').map(s => s.trim()).filter(Boolean);
+    const teamId  = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
+    const seasons = sbParamList(url.searchParams.get('seasons'), { type: 'int', name: 'seasons' });
     if (!teamId || seasons.length === 0) {
       return badRequest('teamId and seasons (comma-separated) are required');
     }
@@ -616,8 +619,8 @@ export async function handlePWHL(request, env, ctx, url) {
   // mirrors NHL's /team-seasons/compare-teams. Same "missing row is the
   // frontend's gap to render" convention as /pwhl/team-seasons/compare.
   if (url.pathname === '/pwhl/team-seasons/compare-teams') {
-    const teamIds = (url.searchParams.get('teamIds') || '').split(',').map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10));
-    const season  = url.searchParams.get('season');
+    const teamIds = sbParamList(url.searchParams.get('teamIds'), { type: 'int', name: 'teamIds' }).map(s => parseInt(s, 10));
+    const season  = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
     if (teamIds.length !== 2 || teamIds.some(id => !id) || !season) {
       return badRequest('teamIds (exactly two, comma-separated) and season are required');
     }
@@ -638,7 +641,7 @@ export async function handlePWHL(request, env, ctx, url) {
   // season_id filter so it spans every season. game_state=eq.Final excludes
   // in-progress/future games, matching this file's other game_log reads.
   if (url.pathname === '/pwhl/team-seasons/head-to-head') {
-    const teamIds = (url.searchParams.get('teamIds') || '').split(',').map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10));
+    const teamIds = sbParamList(url.searchParams.get('teamIds'), { type: 'int', name: 'teamIds' }).map(s => parseInt(s, 10));
     if (teamIds.length !== 2 || teamIds.some(id => !id)) {
       return badRequest('teamIds (exactly two, comma-separated) are required');
     }
@@ -740,7 +743,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // GET /pwhl/players?teamId=1&season=8
   if (url.pathname === '/pwhl/players') {
     const season = await seasonParam(url, env);
-    const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+    const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
     if (!teamId) return badRequest('teamId param required');
     return cachedJson(env, `pwhl:players:${teamId}:${season}`, 3600, async () => {
       const reads = await Promise.all([
@@ -796,7 +799,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Paginates through all rows in batches of 1000 to bypass Supabase row cap.
   if (url.pathname === '/pwhl/shots') {
     const season = await seasonParam(url, env);
-    const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+    const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
     if (!teamId) return badRequest('teamId param required');
     return cachedJson(env, `pwhl:shots:${teamId}:${season}`, 3600, async () => {
       const PAGE = 1000;
@@ -840,7 +843,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // already uses.
   if (url.pathname === '/pwhl/team-season-summary') {
     const season = await seasonParam(url, env);
-    const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+    const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
     if (!teamId) return badRequest('teamId param required');
     return cachedJson(env, `pwhl:team-season-summary:${teamId}:${season}`, 3600, async () => {
       const gameRows = await sbRows(
@@ -927,7 +930,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // game_log has home_team_id / away_team_id — filter both sides with OR
   if (url.pathname === '/pwhl/schedule') {
     const season = await seasonParam(url, env);
-    const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+    const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
     if (!teamId) return badRequest('teamId param required');
     return cachedJson(env, `pwhl:schedule:${teamId}:${season}`, 1800, () => sbRows(
       `${SB_URL}/rest/v1/pwhl_game_log?season_id=eq.${season}&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&order=game_date.asc&limit=150`
@@ -937,7 +940,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // GET /pwhl/roster?teamId=1
   // Returns player list for name resolution in shot map tooltips.
   if (url.pathname === '/pwhl/roster') {
-    const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+    const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
     if (!teamId) return badRequest('teamId param required');
     // 24hr — roster rarely changes
     return cachedJson(env, `pwhl:roster:${teamId}`, 24 * 3600, () => sbRows(
@@ -959,7 +962,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // client used to resolve names from the two teams' current rosters and
   // showed "#jersey" for everyone who had moved (audit #2, game 329).
   if (url.pathname === '/pwhl/game-box') {
-    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
     if (!gameId) return badRequest('gameId param required');
 
     // 24hr -- Final-game box scores don't change once ingested. 5 min when
@@ -1006,8 +1009,8 @@ Only reference the two teams named above and the numbers given -- no player name
   // the frontend already knows the player's position and just reads
   // whichever array is non-empty, same convention as that route.
   if (url.pathname === '/pwhl/player-game-log') {
-    const playerId = parseInt(url.searchParams.get('playerId') || '0', 10);
-    const seasonId = parseInt(url.searchParams.get('seasonId') || '0', 10);
+    const playerId = parseInt(sbParam(url.searchParams.get('playerId'), { type: 'int', name: 'playerId' }) || '0', 10);
+    const seasonId = parseInt(sbParam(url.searchParams.get('seasonId'), { type: 'int', name: 'seasonId' }) || '0', 10);
     if (!playerId || !seasonId) {
       return badRequest('playerId and seasonId params required');
     }
@@ -1039,8 +1042,8 @@ Only reference the two teams named above and the numbers given -- no player name
   // regular-season row so season-agnostic callers (MilestonesFeed) keep
   // working unchanged.
   if (url.pathname === '/pwhl/player/landing') {
-    const playerId    = url.searchParams.get('id');
-    const seasonParam = url.searchParams.get('season');
+    const playerId    = sbParam(url.searchParams.get('id'), { type: 'int', name: 'id' });
+    const seasonParam = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
     if (!playerId) return badRequest('id required');
 
     return cachedJson(env, `pwhl:player:landing:${playerId}:${seasonParam || 'latest'}`, 3600, async () => {
@@ -1093,9 +1096,9 @@ Only reference the two teams named above and the numbers given -- no player name
   // percentile fields rather than a 404/error, same "not enough data yet"
   // convention as NHL's results_vs_process/on_ice_gf_pct nulls.
   if (url.pathname === '/pwhl/player/percentiles') {
-    const playerId    = url.searchParams.get('id');
-    const seasonQuery = url.searchParams.get('season');
-    const seasonType  = url.searchParams.get('seasonType') || 'regular';
+    const playerId    = sbParam(url.searchParams.get('id'), { type: 'int', name: 'id' });
+    const seasonQuery = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
+    const seasonType  = sbParam(url.searchParams.get('seasonType'), { type: 'id', name: 'seasonType' }) || 'regular';
     if (!playerId) return badRequest('id required');
 
     // 1hr -- matches /pwhl/player/landing's TTL
@@ -1159,9 +1162,9 @@ Only reference the two teams named above and the numbers given -- no player name
   // percentile fields -- same "not enough data yet" convention as every
   // other percentile route in this codebase.
   if (url.pathname === '/pwhl/goalie/percentiles') {
-    const playerId    = url.searchParams.get('id');
-    const seasonQuery = url.searchParams.get('season');
-    const seasonType  = url.searchParams.get('seasonType') || 'regular';
+    const playerId    = sbParam(url.searchParams.get('id'), { type: 'int', name: 'id' });
+    const seasonQuery = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
+    const seasonType  = sbParam(url.searchParams.get('seasonType'), { type: 'id', name: 'seasonType' }) || 'regular';
     if (!playerId) return badRequest('id required');
 
     // 1hr -- matches /pwhl/player/percentiles' TTL
@@ -1226,7 +1229,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // game, same infrequency class as other season-long PWHL data in this
   // file.
   if (url.pathname === '/pwhl/player/career') {
-    const playerId = url.searchParams.get('id');
+    const playerId = sbParam(url.searchParams.get('id'), { type: 'int', name: 'id' });
     if (!playerId) return badRequest('id required');
 
     return cachedJson(env, `pwhl:player:career:${playerId}`, 24 * 3600, async () => {
@@ -1322,7 +1325,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Returns the most recent completed game with opponent abbr resolved.
   if (url.pathname === '/pwhl/lastgame') {
     const season = await seasonParam(url, env);
-    const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+    const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
     if (!teamId) return badRequest('teamId param required');
     return cachedJson(env, `pwhl:lastgame:${teamId}:${season}`, 1800, async () => {
       const rows = await sbRows(
@@ -1363,7 +1366,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // unnamed -- a 2025-26 game 328 penalty read "Unknown". pwhl_players by
   // id is the fallback for anyone the summary doesn't list.
   if (url.pathname === '/pwhl/pbp') {
-    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
     if (!gameId) return badRequest('gameId param required');
     return cachedJson(env, `pwhl:pbp:${gameId}`, 3600, async () => {
       // PBP events + game log (for team IDs) + shots + gameSummary in parallel
@@ -1486,7 +1489,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // POST /pwhl/news/bust — invalidate news cache so next GET triggers fresh fetch
   if (url.pathname === '/pwhl/news/bust' && request.method === 'POST') {
     const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     await env.CACHE.delete('pwhl:news');
     console.log('PWHL news cache busted');
     return json({ ok: true, busted: ['pwhl:news'] });
@@ -1497,11 +1500,11 @@ Only reference the two teams named above and the numbers given -- no player name
   // Call after pipeline ingestion or when data looks stale.
   if (url.pathname === '/pwhl/cache/bust' && request.method === 'POST') {
     const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
-    const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
+    const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
     const season = await seasonParam(url, env);
     if (!teamId) return badRequest('teamId required');
-    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
     const keys = [
       `pwhl:shots:${teamId}:${season}`,
       `pwhl:players:${teamId}:${season}`,
@@ -1523,7 +1526,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // GH Actions runner IPs are not blocked by these RSS sources; Worker IPs are.
   if (url.pathname === '/pwhl/news/ingest' && request.method === 'POST') {
     const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
-    if (secret !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     let articles;
     try {
       articles = await request.json();
@@ -1554,8 +1557,8 @@ Only reference the two teams named above and the numbers given -- no player name
 
   // GET /pwhl/salaries?teamId=1&season=2025-26
   if (url.pathname === '/pwhl/salaries') {
-    const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
-    const season = url.searchParams.get('season') || '2025-26';
+    const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
+    const season = sbParam(url.searchParams.get('season'), { type: 'id', name: 'season' }) || '2025-26';
     if (!teamId) return badRequest('teamId required');
     // 24hr cache — salaries update annually
     return cachedJson(env, `pwhl:salaries:${teamId}:${season}`, 3600 * 24, () => sbRows(
@@ -1625,7 +1628,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
 
   // GET /pwhl/player-shots?playerId=36&season=8
   if (url.pathname === '/pwhl/player-shots') {
-    const playerId = parseInt(url.searchParams.get('playerId') || '0', 10);
+    const playerId = parseInt(sbParam(url.searchParams.get('playerId'), { type: 'int', name: 'playerId' }) || '0', 10);
     const season   = await seasonParam(url, env);
     if (!playerId) return badRequest('playerId required');
     // 6hr cache
@@ -1657,7 +1660,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
   // blocked shot never reaches the goalie at all (same convention
   // pwhl_goalie_percentiles.py's GOALIE_FACED_TYPES uses).
   if (url.pathname === '/pwhl/goalie-shots') {
-    const goalieId = parseInt(url.searchParams.get('goalieId') || '0', 10);
+    const goalieId = parseInt(sbParam(url.searchParams.get('goalieId'), { type: 'int', name: 'goalieId' }) || '0', 10);
     const season    = await seasonParam(url, env);
     if (!goalieId) return badRequest('goalieId required');
     // 6hr cache
@@ -1767,7 +1770,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
   // those games. An explicitly different ?season= stays that season only.
   if (url.pathname === '/pwhl/today') {
     const current = await resolvePWHLSeason(env);
-    const raw = url.searchParams.get('season');
+    const raw = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
     const season = raw ? parseInt(raw, 10) : Number(current.seasonId);
     // 60s TTL — status needs to flip quickly when a game goes live
     return cachedJson(env, `pwhl:today:${season}`, 60, async () => {
@@ -2040,7 +2043,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
   // MVPs (three stars), and team stats. Used by usePWHLPeriodSummary hook.
   // TTL: 1hr (immutable once game is final).
   if (url.pathname === '/pwhl/summary') {
-    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
     if (!gameId) return badRequest('gameId required');
 
     return cachedJson(env, `pwhl:gamesummary:${gameId}`, 3600, async () => {
@@ -2179,8 +2182,8 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
   // Caches in KV so subsequent users get the pre-generated text.
   // Public, billed-AI route; rate-limited below (no secret check — called directly from the frontend)
   if (url.pathname === '/pwhl/summary/narrative' && request.method === 'POST') {
-    const gameId    = url.searchParams.get('gameId') || '';
-    const periodKey = url.searchParams.get('period') || '1';
+    const gameId    = sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '';
+    const periodKey = sbParam(url.searchParams.get('period'), { type: 'id', name: 'period' }) || '1';
     // Include carAbbr in cache key so each team gets its own perspective
     const carAbbrKey = (url.searchParams.get('carAbbr') || 'UNK').toUpperCase();
 
@@ -2320,7 +2323,7 @@ Write in plain text, no markdown. 1-2 sentences max.`;
   // lineup (confirmed always null pre-2026-27-preseason; revisit once a
   // genuinely scheduled game with real lineup data exists).
   if (url.pathname === '/pwhl/preview') {
-    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
     if (!gameId) return badRequest('gameId required');
 
     return cachedJson(env, `pwhl:preview:${gameId}`, 1800, async () => {
@@ -2405,12 +2408,12 @@ Write in plain text, no markdown. 1-2 sentences max.`;
   // directly from the frontend, same pattern as /pwhl/scout).
   if (url.pathname === '/pwhl/prediction') {
 
-    const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+    const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
     if (!gameId) return badRequest('gameId required');
     const forceRegen = url.searchParams.get('force') === '1';
     // Forced regeneration is a billed AI call that skips the cache: owner
     // only (audit 2026-10-06 Worker F7).
-    if (forceRegen && (!env.POLL_SECRET || url.searchParams.get('secret') !== env.POLL_SECRET)) return unauthorized();
+    if (forceRegen && !secretMatches(url.searchParams.get('secret'), env.POLL_SECRET)) return unauthorized();
 
     // French gets its own key (':fr'); English keeps the original one.
     const locale = requestLocale(url);

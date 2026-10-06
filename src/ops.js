@@ -18,7 +18,7 @@
  *    season hasn't completed a tick for CRON_STALE_MS.
  */
 
-import { kvGet, kvPut, json, errorJson, badRequest, unauthorized, verifyAdminUser, sendPush, subId, nhlSeasonEnd } from './shared.js';
+import { kvGet, kvPut, json, errorJson, badRequest, unauthorized, verifyAdminUser, sendPush, subId, nhlSeasonEnd, secretMatches } from './shared.js';
 import { resolveNHLSeason, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons } from './seasons.js';
 
 export const OPS_SUBS_KEY = 'ops:subs';
@@ -84,7 +84,7 @@ async function readJson(request) {
 export async function handleOps(request, env, url) {
   if (url.pathname === '/ops/notify') {
     if (request.method !== 'POST') return errorJson(405, { error: 'POST required' });
-    if (!env.POLL_SECRET || url.searchParams.get('secret') !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(url.searchParams.get('secret'), env.POLL_SECRET)) return unauthorized();
     const body = await readJson(request);
     if (!body || typeof body.source !== 'string' || !SOURCE_RE.test(body.source)) {
       return badRequest('source must be 1-100 letters, digits, . _ or -');

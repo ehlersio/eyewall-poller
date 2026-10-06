@@ -166,6 +166,10 @@ npm run deploy
 
 Or push to `main` — GitHub Actions auto-deploys on every push.
 
+## Request parameters
+
+Every query param that reaches a Supabase (PostgREST) URL is read through `shared.js`'s `sbParam(value, { type, name })`, which validates and URL-encodes it first. This dates from 2026-10, when audit Worker F5 found that `?playerId=8478427%26select%3Dplayer_id` replaced `/player-shots`' column list. The types are `int` (ids, seasons, game types, limits), `abbr` (2-4 letter team abbreviations) and `id` (letters, digits, `_ . : -`, e.g. the PWHL salaries label `2025-26`). Comma lists use `sbParamList`. A value that doesn't fit answers **400** `{"error": "invalid <name>"}` before any upstream read. `POLL_SECRET` is compared in constant time (`secretMatches()`).
+
 ## Secrets
 
 Set via `wrangler secret put <NAME>`. Never commit values.

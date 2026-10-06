@@ -21,7 +21,7 @@ import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_IDS } from './ahl.js';
 import { handleECHL, ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS, fetchECHLNews, pollECHL } from './echl.js';
-import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog } from './shared.js';
+import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog, sbParam, secretMatches, withParamErrors } from './shared.js';
 import { handleOps, trackCron, checkCronHealth, readCronHealth, readOpsHealth, OPS_SUBS_KEY } from './ops.js';
 import { maybeDispatchWorkflows } from './dispatch.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
@@ -84,7 +84,10 @@ async function comparisonSeasons(env, lg) {
   return { activeTeamCount, seasons };
 }
 
-export async function handleRequest(request, env, ctx) {
+// A bad query param anywhere (shared.js's sbParam()) is a 400.
+export const handleRequest = withParamErrors(routeRequest);
+
+async function routeRequest(request, env, ctx) {
   const url = new URL(request.url);
 
   // CORS preflight
@@ -113,7 +116,7 @@ export async function handleRequest(request, env, ctx) {
   // the name of a key to look up.
   if (url.pathname === '/cache/bust') {
     if (request.method !== 'POST') return errorJson(405, { error: 'POST required' });
-    if (url.searchParams.get('secret') !== env.POLL_SECRET) return unauthorized();
+    if (!secretMatches(url.searchParams.get('secret'), env.POLL_SECRET)) return unauthorized();
 
     const key = url.searchParams.get('key');
     if (!key) return badRequest('key is required');
@@ -362,7 +365,7 @@ export async function handleRequest(request, env, ctx) {
     if (!sport || !['nhl', 'pwhl'].includes(sport)) {
       return badRequest('sport must be nhl or pwhl');
     }
-    const team = url.searchParams.get('team')?.toUpperCase() || null;
+    const team = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || null;
     // French/English localization, Track B Phase B2. Applied uniformly to
     // all three tiers including hard, even though hard is hand-curated
     // with no admin UI and every existing hard row defaults to locale='en'

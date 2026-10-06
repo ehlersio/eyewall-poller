@@ -37,7 +37,7 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
@@ -83,7 +83,7 @@ export function createHockeyTechLeague(cfg) {
 
   // ?season= param, live-resolving the current season when omitted.
   async function seasonParam(url, env) {
-    const raw = url.searchParams.get('season');
+    const raw = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
     if (raw) return parseInt(raw, 10);
     return (await cfg.resolveSeason(env)).seasonId;
   }
@@ -586,7 +586,7 @@ export function createHockeyTechLeague(cfg) {
     // GET /{league}/schedule?teamId=444&season=90
     if (url.pathname === `${P}/schedule`) {
       const season = await seasonParam(url, env);
-      const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+      const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
       if (!teamId) return badRequest('teamId param required');
       // The 30-min cache holds game_log as written; live status is laid
       // over it on every read, so a game finishing shows within a minute.
@@ -605,7 +605,7 @@ export function createHockeyTechLeague(cfg) {
     // GET /{league}/roster?teamId=444
     // Bare player list for name resolution (shot map tooltips, etc.).
     if (url.pathname === `${P}/roster`) {
-      const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+      const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
       if (!teamId) return badRequest('teamId param required');
       // 24hr — roster rarely changes
       return cachedJson(env, `${key}:roster:${teamId}`, 24 * 3600, () => sbRows(
@@ -625,7 +625,7 @@ export function createHockeyTechLeague(cfg) {
     // which left about a third of a team's rows unnamed.
     if (url.pathname === `${P}/players`) {
       const season = await seasonParam(url, env);
-      const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+      const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
       if (!teamId) return badRequest('teamId param required');
       return cachedJson(env, `${key}:players:${teamId}:${season}`, 3600, async () => {
         const seasonType = await resolveSeasonType(env, season);
@@ -724,7 +724,7 @@ export function createHockeyTechLeague(cfg) {
     // Only 'shot' and 'goal' event types exist in this data.
     if (url.pathname === `${P}/shots`) {
       const season = await seasonParam(url, env);
-      const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+      const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
       if (!teamId) return badRequest('teamId param required');
       // Empty means the season's first games aren't ingested yet (they
       // land with the next nightly run): check again soon, not in an hour.
@@ -753,7 +753,7 @@ export function createHockeyTechLeague(cfg) {
     // with the nightly run after it ends, so an empty answer is re-checked
     // after 5 minutes, not held an hour.
     if (url.pathname === `${P}/game-shots`) {
-      const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+      const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
       if (!gameId) return badRequest('gameId param required');
       return cachedJson(env, `${key}:game-shots:${gameId}`, (rows) => (rows.length ? 3600 : 300), () => sbRows(
         `${table('shot_events')}?game_id=eq.${gameId}&order=period_id.asc,time_seconds.asc&limit=1000`
@@ -767,7 +767,7 @@ export function createHockeyTechLeague(cfg) {
     // frontend doesn't render those cards for these leagues.
     if (url.pathname === `${P}/team-season-summary`) {
       const season = await seasonParam(url, env);
-      const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+      const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
       if (!teamId) return badRequest('teamId param required');
       // A game's shots land with the next nightly run, hours after the
       // final horn: until then this is all zeros, so don't hold it an hour.
@@ -821,8 +821,8 @@ export function createHockeyTechLeague(cfg) {
     // Identity + one season's stat line for the player popup. Supabase-only,
     // same shape as /pwhl/player/landing.
     if (url.pathname === `${P}/player/landing`) {
-      const playerId = url.searchParams.get('id');
-      const seasonQ = url.searchParams.get('season');
+      const playerId = sbParam(url.searchParams.get('id'), { type: 'int', name: 'id' });
+      const seasonQ = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
       if (!playerId) return badRequest('id required');
 
       return cachedJson(env, `${key}:player:landing:${playerId}:${seasonQ || 'latest'}`, 3600, async () => {
@@ -867,7 +867,7 @@ export function createHockeyTechLeague(cfg) {
     // career totals are season-independent. 24hr TTL: they only change when
     // the player plays a new game.
     if (url.pathname === `${P}/player/career`) {
-      const playerId = url.searchParams.get('id');
+      const playerId = sbParam(url.searchParams.get('id'), { type: 'int', name: 'id' });
       if (!playerId) return badRequest('id required');
 
       return cachedJson(env, `${key}:player:career:${playerId}`, 24 * 3600, async () => {
@@ -909,7 +909,7 @@ export function createHockeyTechLeague(cfg) {
     // Shot-map heat map data for one skater. Skaters only -- see the module
     // docstring for why there's no goalie equivalent.
     if (url.pathname === `${P}/player-shots`) {
-      const playerId = parseInt(url.searchParams.get('playerId') || '0', 10);
+      const playerId = parseInt(sbParam(url.searchParams.get('playerId'), { type: 'int', name: 'playerId' }) || '0', 10);
       const season = await seasonParam(url, env);
       if (!playerId) return badRequest('playerId required');
       return cachedJson(env, `${key}:pshots:${playerId}:${season}`, 3600 * 6, async () => {
@@ -937,7 +937,7 @@ export function createHockeyTechLeague(cfg) {
     // OT/shootout fields (no such columns on the game log).
     if (url.pathname === `${P}/lastgame`) {
       const season = await seasonParam(url, env);
-      const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
+      const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
       if (!teamId) return badRequest('teamId param required');
       return cachedJson(env, `${key}:lastgame:${teamId}:${season}`, 3600, async () => {
         const rows = await sbRows(
@@ -971,7 +971,7 @@ export function createHockeyTechLeague(cfg) {
     // faceoffWins/faceoffWinPercentage: they read 0 in every real game, so
     // passing them through would show a fabricated "0 hits" stat line.
     if (url.pathname === `${P}/summary`) {
-      const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+      const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
       if (!gameId) return badRequest('gameId required');
 
       return cachedJson(env, `${key}:gamesummary:${gameId}`, 3600, async () => {
@@ -1094,7 +1094,7 @@ export function createHockeyTechLeague(cfg) {
     // as-is -- the frontend reads its own fields. 30min TTL: pre-game data
     // shifts daily.
     if (url.pathname === `${P}/preview`) {
-      const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+      const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
       if (!gameId) return badRequest('gameId required');
       return cachedJson(env, `${key}:gcpreview:${gameId}`, 1800, async () => {
         const htRes = await htFetch(htGameUrl('gameCenterPreview', gameId));
@@ -1116,7 +1116,7 @@ export function createHockeyTechLeague(cfg) {
     // player_name comes from the game's own gameSummary lineup first, then
     // {league}_players by id; null when neither knows the player.
     if (url.pathname === `${P}/game-box`) {
-      const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+      const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
       if (!gameId) return badRequest('gameId required');
       // 5 min while a row is unnamed (gameSummary unreachable), so it fills in soon.
       const ttl = (box) => ([...box.skaters, ...box.goalies].every(r => r.player_name) ? 3600 : 300);
@@ -1163,7 +1163,7 @@ export function createHockeyTechLeague(cfg) {
     // shape as /pwhl/player-game-log; feeds the player popup's Compare-tab
     // trend chart.
     if (url.pathname === `${P}/player-game-log`) {
-      const playerId = parseInt(url.searchParams.get('playerId') || '0', 10);
+      const playerId = parseInt(sbParam(url.searchParams.get('playerId'), { type: 'int', name: 'playerId' }) || '0', 10);
       const season = await seasonParam(url, env);
       if (!playerId) return badRequest('playerId required');
       return cachedJson(env, `${key}:pgamelog:${playerId}:${season}`, 3600, async () => {
@@ -1182,12 +1182,12 @@ export function createHockeyTechLeague(cfg) {
     // non-win as a loss, same as /standings.
     if (url.pathname === `${P}/prediction`) {
 
-      const gameId = parseInt(url.searchParams.get('gameId') || '0', 10);
+      const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
       if (!gameId) return badRequest('gameId required');
       const forceRegen = url.searchParams.get('force') === '1';
       // Forced regeneration is a billed AI call that skips the cache: owner
       // only (audit 2026-10-06 Worker F7).
-      if (forceRegen && (!env.POLL_SECRET || url.searchParams.get('secret') !== env.POLL_SECRET)) return unauthorized();
+      if (forceRegen && !secretMatches(url.searchParams.get('secret'), env.POLL_SECRET)) return unauthorized();
 
       // French gets its own key (':fr'); English keeps the original one.
       // ':elo' so predictions cached under the old point-split win % aren't
@@ -1227,8 +1227,8 @@ export function createHockeyTechLeague(cfg) {
     // One team across multiple seasons. Seasons the team has no row for are
     // simply absent -- the frontend knows which seasons it asked for.
     if (url.pathname === `${P}/team-seasons/compare`) {
-      const teamId = parseInt(url.searchParams.get('teamId') || '0', 10);
-      const seasons = (url.searchParams.get('seasons') || '').split(',').map(s => s.trim()).filter(Boolean);
+      const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
+      const seasons = sbParamList(url.searchParams.get('seasons'), { type: 'int', name: 'seasons' });
       if (!teamId || seasons.length === 0) {
         return badRequest('teamId and seasons (comma-separated) are required');
       }
@@ -1242,8 +1242,8 @@ export function createHockeyTechLeague(cfg) {
     // GET /{league}/team-seasons/compare-teams?teamIds=335,323&season=90
     // Two teams, same season.
     if (url.pathname === `${P}/team-seasons/compare-teams`) {
-      const teamIds = (url.searchParams.get('teamIds') || '').split(',').map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10));
-      const season = url.searchParams.get('season');
+      const teamIds = sbParamList(url.searchParams.get('teamIds'), { type: 'int', name: 'teamIds' }).map(s => parseInt(s, 10));
+      const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
       if (teamIds.length !== 2 || teamIds.some(id => !id) || !season) {
         return badRequest('teamIds (exactly two, comma-separated) and season are required');
       }
@@ -1259,7 +1259,7 @@ export function createHockeyTechLeague(cfg) {
     // All-time head-to-head between two teams across every season on record.
     // buildHeadToHeadPayload (shared.js) is sport-agnostic.
     if (url.pathname === `${P}/team-seasons/head-to-head`) {
-      const teamIds = (url.searchParams.get('teamIds') || '').split(',').map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10));
+      const teamIds = sbParamList(url.searchParams.get('teamIds'), { type: 'int', name: 'teamIds' }).map(s => parseInt(s, 10));
       if (teamIds.length !== 2 || teamIds.some(id => !id)) {
         return badRequest('teamIds (exactly two, comma-separated) are required');
       }
@@ -1360,7 +1360,7 @@ Only reference the two teams named above and the numbers given -- no player name
     // POST /{league}/news/bust — invalidate the news cache so the next GET refetches
     if (url.pathname === `${P}/news/bust` && request.method === 'POST') {
       const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
-      if (secret !== env.POLL_SECRET) return unauthorized();
+      if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
       await env.CACHE.delete(`${key}:news`);
       console.log(`${label} news cache busted`);
       return json({ ok: true, busted: [`${key}:news`] });
@@ -1370,7 +1370,7 @@ Only reference the two teams named above and the numbers given -- no player name
     // (eyewall-pipeline's nightly {league}_news.py).
     if (url.pathname === `${P}/news/ingest` && request.method === 'POST') {
       const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
-      if (secret !== env.POLL_SECRET) return unauthorized();
+      if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
       let articles;
       try {
         articles = await request.json();
@@ -1629,5 +1629,6 @@ Only reference the two teams named above and the numbers given -- no player name
     return errorJson(404, { error: 'Not found' });
   }
 
-  return { handle, poll, fetchNews };
+  // A bad query param anywhere in a route is a 400 (shared.js's sbParam()).
+  return { handle: withParamErrors(handle), poll, fetchNews };
 }

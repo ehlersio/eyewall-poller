@@ -60,6 +60,12 @@ describe('/game-log gameType', () => {
     expect(res.status).toBe(400)
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
+
+  it('400s on a gameType that smuggles in PostgREST params (sbParam)', async () => {
+    const res = await call(handleNHL, '/game-log?team=CAR&season=20262027&gameType=2%26select%3Dgame_id')
+    expect(res.status).toBe(400)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
 })
 
 describe('/nhl/shots paging', () => {

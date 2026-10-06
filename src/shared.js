@@ -291,6 +291,66 @@ export function etDateString(now = new Date()) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+// ── Query params into PostgREST URLs (2026-10) ────────────────
+// Every Supabase read here is a hand-built query string, and request
+// params used to be interpolated into it raw. searchParams.get() decodes,
+// so `?playerId=8478427%26select%3Dplayer_id` became `player_id=eq.8478427
+// &select=player_id` and rewrote the route's own query (audit 2026-10-06
+// Worker F5, verified live). sbParam() validates a param against its kind
+// and URL-encodes it before interpolation; a value that doesn't fit is a
+// 400 (ParamError, turned into a response by withParamErrors()).
+//  - int:  digits only (ids, seasons, game types, limits)
+//  - abbr: 2-4 letters (team abbreviations)
+//  - id:   letters, digits and _ . : - (labels like '2025-26', slugs)
+// An absent or empty param is null, so `sbParam(...) || default` keeps
+// working the way `searchParams.get(...) || default` did.
+export class ParamError extends Error {}
+
+const SB_PARAM_PATTERNS = {
+  int:  /^\d{1,15}$/,
+  abbr: /^[A-Za-z]{2,4}$/,
+  id:   /^[A-Za-z0-9_.:-]{1,64}$/,
+};
+
+export function sbParam(value, { type = 'id', name = 'parameter' } = {}) {
+  if (value === null || value === undefined || value === '') return null;
+  const pattern = SB_PARAM_PATTERNS[type];
+  if (!pattern) throw new Error(`sbParam: unknown type ${type}`);
+  const s = String(value).trim();
+  if (!pattern.test(s)) throw new ParamError(`invalid ${name}`);
+  return encodeURIComponent(s);
+}
+
+// A comma-separated param (`seasons=20242025,20252026`), each item checked.
+export function sbParamList(value, opts) {
+  return String(value || '').split(',').map(v => v.trim()).filter(Boolean).map(v => sbParam(v, opts));
+}
+
+// Wraps a route handler so a ParamError thrown anywhere inside answers 400.
+export function withParamErrors(handler) {
+  return async (...args) => {
+    try {
+      return await handler(...args);
+    } catch (e) {
+      if (e instanceof ParamError) return badRequest(e.message);
+      throw e;
+    }
+  };
+}
+
+// POLL_SECRET check in constant time: the loop always runs over the whole
+// secret, whatever was sent, so response timing doesn't reveal how many
+// leading characters matched. An unset secret never matches.
+const SECRET_ENCODER = new TextEncoder();
+export function secretMatches(provided, secret) {
+  if (typeof secret !== 'string' || !secret || typeof provided !== 'string') return false;
+  const a = SECRET_ENCODER.encode(provided);
+  const b = SECRET_ENCODER.encode(secret);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < b.length; i++) diff |= (a[i] ?? 0) ^ b[i];
+  return diff === 0;
+}
+
 // ── Response helpers ──────────────────────────────────────────
 
 export function json(val) {
