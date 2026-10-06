@@ -202,9 +202,17 @@ export function createHockeyTechLeague(cfg) {
         `${table('game_log')}?game_date=eq.${todayStr}&season_id=eq.${seasonId}` +
         `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10`,
         []
-      );
-      if (!logged?.length) return;
-      const games = await live(env, logged);
+      ) || [];
+      // Plus today's games game_log doesn't have -- the ECHL preseason
+      // (never ingested) and anything HockeyTech adds mid-season -- from
+      // the same scorebar read /today serves them from. Without this
+      // nobody got a push for those games (audit 2026-10-06, AHL/ECHL F4).
+      const loggedIds = new Set(logged.map(g => g.game_id));
+      const unlogged = (await upcomingFromScorebar(env, todayStr))
+        .filter(g => g.game_date === todayStr && !loggedIds.has(g.game_id));
+      const rows = [...logged, ...unlogged];
+      if (!rows.length) return;
+      const games = await live(env, rows);
 
       // Live games, plus games that have gone final -- pollGame() sends a
       // final game's game-over push once, then skips it.
@@ -1560,7 +1568,18 @@ Only reference the two teams named above and the numbers given -- no player name
           `${table('game_log')}?game_id=eq.${gameId}&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1`,
           []
         ).catch(() => []);
-        const gameRow = gameRows[0] ? (await live(env, gameRows))[0] : null;
+        let gameRow = gameRows[0] ? (await live(env, gameRows))[0] : null;
+        // game_log doesn't have every game: the ECHL preseason is never
+        // ingested, and a mid-season addition waits for the nightly. Those
+        // games are on /today from HockeyTech's scorebar, so take teams,
+        // score and status from the same (60s-cached) read here too; this
+        // used to answer null teams, 'pre' and 0-0 for a game in progress
+        // (audit 2026-10-06, AHL/ECHL F4).
+        if (!gameRow) {
+          const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+          const todayStr = nowET.toISOString().slice(0, 10);
+          gameRow = (await upcomingFromScorebar(env, todayStr)).find(g => g.game_id === gameId) || null;
+        }
 
         let homeScore = 0, awayScore = 0, gameStatus = 'pre';
         if (gameRow) {

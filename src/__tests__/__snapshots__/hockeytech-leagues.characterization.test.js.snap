@@ -1668,6 +1668,10 @@ exports[`ahl > poll > a game already final the first time it is polled gets no g
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_date=eq.2026-01-15&season_id=eq.90&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
     },
+    {
+      "referer": "https://theahl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=modulekit&view=scorebar&numberofdaysback=0&numberofdaysahead=6&limit=200&league_id=4&key=ccb91f29d6744675&client_code=ahl&site_id=3&lang=en",
+    },
   ],
 }
 `;
@@ -1710,6 +1714,10 @@ exports[`ahl > poll > a game followed live gets exactly one game-over push when 
   "upstream": [
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_date=eq.2026-01-15&season_id=eq.90&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+    {
+      "referer": "https://theahl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=modulekit&view=scorebar&numberofdaysback=0&numberofdaysahead=6&limit=200&league_id=4&key=ccb91f29d6744675&client_code=ahl&site_id=3&lang=en",
     },
     {
       "referer": "https://theahl.com/",
@@ -1844,6 +1852,10 @@ exports[`ahl > poll > live game: start, period, goal, hat-trick, power-play and 
   "upstream": [
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_date=eq.2026-01-15&season_id=eq.90&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+    {
+      "referer": "https://theahl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=modulekit&view=scorebar&numberofdaysback=0&numberofdaysahead=6&limit=200&league_id=4&key=ccb91f29d6744675&client_code=ahl&site_id=3&lang=en",
     },
     {
       "referer": "https://theahl.com/",
@@ -4905,6 +4917,10 @@ exports[`echl > poll > a game already final the first time it is polled gets no 
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_date=eq.2026-01-15&season_id=eq.73&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
     },
+    {
+      "referer": "https://echl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=modulekit&view=scorebar&numberofdaysback=0&numberofdaysahead=6&limit=200&league_id=1&key=2c2b89ea7345cae8&client_code=echl&site_id=0&lang=en",
+    },
   ],
 }
 `;
@@ -4947,6 +4963,10 @@ exports[`echl > poll > a game followed live gets exactly one game-over push when
   "upstream": [
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_date=eq.2026-01-15&season_id=eq.73&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+    {
+      "referer": "https://echl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=modulekit&view=scorebar&numberofdaysback=0&numberofdaysahead=6&limit=200&league_id=1&key=2c2b89ea7345cae8&client_code=echl&site_id=0&lang=en",
     },
     {
       "referer": "https://echl.com/",
@@ -5081,6 +5101,10 @@ exports[`echl > poll > live game: start, period, goal, hat-trick, power-play and
   "upstream": [
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_date=eq.2026-01-15&season_id=eq.73&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=10",
+    },
+    {
+      "referer": "https://echl.com/",
+      "url": "https://lscluster.hockeytech.com/feed/index.php?feed=modulekit&view=scorebar&numberofdaysback=0&numberofdaysahead=6&limit=200&league_id=1&key=2c2b89ea7345cae8&client_code=echl&site_id=0&lang=en",
     },
     {
       "referer": "https://echl.com/",
