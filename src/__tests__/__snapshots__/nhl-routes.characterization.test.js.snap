@@ -208,7 +208,7 @@ exports[`background fetches > GET /news/refresh with the secret fetches synchron
 }
 `;
 
-exports[`background fetches > GET /schedule for the current season: [] now, cached in the background 1`] = `
+exports[`background fetches > GET /schedule for the current season: fetched synchronously on a cold miss, then served from KV 1`] = `
 {
   "kvWrites": [
     {
@@ -217,7 +217,49 @@ exports[`background fetches > GET /schedule for the current season: [] now, cach
     },
   ],
   "res": {
-    "body": [],
+    "body": [
+      {
+        "awayTeam": {
+          "abbrev": "BOS",
+          "score": 2,
+        },
+        "gameDate": "2026-01-10",
+        "gameState": "OFF",
+        "gameType": 2,
+        "homeTeam": {
+          "abbrev": "BOS",
+          "score": 4,
+        },
+        "id": 2025020498,
+      },
+      {
+        "awayTeam": {
+          "abbrev": "BOS",
+          "score": 1,
+        },
+        "gameDate": "2026-01-12",
+        "gameState": "FINAL",
+        "gameType": 2,
+        "homeTeam": {
+          "abbrev": "BOS",
+          "score": 3,
+        },
+        "id": 2025020499,
+      },
+      {
+        "awayTeam": {
+          "abbrev": "BOS",
+        },
+        "gameDate": "2026-01-16",
+        "gameState": "FUT",
+        "gameType": 2,
+        "homeTeam": {
+          "abbrev": "BOS",
+        },
+        "id": 2025020500,
+        "neutralSite": false,
+      },
+    ],
     "status": 200,
   },
   "upstream": [
