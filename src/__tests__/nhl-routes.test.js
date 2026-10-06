@@ -2647,9 +2647,10 @@ describe('poll() — multi-team dual broadcast', () => {
       pbpByGameId: {
         '2025020555': {
           periodDescriptor: { number: 1 },
+          rosterSpots: [{ teamId: 6, playerId: 8477956, firstName: { default: 'David' }, lastName: { default: 'Pastrnak' } }],
           plays: [{
-            typeDescKey: 'goal',
-            details: { eventOwnerTeamId: 6, scoringPlayerName: 'David Pastrnak', scoringPlayerId: 88, shotType: 'wrist' },
+            typeDescKey: 'goal', periodDescriptor: { number: 1, periodType: 'REG' }, situationCode: '1551',
+            details: { eventOwnerTeamId: 6, scoringPlayerId: 8477956, shotType: 'wrist', homeScore: 1, awayScore: 0 },
           }],
         },
       },
@@ -2667,6 +2668,7 @@ describe('poll() — multi-team dual broadcast', () => {
     const carOppGoalCall = carCalls.find(([, payload]) => payload.tag?.startsWith('opp-goal-'))
     expect(bosGoalCall?.[1].title).toContain('GOAL')
     expect(bosGoalCall?.[1].title).toContain('BOS')
+    expect(bosGoalCall?.[1].body).toBe('David Pastrnak scores! (wrist)')
     expect(carOppGoalCall?.[1].title).toContain('BOS scores')
   })
 
@@ -2689,9 +2691,10 @@ describe('poll() — multi-team dual broadcast', () => {
       pbpByGameId: {
         '2025020557': {
           periodDescriptor: { number: 1 },
+          rosterSpots: [{ teamId: 6, playerId: 8477956, firstName: { default: 'David' }, lastName: { default: 'Pastrnak' } }],
           plays: [{
-            typeDescKey: 'goal',
-            details: { eventOwnerTeamId: 6, scoringPlayerName: 'David Pastrnak', scoringPlayerId: 88, shotType: 'wrist' },
+            typeDescKey: 'goal', periodDescriptor: { number: 1, periodType: 'REG' }, situationCode: '1551',
+            details: { eventOwnerTeamId: 6, scoringPlayerId: 8477956, shotType: 'wrist', homeScore: 1, awayScore: 0 },
           }],
         },
       },
