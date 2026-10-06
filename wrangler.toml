@@ -42,6 +42,8 @@ simple       = { limit = 10, period = 60 }
 #   NHL_SEASON        — e.g. "20252026" (flip each October)
 #   OPENROUTER_API_KEY — AI generation (2026-08 migration off the [ai] binding
 #                         above, removed -- see shared.js's generateText())
+#   GITHUB_DISPATCH_TOKEN — fine-grained PAT, Actions: write on eyewall-pipeline;
+#                         dispatch.js starts the pipeline's daily workflows (optional)
 #
 # View current secrets: wrangler secret list
 # Set a secret:        wrangler secret put POLL_SECRET

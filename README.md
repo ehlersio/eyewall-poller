@@ -13,11 +13,12 @@ src/
 ├── ahl.js       # AHL config for hockeytech.js: team codes, news sources, HockeyTech client (added 2026-08)
 ├── echl.js      # ECHL config for hockeytech.js (added 2026-08)
 ├── ops.js       # Owner ops alerts: /ops/notify, /ops/subscribe, per-league cron health + self-alert (2026-10)
+├── dispatch.js  # Starts the pipeline's daily GitHub workflows on time (workflow_dispatch, 2026-10)
 ├── seasons.js   # Live NHL/PWHL/AHL/ECHL season resolution (NHL/PWHL added 2026-07, AHL/ECHL 2026-08), cached in KV
 └── shared.js    # KV helpers, response utilities, shared constants
 ```
 
-Wrangler bundles all modules on deploy. The scheduled trigger (`* * * * *`) runs `poll()`, `pollPWHL()`, `pollAHL()`, `pollECHL()`, `refreshPPUnits()`, and `refreshSeasonsCache()` every 60 seconds during the season to keep NHL/PWHL/AHL/ECHL data and the resolved season fresh in KV. Each league's poll is tracked on its own (`ops.js`'s `trackCron()`, writing `health:cron:<league>`), so one league throwing can't skip the others or the alert-log flush; after the polls, any league in season with no successful tick for 15 minutes raises a `worker-cron-<league>` ops alert (see [Ops alerts](#ops-alerts)).
+Wrangler bundles all modules on deploy. The scheduled trigger (`* * * * *`) runs `poll()`, `pollPWHL()`, `pollAHL()`, `pollECHL()`, `refreshPPUnits()`, `refreshSeasonsCache()` and `maybeDispatchWorkflows()` (see [Pipeline scheduling](#pipeline-scheduling)) every 60 seconds during the season to keep NHL/PWHL/AHL/ECHL data and the resolved season fresh in KV. Each league's poll is tracked on its own (`ops.js`'s `trackCron()`, writing `health:cron:<league>`), so one league throwing can't skip the others or the alert-log flush; after the polls, any league in season with no successful tick for 15 minutes raises a `worker-cron-<league>` ops alert (see [Ops alerts](#ops-alerts)).
 
 Bindings: `CACHE` (KV), `AI_ROUTE_LIMITER` (Rate Limit — guards the 4 unauthenticated AI-calling routes from public-cost abuse). AI generation (all narrative/scouting endpoints) went through a `[ai]` Workers AI binding until 2026-08; it's now a plain `fetch()` to OpenRouter (`OPENROUTER_API_KEY` secret) instead — see [Model provider](#model-provider-openrouter) below.
 
@@ -172,6 +173,7 @@ Set via `wrangler secret put <NAME>`. Never commit values.
 | `OPENROUTER_API_KEY` | AI generation for every narrative/scouting/prediction route (`shared.js`'s `generateText()`) — see [Model provider](#model-provider-openrouter) below |
 | `POLL_SECRET` | Protects `POST /poll` manual trigger and the other secret-gated routes, including `POST /ops/notify` (the pipeline's failure reports) |
 | `ADMIN_EMAILS` | Comma-separated allowlist for `GET /admin/health` (news-feed source health). Optional — falls back to a single hardcoded default (`matt@ehlers.io`) if unset. See `shared.js`'s `verifyAdminUser()`. |
+| `GITHUB_DISPATCH_TOKEN` | Fine-grained GitHub PAT with **Actions: write** on `ehlersio/eyewall-pipeline`, used by `dispatch.js` to start the pipeline's daily workflows (2026-10). Optional: without it the Worker logs once a day and the workflows run on GitHub's own (late) schedule. See [Pipeline scheduling](#pipeline-scheduling) |
 | `VAPID_PRIVATE_KEY` | Web Push VAPID private key |
 | `VAPID_PUBLIC_KEY` | Web Push VAPID public key |
 | `VAPID_SUBJECT` | Web Push contact (`mailto:...`) |
@@ -259,6 +261,10 @@ Key patterns:
 | `health:ops:{source}` | none | The latest `/ops/notify` report from one source (a pipeline workflow file, `worker-cron-<league>`): `{status, title, body, url, at}` |
 | `ops:subs` | 1yr | Devices that get ops alerts — same entry shape as `push:subs` (`{endpoint, keys}` or `{platform: 'ios', token}`), owner-only via `/ops/subscribe` |
 | `ops:notified:{source}` | 30min | Debounce: at most one ops push per source per 30 min |
+| `ops:dispatched:{workflow}:{YYYY-MM-DD}` | 36h | Marker: the Worker dispatched that pipeline workflow on that UTC day (`dispatch.js`) |
+| `ops:dispatch:retry:{workflow}:{YYYY-MM-DD}` | 10min | Back-off after a failed dispatch, so a bad token isn't retried every minute |
+| `ops:dispatch:no-token:{YYYY-MM-DD}` | 36h | `GITHUB_DISPATCH_TOKEN` is unset; already logged today |
+| `health:ops:dispatch-{workflow}` | none | The latest dispatch attempt for that workflow: `{status: 'ok'\|'failure', title, body, url, at}` (same shape as `/ops/notify`'s records) |
 | `alerts:recent:{LEAGUE}` | 96h | Every alert the pollers sent for that league (NHL/PWHL/AHL/ECHL) in the last 72h, at most 400: `{team, vs, type, title, body, url, at}`. Collected during a cron run and written once per league at its end (`shared.js`'s `recordAlert`/`flushAlertLog`), for the app's notifications bell |
 | `push:subs` | 1yr | Push subscriptions — Web Push (`endpoint`+`keys`) and, as of 2026-09, native iOS (`platform: 'ios'` + APNs device `token`) share this one array; `sendPush()`/`broadcast()` branch on `sub.platform`. A sub follows one or more teams: `teams: [{key: 'NHL:CAR', prefs}]` (2026-09, the app's followed teams; `teamAbbr`/`prefs` = the first), matched by `shared.js`'s `pushTargets()` — someone following both teams in a game gets each alert once, from the team higher in their list |
 | `apns:jwt` | 55min | Cached APNs auth JWT (ES256, signed with `APNS_AUTH_KEY`) — Apple asks clients not to mint a fresh one per request; see `shared.js`'s `buildAPNsJWT()` |
@@ -504,6 +510,24 @@ Added 2026-10 (audit 2026-10-06 §4/§7): failures used to go nowhere — pipeli
 - **Pipeline workflows** report a failed run with `curl -fsS -X POST "$WORKER_URL/ops/notify?secret=$POLL_SECRET" -H 'content-type: application/json' -d '{"source":"<workflow-file>","status":"failure","title":"<Workflow> failed","body":"<run url>","url":"<run url>"}'`.
 - **The Worker** reports itself: after each tick's polls, a league in season (`ops.js`'s `leagueInSeason()`, from the league's own season dates) whose `health:cron:<league>.lastOkAt` is more than 15 minutes old raises `worker-cron-<league>`, and records an `ok` once it recovers.
 - **Delivery:** every device in `ops:subs`, registered from the app's hidden `/admin/health` page ("Send ops alerts to this device"). Separate from `push:subs`, so ops alerts never reach users. One push per source per 30 minutes; every report is still recorded.
+
+## Pipeline scheduling
+
+GitHub's `on: schedule` starts the pipeline's workflows 3-7 hours late, and the morning AI predictions landed after afternoon puck drops (audit 2026-10-06 §4). Since 2026-10 the Worker's own cron, which runs on time every minute, starts them with a `workflow_dispatch` (`src/dispatch.js`):
+
+| Workflow (`eyewall-pipeline`) | Dispatched at (UTC) |
+|---|---|
+| `nightly.yml` | 07:00 |
+| `pwhl-nightly.yml` | 07:20 |
+| `ahl-nightly.yml` | 07:40 |
+| `echl-nightly.yml` | 08:00 |
+| `moneypuck-ingest.yml` | 10:00 |
+| `ai_pipeline.yml` | 14:00 |
+
+- Once the UTC clock passes a slot, the first tick with no `ops:dispatched:<workflow>:<date>` marker POSTs `https://api.github.com/repos/ehlersio/eyewall-pipeline/actions/workflows/<workflow>/dispatches` with `{ref: 'main'}`. A 204 writes the marker (36h), so the workflow is dispatched at most once per UTC day. A failure is retried 10 minutes later.
+- Each attempt is recorded in `health:ops:dispatch-<workflow>` (status `ok`/`failure`), shown on `/admin/health`.
+- The workflows keep `on: schedule` as a fallback. A scheduled run skips itself if a run of that workflow already succeeded that UTC day, and a dispatched run never skips.
+- Needs the `GITHUB_DISPATCH_TOKEN` secret. Without it nothing is dispatched (logged once a day) and the GitHub schedule carries on as before. The first day the token is set, every slot already past that day is dispatched on the next tick.
 
 ## October Season Prep
 
