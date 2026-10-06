@@ -6,7 +6,7 @@
  */
 
 import { penaltyText, penaltyDescription } from './penaltyText.js';
-import { kvGet, kvPut, json, nhlSeasonEnd, finalLabel, endedInSuffix, cachedJson, sbRows, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
+import { kvGet, kvPut, json, nhlSeasonEnd, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
 import { readCronHealth, readOpsHealth } from './ops.js';
@@ -2997,11 +2997,14 @@ export async function handleNHL(request, env, ctx, url) {
       })().catch(() => ({}));
 
       const sb = path => sbRowsOrThrow(path).catch(() => []);
+      const ahlPlayersPath = `ahl_players?team_id=eq.${ahlTeamId}&select=player_id,first_name,last_name,position,birth_date,jersey_number&limit=200`;
       const [injuries, roster, prospectsRaw, ahlPlayers, transactions] = await Promise.all([
         sb(`player_injuries?team=eq.${team}&select=player_id,player_name,status,injury_type,return_date`),
         rosterP,
         prospectsP,
-        sb(`ahl_players?team_id=eq.${ahlTeamId}&select=player_id,first_name,last_name,position,birth_date,jersey_number&limit=200`),
+        // Players marked off the affiliate's roster (released, loaned) aren't
+        // call-up candidates; without the column yet, the unfiltered read.
+        sbRowsOrThrow(`${ahlPlayersPath}&${ON_ROSTER_FILTER}`).catch(() => sb(ahlPlayersPath)),
         sb(`nhl_transactions?team=eq.${team}&tx_date=gte.${yearAgo}&select=tx_date,description,categories,primary_category&order=tx_date.desc&limit=500`),
       ]);
 

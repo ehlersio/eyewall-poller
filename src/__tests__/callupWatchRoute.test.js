@@ -65,10 +65,25 @@ describe('GET /nhl/callup-watch', () => {
 
     const urls = globalThis.fetch.mock.calls.map(c => String(c[0]))
     expect(urls.find(u => u.includes('ahl_players?'))).toContain('team_id=eq.330')
+    // Players marked off the affiliate's roster aren't candidates.
+    expect(urls.find(u => u.includes('ahl_players?'))).toContain('&on_roster=not.is.false')
     expect(urls.find(u => u.includes('ahl_player_seasons?'))).toContain('season_id=in.(94,90)')
     expect(urls.find(u => u.includes('ahl_skater_game_box?'))).toContain('season_id=eq.94')
     expect(urls.find(u => u.includes('player_injuries?'))).toContain('team=eq.CAR')
     expect(urls.find(u => u.includes('nhl_transactions?'))).toMatch(/team=eq\.CAR&tx_date=gte\.\d{4}-\d{2}-\d{2}/)
+  })
+
+  it('reads the affiliate unfiltered while ahl_players.on_roster is missing', async () => {
+    mockUpstream()
+    const inner = globalThis.fetch
+    globalThis.fetch = vi.fn(async (input) => String(input).includes('on_roster=')
+      ? { ok: false, status: 400, json: async () => ({ code: '42703' }) }
+      : inner(input))
+    const body = await (await call('team=CAR&ahlTeamId=330')).json()
+    expect(body.groups.F.candidates[0]).toMatchObject({ name: 'Bradly Nadeau' })
+    const ahl = globalThis.fetch.mock.calls.map(c => String(c[0])).filter(u => u.includes('ahl_players?'))
+    expect(ahl).toHaveLength(2)
+    expect(ahl[1]).not.toContain('on_roster')
   })
 
   it('caches the answer for an hour under the team and affiliate', async () => {

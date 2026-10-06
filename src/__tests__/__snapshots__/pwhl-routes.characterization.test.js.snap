@@ -3321,7 +3321,7 @@ exports[`players > response, upstream requests and KV writes; repeat call 1`] = 
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_goalie_seasons?team_id=eq.1&season_id=eq.8&season_type=eq.regular&order=gp.desc&limit=5",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?team_id=eq.1&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_city,shoots&limit=80",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?team_id=eq.1&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_city,shoots&limit=80&on_roster=not.is.false",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_players?select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_city,shoots&limit=500",

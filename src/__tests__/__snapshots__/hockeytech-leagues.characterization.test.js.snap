@@ -1651,7 +1651,7 @@ exports[`ahl > players > response, upstream requests and KV writes; repeat call 
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goalie_seasons?team_id=eq.335&season_id=eq.90&season_type=eq.regular&order=gp.desc",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?team_id=eq.335&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=80",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?team_id=eq.335&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=80&on_roster=not.is.false",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=in.(6681,6682,7001)&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs",
@@ -4900,7 +4900,7 @@ exports[`echl > players > response, upstream requests and KV writes; repeat call
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goalie_seasons?team_id=eq.8&season_id=eq.73&season_type=eq.regular&order=gp.desc",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?team_id=eq.8&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=80",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?team_id=eq.8&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs&limit=80&on_roster=not.is.false",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=in.(6681,6682,7001)&select=player_id,first_name,last_name,position,jersey_number,birth_date,birth_place,shoots,height_inches,weight_lbs",
