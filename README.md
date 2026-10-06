@@ -326,7 +326,7 @@ Key patterns:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/cache/:key` | Read any KV key (primary NHL data path). 404 on a miss, except `standings`, which is fetched from the NHL, stored and returned (still 404 if that fetch fails); a `schedule:*` miss is filled in the background |
+| `GET` | `/cache/:key` | Read one of the KV entries the app consumes (primary NHL data path): `schedule:*`, `standings`, `pbp:*`, `boxscore:*`, `landing:*`, `summary:*`, `narrative:*`, `pwhl:narrative:*`, `prediction:*` (`CACHE_ROUTE_READABLE` in `nhl.js`). Any other key is refused (403) — the namespace also holds every push subscription, Live Activity tokens and the APNs JWT, which were readable here until 2026-10-06. 404 on a miss, except `standings`, which is fetched from the NHL, stored and returned (still 404 if that fetch fails); a `schedule:*` miss is filled in the background |
 | `POST` | `/cache/bust?key=&secret=` | Delete one KV entry so the next request rebuilds it from live code. `POLL_SECRET`-gated; GET is refused (405) so a stray link or prefetch can't delete anything. Returns `{ key, busted }` — `busted: false` means the key wasn't cached, not that the call failed. **Refuses `push:*` and `*:override`** (403): those hold real data — every push subscription, and deliberately-pinned season overrides — so busting them would destroy data rather than refresh it. Added 2026-09 after the `/players-search-index` paging fix deployed correctly but stayed invisible for its 6-hour TTL. |
 | `GET` | `/news?team=` | Team news feed |
 | `GET` | `/schedule?team=` | Team schedule |

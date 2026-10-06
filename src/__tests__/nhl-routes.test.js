@@ -184,9 +184,9 @@ describe('GET /cache/:key', () => {
   it('returns 404 for a cold, non-schedule key (no background fetch to trigger)', async () => {
     const env = makeEnv()
     const res = await handleNHL(
-      makeRequest('/cache/nhl:player-analytics:20252026'),
+      makeRequest('/cache/pbp:2026020001'),
       env, makeCtx(),
-      new URL('https://example.com/cache/nhl:player-analytics:20252026')
+      new URL('https://example.com/cache/pbp:2026020001')
     )
     expect(res.status).toBe(404)
   })
@@ -194,10 +194,47 @@ describe('GET /cache/:key', () => {
   it('returns the cached value on a hit', async () => {
     const env = makeEnv({ CACHE: { async get() { return JSON.stringify({ hello: 'world' }) }, async put() {} } })
     const res = await handleNHL(
-      makeRequest('/cache/some:key'), env, makeCtx(), new URL('https://example.com/cache/some:key')
+      makeRequest('/cache/boxscore:2026020001'), env, makeCtx(), new URL('https://example.com/cache/boxscore:2026020001')
     )
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ hello: 'world' })
+  })
+
+  // 2026-10-06: the route used to read any key, which exposed every push
+  // subscription (push:subs), Live Activity tokens and the APNs JWT.
+  it.each([
+    'push:subs',
+    'la:start:CAR',
+    'la:tokens:2026020001',
+    'apns:jwt',
+    'config:season:nhl:override',
+    'health:cron:nhl',
+    'alerts:log',
+    'nhl:player-analytics:20252026',
+    'pwhl:players:1:11',
+  ])('refuses %s even when it is cached', async (key) => {
+    const get = vi.fn(async () => JSON.stringify([{ endpoint: 'https://push.example/x', keys: { auth: 'secret' } }]))
+    const env = makeEnv({ CACHE: { get, async put() {} } })
+    const path = `/cache/${encodeURIComponent(key)}`
+    const res = await handleNHL(makeRequest(path), env, makeCtx(), new URL(`https://example.com${path}`))
+    expect(res.status).toBe(403)
+    expect(await res.text()).not.toContain('secret')
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'schedule:BOS:20262027',
+    'standings',
+    'summary:2026020001',
+    'narrative:2:2026020001:CAR',
+    'pwhl:narrative:game:328:BOS',
+    'prediction:2026020001:CAR:fr',
+    'landing:2026020001',
+  ])('serves %s', async (key) => {
+    const env = makeEnv({ CACHE: { async get() { return JSON.stringify({ ok: true }) }, async put() {} } })
+    const path = `/cache/${encodeURIComponent(key)}`
+    const res = await handleNHL(makeRequest(path), env, makeCtx(), new URL(`https://example.com${path}`))
+    expect(res.status).toBe(200)
   })
 
   // 2026-10-05: a standings miss used to 404 until the next cron tick.
@@ -271,7 +308,7 @@ describe('GET /cache/:key', () => {
 
     it('leaves other cold keys a plain 404 with no upstream fetch', async () => {
       const env = makeEnv()
-      const res = await handleNHL(makeRequest('/cache/news:CAR'), env, makeCtx(), new URL('https://example.com/cache/news:CAR'))
+      const res = await handleNHL(makeRequest('/cache/pbp:2026020001'), env, makeCtx(), new URL('https://example.com/cache/pbp:2026020001'))
       expect(res.status).toBe(404)
       expect(globalThis.fetch).not.toHaveBeenCalled()
     })

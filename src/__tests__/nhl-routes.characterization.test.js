@@ -548,7 +548,7 @@ describe('background fetches', () => {
 
     const hit = await callRoute(env, '/cache/standings')
     const miss = await callRoute(env, `/cache/${encodeURIComponent(`schedule:BOS:${PRIOR}`)}`, { ctx })
-    const otherMiss = await callRoute(env, '/cache/nothing-here')
+    const otherMiss = await callRoute(env, '/cache/pbp:2026020001')
     await flushWaitUntil(ctx)
     expect({ hitCount: hit.body.length, miss, otherMiss, upstream: upstreamCalls(), kvWrites }).toMatchSnapshot()
   })

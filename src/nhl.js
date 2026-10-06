@@ -90,6 +90,22 @@ async function getTeamConfig(request, env) {
 // still bustable manually via /cache, just not re-fetched every 10 minutes
 // for no reason.
 const CURRENT_SCHEDULE_TTL    = 600;             // 10 min — matches prior behavior
+// Key prefixes `GET /cache/:key` will serve. Every app read goes through
+// here (nhlApi.js kvFetch, narrativeCache.js, the prediction/summary share
+// cards); add a prefix when the app starts reading a new one, never widen
+// to "anything". See the route for what the namespace must not expose.
+const CACHE_ROUTE_READABLE = [
+  'schedule:',        // schedule:{abbr}:{season}
+  'standings',        // NHL standings
+  'pbp:',             // pbp:{gameId}
+  'boxscore:',        // boxscore:{gameId}
+  'landing:',         // landing:{gameId}
+  'summary:',         // summary:{gameId} (cron game summary)
+  'narrative:',       // narrative:{period}:{gameId}:{abbr}
+  'pwhl:narrative:',  // pwhl:narrative:{period}:{gameId}:{abbr}
+  'prediction:',      // prediction:{gameId}:{abbr}[:fr]
+];
+
 const HISTORICAL_SCHEDULE_TTL = 60 * 24 * 3600;   // 60 days — past season, won't change
 function scheduleKey(abbr, season) {
   return `schedule:${abbr}:${season}`;
@@ -3613,6 +3629,15 @@ Only reference the two teams named above and the numbers given -- no player name
   // standings miss, fetch them synchronously (refreshStandings()).
   if (url.pathname.startsWith('/cache/')) {
     const key = decodeURIComponent(url.pathname.slice('/cache/'.length));
+    // Only the handful of entries the app actually reads are served. The
+    // namespace also holds every push subscription (`push:subs`, with each
+    // subscriber's endpoint and keys), Live Activity push tokens (`la:*`), the
+    // APNs bearer JWT (`apns:jwt`) and the season overrides -- none of which
+    // may leave the Worker. An unlisted key is refused outright (403) rather
+    // than 404'd, so a probe can't tell "not cached" from "not yours".
+    if (!CACHE_ROUTE_READABLE.some(prefix => key === prefix || key.startsWith(prefix))) {
+      return errorJson(403, { error: `${key} is not readable through /cache/` });
+    }
     // A schedule is how the app tells a game went live (see
     // SCOREBOARD_STATES_KEY), so its edge copy is held as briefly as KV allows.
     const val = await kvGet(env, key, key.startsWith('schedule:') ? { cacheTtl: 30 } : undefined);
