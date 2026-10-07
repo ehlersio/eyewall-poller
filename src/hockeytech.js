@@ -37,7 +37,7 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRowsIfTable, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
@@ -530,6 +530,73 @@ export function createHockeyTechLeague(cfg) {
     }
   }
 
+  // A player's percentile row for one season: the latest season's rows
+  // (rows arrive season-desc), and of a traded player's per-team rows the
+  // one with the most games. {} when there's none.
+  function pickPercentileRow(rows) {
+    const season = rows[0]?.season_id;
+    const forSeason = rows.filter(r => r.season_id === season);
+    if (!forSeason.length) return {};
+    return forSeason.reduce((best, r) => ((r.gp ?? -1) > (best.gp ?? -1) ? r : best), forSeason[0]);
+  }
+
+  const rateBasisOf = row => (row.rate_basis_per_gp === false ? 'per60' : 'perGP');
+
+  function percentileIdentity(playerId, seasonQ, seasonTypeQ, row) {
+    return {
+      player_id:   parseInt(playerId, 10),
+      team_id:     row.team_id ?? null,
+      season_id:   row.season_id ?? (seasonQ ? parseInt(seasonQ, 10) : null),
+      season_type: row.season_type ?? seasonTypeQ ?? (seasonQ ? null : 'regular'),
+    };
+  }
+
+  // /pwhl/player/percentiles' shape. The percentiles rank per-game rates
+  // when rateBasis is 'perGP', and the notes say so.
+  function skaterPercentilesBody(playerId, seasonQ, seasonTypeQ, row, xg) {
+    const rateBasis = rateBasisOf(row);
+    const per = rateBasis === 'perGP' ? ', per game played' : '';
+    return {
+      ...percentileIdentity(playerId, seasonQ, seasonTypeQ, row),
+      toi_per_game: row.toi_per_game ?? null,
+      xg_for:       xg.xg_for       ?? null,
+      finishing:    xg.finishing    ?? null,
+      rateBasis,
+      percentiles: {
+        goals:     { pct: row.pct_goals     ?? null, label: 'Goals',       note: `Percentile rank vs league, goals${per}` },
+        a1:        { pct: row.pct_a1        ?? null, label: '1st Assists', note: `Percentile rank vs league, primary assists${per}` },
+        penalties: { pct: row.pct_penalties ?? null, label: 'Penalties',   note: `Percentile rank vs league, penalty discipline${per}` },
+        finishing: { pct: row.pct_finishing ?? null, label: 'Finishing',   note: `Percentile rank vs league, goals above xGoals${per}` },
+      },
+    };
+  }
+
+  // /pwhl/goalie/percentiles' shape; `gsax60` holds GSAX per game played
+  // when rateBasis is 'perGP' (the column is gsax_per60 either way).
+  function goaliePercentilesBody(playerId, seasonQ, seasonTypeQ, row) {
+    const rateBasis = rateBasisOf(row);
+    const perGP = rateBasis === 'perGP';
+    const svPct = v => (v != null ? Math.round(v * 1000) / 10 : null);
+    return {
+      ...percentileIdentity(playerId, seasonQ, seasonTypeQ, row),
+      gsax:    row.gsax       ?? null,
+      gsax60:  row.gsax_per60 ?? null,
+      evSvPct: svPct(row.ev_sv_pct),
+      hdSvPct: svPct(row.hd_sv_pct),
+      mdSvPct: svPct(row.md_sv_pct),
+      pkSvPct: svPct(row.pk_sv_pct),
+      rateBasis,
+      percentiles: {
+        gsax:   { pct: row.pct_gsax   ?? null, label: 'GSAX',            note: `Percentile rank vs ${label} goalies, goals saved above expected (danger-zone xG proxy)` },
+        gsax60: { pct: row.pct_gsax60 ?? null, label: perGP ? 'GSAX/GP' : 'GSAX/60', note: `Percentile rank vs ${label} goalies, GSAX per ${perGP ? 'game played' : '60 minutes'}` },
+        evSv:   { pct: row.pct_ev_sv  ?? null, label: '5-on-5 SV%',      note: `Percentile rank vs ${label} goalies, even-strength save percentage` },
+        hdSv:   { pct: row.pct_hd_sv  ?? null, label: 'High Danger SV%', note: `Percentile rank vs ${label} goalies, high-danger save percentage` },
+        mdSv:   { pct: row.pct_md_sv  ?? null, label: 'Med Danger SV%',  note: `Percentile rank vs ${label} goalies, medium-danger save percentage` },
+        pkSv:   { pct: row.pct_pk_sv  ?? null, label: 'PK SV%',          note: `Percentile rank vs ${label} goalies, penalty-kill save percentage` },
+      },
+    };
+  }
+
   // ── HTTP routes ────────────────────────────────────────────────────
   async function handle(request, env, ctx, url) {
     // GET /{league}/standings?season=90
@@ -902,6 +969,69 @@ export function createHockeyTechLeague(cfg) {
         };
 
         return data;
+      });
+    }
+
+    // GET /{league}/player/percentiles?id=6681&season=90
+    // GET /{league}/goalie/percentiles?id=7001&season=90
+    // Same response shape as /pwhl/player/percentiles and
+    // /pwhl/goalie/percentiles, plus `rateBasis`. eyewall-pipeline's
+    // hockeytech_percentiles.py / hockeytech_goalie_percentiles.py write
+    // {league}_player_percentiles / {league}_goalie_percentiles with the
+    // PWHL percentile columns; AHL/ECHL box scores carry no TOI, so the
+    // `*_per60` columns hold per-game-played rates there and the row says
+    // so with rate_basis_per_gp = true (rateBasis 'perGP'; 'per60' only for
+    // a row that says false). xg_for/finishing come from the percentile row,
+    // or from {league}_player_xg when the row doesn't carry them.
+    //
+    // `playerId=` is accepted as an alias of `id=`. A season_id belongs to
+    // exactly one season type (90 regular, 92 playoffs), so ?season= alone
+    // picks the row; ?seasonType= narrows further only when given. With no
+    // ?season=, the most recent regular season (or ?seasonType=).
+    //
+    // No row (not enough games yet), or the tables not created yet (owner
+    // migration docs/2026-10-07_hockeytech_percentiles.sql in eyewall-
+    // pipeline), both answer 200 with null percentiles -- the same "not
+    // enough data yet" convention as the PWHL routes. The missing-table
+    // answer isn't KV-cached, so the data shows as soon as it lands.
+    if (url.pathname === `${P}/player/percentiles` || url.pathname === `${P}/goalie/percentiles`) {
+      const goalie = url.pathname === `${P}/goalie/percentiles`;
+      const playerId = sbParam(url.searchParams.get('id') || url.searchParams.get('playerId'), { type: 'int', name: 'id' });
+      const seasonQ = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
+      const seasonTypeQ = sbParam(url.searchParams.get('seasonType'), { type: 'id', name: 'seasonType' });
+      if (!playerId) return badRequest('id required');
+
+      const kind = goalie ? 'goalie' : 'player';
+      const cacheKey = `${key}:${kind}:percentiles:${playerId}:${seasonQ || 'latest'}:${seasonTypeQ || (seasonQ ? 'any' : 'regular')}`;
+      return cachedJson(env, cacheKey, 3600, async () => {
+        const filter = seasonQ
+          ? `player_id=eq.${playerId}&season_id=eq.${seasonQ}${seasonTypeQ ? `&season_type=eq.${seasonTypeQ}` : ''}&order=team_id.asc`
+          : `player_id=eq.${playerId}&season_type=eq.${seasonTypeQ || 'regular'}&order=season_id.desc,team_id.asc&limit=20`;
+
+        let rows;
+        try {
+          rows = await sbRowsIfTable(`${table(`${kind}_percentiles`)}?${filter}&select=*`);
+        } catch (e) {
+          return errorJson(502, { error: e.message });
+        }
+        if (rows instanceof Response) return rows;
+        const tableMissing = rows === null;
+        const row = pickPercentileRow(rows || []);
+
+        let xg = row;
+        if (!goalie && row.season_id != null && row.xg_for === undefined && row.finishing === undefined) {
+          try {
+            const xgRows = await sbRowsIfTable(
+              `${table('player_xg')}?player_id=eq.${playerId}&season_id=eq.${row.season_id}&order=team_id.asc&select=*`
+            );
+            if (Array.isArray(xgRows)) xg = xgRows.find(r => r.team_id === row.team_id) || xgRows[0] || {};
+          } catch { /* xG is optional: the percentiles still answer */ }
+        }
+
+        const data = goalie
+          ? goaliePercentilesBody(playerId, seasonQ, seasonTypeQ, row)
+          : skaterPercentilesBody(playerId, seasonQ, seasonTypeQ, row, xg);
+        return tableMissing ? json(data, { maxAge: 300 }) : data;
       });
     }
 

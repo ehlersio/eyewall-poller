@@ -512,6 +512,18 @@ export async function sbRowsOr(url, fallback) {
   return rows instanceof Response ? fallback : rows;
 }
 
+// sbRows for a table the pipeline adds by an owner-run migration, which
+// may not exist yet. PostgREST answers a missing table with 404 (PGRST205)
+// and a filter or select on a column it doesn't have with 400 (PGRST204 /
+// 42703): both resolve to null ("no such table yet"), so a route can serve
+// its empty shape instead of a 502. Any other failure is sbError(status).
+export async function sbRowsIfTable(url, headers = {}) {
+  const res = await fetch(url, { headers: { ...sbHeaders(), ...headers } });
+  if (res.status === 404 || res.status === 400) return null;
+  if (!res.ok) return sbError(res.status);
+  return res.json();
+}
+
 // {ahl,echl,pwhl}_players.on_roster (eyewall-pipeline, 2026-10): the
 // nightly roster ingest sets it true for players on their team's roster feed
 // and false for the team's other rows (released, sent down, traded but not
