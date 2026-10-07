@@ -41,6 +41,7 @@ import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRowsIfTable, sbRost
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
+import { buildGoals, buildPenaltyShots, fetchGameDetailRows, fetchWinProbs, withWinProbs } from './hockeytechGameDetail.js';
 
 // Elo constants -- match eyewall-pipeline/elo.py (and nhl.js's
 // ELO_HOME_ADVANTAGE). hockeytech_elo.py writes the ratings these apply to.
@@ -651,19 +652,27 @@ export function createHockeyTechLeague(cfg) {
     }
 
     // GET /{league}/schedule?teamId=444&season=90
+    // Each game with an Elo probability in {league}_game_win_probs
+    // (eyewall-pipeline's hockeytech_elo.py, written for today's and
+    // tomorrow's games and kept after) carries
+    // winProb: { home, away, source: 'elo' } (contract C6).
     if (url.pathname === `${P}/schedule`) {
       const season = await seasonParam(url, env);
       const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
       if (!teamId) return badRequest('teamId param required');
       // The 30-min cache holds game_log as written; live status is laid
       // over it on every read, so a game finishing shows within a minute.
-      const kvKey = `${key}:schedule:${teamId}:${season}`;
+      const kvKey = `${key}:schedule:v2:${teamId}:${season}`;
       let rows = await kvGet(env, kvKey);
       if (!rows) {
-        rows = await sbRows(
-          `${table('game_log')}?season_id=eq.${season}&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&order=game_date.asc&limit=150`
-        );
-        if (rows instanceof Response) return rows;
+        const [logRows, probs] = await Promise.all([
+          sbRows(
+            `${table('game_log')}?season_id=eq.${season}&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&order=game_date.asc&limit=150`
+          ),
+          fetchWinProbs(key, season, teamId),
+        ]);
+        if (logRows instanceof Response) return logRows;
+        rows = withWinProbs(logRows, probs);
         await kvPut(env, kvKey, rows, 1800);
       }
       return json(await live(env, rows)); // live scores: LIVE_MAX_AGE (shared.js LIVE_PATHS)
@@ -1245,24 +1254,30 @@ export function createHockeyTechLeague(cfg) {
     // No hits/faceoff/blocked-shots/skater-TOI columns -- always 0 in the feed.
     // player_name comes from the game's own gameSummary lineup first, then
     // {league}_players by id; null when neither knows the player.
+    //
+    // `goals` (who scored, assists, strength, and the skaters on the ice
+    // from {league}_goal_on_ice) and `penaltyShots` (from
+    // {league}_penalty_shots), contract C6: see hockeytechGameDetail.js.
+    // Both [] until the pipeline has rows for the game.
     if (url.pathname === `${P}/game-box`) {
       const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
       if (!gameId) return badRequest('gameId required');
       // 5 min while a row is unnamed (gameSummary unreachable), so it fills in soon.
       const ttl = (box) => ([...box.skaters, ...box.goalies].every(r => r.player_name) ? 3600 : 300);
-      return cachedJson(env, `${key}:gamebox:${gameId}`, ttl, async () => {
-        const [skaters, goalies, gameRows, summary] = await Promise.all([
+      return cachedJson(env, `${key}:gamebox:v2:${gameId}`, ttl, async () => {
+        const [skaters, goalies, gameRows, summary, detail] = await Promise.all([
           sbRows(`${table('skater_game_box')}?game_id=eq.${gameId}&order=points.desc`),
           sbRows(`${table('goalie_game_box')}?game_id=eq.${gameId}`),
           sbRowsOr(`${table('game_log')}?game_id=eq.${gameId}&select=home_team_id,away_team_id`, []),
           fetchGameSummary(htGameUrl('gameSummary', gameId), cfg.ht.headers),
+          fetchGameDetailRows(key, gameId),
         ]);
         if (skaters instanceof Response || goalies instanceof Response) return sbError();
         const gameTeamIds = gameRows[0] ? [gameRows[0].home_team_id, gameRows[0].away_team_id] : [];
 
         const nameMap = {};
         for (const [id, p] of Object.entries(gameSummaryPlayers(summary))) nameMap[id] = p.name;
-        const playerIds = [...new Set([...skaters, ...goalies].map(r => r.player_id))]
+        const playerIds = [...new Set([...skaters, ...goalies, ...detail.shots].map(r => r.player_id))]
           .filter(id => id != null && !nameMap[id]);
         if (playerIds.length) {
           const nameRows = await sbRowsOr(
@@ -1282,6 +1297,8 @@ export function createHockeyTechLeague(cfg) {
           awayTeamId: gameTeamIds[1] ?? null,
           skaters: skaters.map(withName),
           goalies: goalies.map(withName),
+          goals: buildGoals(detail.onIce, summary),
+          penaltyShots: buildPenaltyShots(detail.shots, nameMap),
         };
         return result;
       });
