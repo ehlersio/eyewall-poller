@@ -42,6 +42,7 @@ import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
 import { buildGoals, buildPenaltyShots, fetchGameDetailRows, fetchWinProbs, withWinProbs } from './hockeytechGameDetail.js';
+import { buildFeedBracket, buildProjectedBracket, divisionSeeds, parseDivisionStandings, playoffFormat } from './hockeytechBracket.js';
 
 // Elo constants -- match eyewall-pipeline/elo.py (and nhl.js's
 // ELO_HOME_ADVANTAGE). hockeytech_elo.py writes the ratings these apply to.
@@ -106,6 +107,26 @@ export function createHockeyTechLeague(cfg) {
   async function resolveSeasonType(env, seasonId) {
     const types = await cfg.getAllSeasonTypes(env);
     return types?.[String(seasonId)] || 'regular';
+  }
+
+  // HockeyTech's playoff bracket feed (/bracket). modulekit, plain JSON.
+  const htBracketUrl = (seasonId) =>
+    `${cfg.ht.base}?feed=modulekit&view=brackets&season_id=${seasonId}&key=${cfg.ht.key}&client_code=${key}&site_id=${cfg.ht.siteId}&lang=en`;
+
+  // One season's standings by division, in HockeyTech's own order (its
+  // `rank` is the division rank the leagues seed by), or null when the
+  // feed fails. /bracket's seeds and /bracket/projected.
+  async function divisionStandings(seasonId) {
+    const url = `${cfg.ht.base}?feed=statviewfeed&view=teams&season=${seasonId}&context=overall&groupTeamsBy=division` +
+      `&special=false&conference_id=-1&division_id=-1&key=${cfg.ht.key}&client_code=${key}&site_id=${cfg.ht.siteId}&league_id=${cfg.ht.leagueId}&lang=en`;
+    try {
+      const res = await htFetch(url);
+      if (!res.ok) return null;
+      return parseDivisionStandings(unwrapJsonp(await res.text()));
+    } catch (e) {
+      console.warn(`[${label}] division standings ${seasonId} unavailable: ${e.message}`);
+      return null;
+    }
   }
 
   // /prediction's league config for hockeytechPrediction.js. No Corsi:
@@ -648,6 +669,79 @@ export function createHockeyTechLeague(cfg) {
           return { ...r, l10W, l10L, l10OTL, streakType, streakCount: streak };
         });
         return enriched;
+      });
+    }
+
+    // GET /{league}/bracket?season=<playoff season id>
+    // The playoff bracket (contract C11) from HockeyTech's own bracket feed
+    // (modulekit view=brackets; probed 2026-10-07, so `source` is always
+    // 'feed' -- no game_log derivation needed), seeded from the preceding
+    // regular season's final division ranks (hockeytechBracket.js). Without
+    // `season`, the latest playoff season that has started. A season with
+    // no playoffs yet answers `rounds: []`, uncached. 1 h KV.
+    if (url.pathname === `${P}/bracket`) {
+      const requested = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
+      const seasons = (await cfg.getAllSeasons(env)) || [];
+      const today = etDateString();
+      const byStartDesc = (a, b) => String(b.startDate || '').localeCompare(String(a.startDate || ''));
+      const playoffSeasons = seasons.filter(s => s.seasonType === 'playoffs').sort(byStartDesc);
+      const season = requested
+        ? seasons.find(s => String(s.seasonId) === requested) || { seasonId: Number(requested) }
+        : playoffSeasons.find(s => !s.startDate || s.startDate <= today) || playoffSeasons[0];
+      if (season?.seasonType && season.seasonType !== 'playoffs') return badRequest('season is not a playoff season');
+      const empty = { season: season?.seasonId ?? null, format: null, rounds: [], source: 'feed' };
+      if (!season) return json(empty);
+
+      return cachedJson(env, `${key}:bracket:${season.seasonId}`, 3600, async () => {
+        const res = await htFetch(htBracketUrl(season.seasonId));
+        if (!res.ok) return errorJson(502, { error: `HockeyTech ${res.status}` });
+        let brackets;
+        try { brackets = (await res.json())?.SiteKit?.Brackets; } catch {
+          return errorJson(502, { error: 'HockeyTech bracket unreadable' });
+        }
+        if (!brackets?.rounds?.length) return json(empty);
+
+        // Seeds: the regular season just before these playoffs.
+        const regular = season.startDate && seasons
+          .filter(s => s.seasonType === 'regular' && s.startDate && s.startDate < season.startDate)
+          .sort(byStartDesc)[0];
+        const seeds = regular ? divisionSeeds(await divisionStandings(regular.seasonId)) : {};
+        const year = Number(String(season.startDate || '').slice(0, 4)) || season.startYear;
+        return {
+          season: season.seasonId,
+          ...buildFeedBracket(brackets, { seeds, format: playoffFormat(key, year) }),
+          source: 'feed',
+        };
+      });
+    }
+
+    // GET /{league}/bracket/projected[?season=<regular season id>]
+    // "If the playoffs started today": the current division standings
+    // (HockeyTech, live) cut and paired by the verified format for that
+    // season's playoffs -- seeds and matchups only. No verified format
+    // (AHL 2027: not published yet) or no games played yet answers
+    // `rounds: []` with a `reason`, uncached. 1 h KV.
+    if (url.pathname === `${P}/bracket/projected`) {
+      const requested = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
+      const seasons = (await cfg.getAllSeasons(env)) || [];
+      // Without `season`, the latest regular season, even before its
+      // opener (then: no games yet) -- never last season's final table.
+      const regulars = seasons.filter(s => s.seasonType === 'regular')
+        .sort((a, b) => String(b.startDate || '').localeCompare(String(a.startDate || '')));
+      const season = requested ? seasons.find(s => String(s.seasonId) === requested) : regulars[0];
+      if (requested && season && season.seasonType !== 'regular') return badRequest('season is not a regular season');
+      const base = { season: season?.seasonId ?? (requested ? Number(requested) : null), format: null, rounds: [], byes: [], source: 'standings' };
+      const startYear = Number(String(season?.startDate || '').slice(0, 4)) || season?.startYear;
+      const format = startYear ? playoffFormat(key, startYear + 1) : null;
+      if (!format) return json({ ...base, reason: 'format-unverified' });
+
+      return cachedJson(env, `${key}:bracket:projected:${season.seasonId}`, 3600, async () => {
+        const divisions = await divisionStandings(season.seasonId);
+        if (!divisions) return errorJson(502, { error: 'HockeyTech standings unavailable' });
+        if (!divisions.some(d => d.teams.some(t => t.gp > 0))) return json({ ...base, reason: 'no-games' });
+        const projected = buildProjectedBracket(divisions, format);
+        if (!projected) return json({ ...base, reason: 'format-unverified' });
+        return { season: season.seasonId, ...projected, source: 'standings' };
       });
     }
 
