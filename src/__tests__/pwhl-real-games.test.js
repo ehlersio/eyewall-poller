@@ -98,7 +98,7 @@ describe('/pwhl/game-box names every row (#2)', () => {
     expect(body.skaters.find(r => r.player_id === 36)).toMatchObject({ team_id: 1, jersey_number: 18, goals: 1, assists: 1 })
   })
 
-  it('HockeyTech down: names whoever pwhl_players knows by id, null for the rest, cached 5 minutes under the v2 key', async () => {
+  it('HockeyTech down: names whoever pwhl_players knows by id, null for the rest, cached 5 minutes under the v3 key', async () => {
     const env = makeEnv()
     const put = vi.spyOn(env.CACHE, 'put')
     installFetch({
@@ -113,7 +113,7 @@ describe('/pwhl/game-box names every row (#2)', () => {
     const byId = names(body)
     expect(Object.values(byId).filter(n => n == null)).toHaveLength(14)
     expect(byId[36]).toBeNull()
-    expect(put).toHaveBeenCalledWith('pwhl:game-box:v2:329', expect.any(String), { expirationTtl: 300 })
+    expect(put).toHaveBeenCalledWith('pwhl:game-box:v3:329', expect.any(String), { expirationTtl: 300 })
   })
 })
 

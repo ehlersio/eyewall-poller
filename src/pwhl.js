@@ -9,6 +9,7 @@ import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbHeade
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction, gameResult, endedInOf } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
+import { buildGoals, buildPenaltyShots, fetchGameDetailRows, fetchWinProbs, withWinProbs } from './hockeytechGameDetail.js';
 
 // Elo constants for /pwhl/prediction -- match eyewall-pipeline/elo.py.
 const PWHL_ELO_INITIAL_RATING = 1500;
@@ -939,9 +940,18 @@ Only reference the two teams named above and the numbers given -- no player name
     const season = await seasonParam(url, env);
     const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
     if (!teamId) return badRequest('teamId param required');
-    return cachedJson(env, `pwhl:schedule:${teamId}:${season}`, 1800, () => sbRows(
-      `${SB_URL}/rest/v1/pwhl_game_log?season_id=eq.${season}&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&order=game_date.asc&limit=150`
-    ));
+    // Games with an Elo probability in pwhl_game_win_probs carry
+    // winProb: { home, away, source: 'elo' } (contract C6).
+    return cachedJson(env, `pwhl:schedule:v2:${teamId}:${season}`, 1800, async () => {
+      const [rows, probs] = await Promise.all([
+        sbRows(
+          `${SB_URL}/rest/v1/pwhl_game_log?season_id=eq.${season}&or=(home_team_id.eq.${teamId},away_team_id.eq.${teamId})&order=game_date.asc&limit=150`
+        ),
+        fetchWinProbs('pwhl', season, teamId),
+      ]);
+      if (rows instanceof Response) return rows;
+      return withWinProbs(rows, probs);
+    });
   }
 
   // GET /pwhl/roster?teamId=1
@@ -968,6 +978,10 @@ Only reference the two teams named above and the numbers given -- no player name
   // then pwhl_players by id. null when neither knows the player -- the
   // client used to resolve names from the two teams' current rosters and
   // showed "#jersey" for everyone who had moved (audit #2, game 329).
+  //
+  // `goals` (scorer, assists, strength, on-ice skaters from
+  // pwhl_goal_on_ice) and `penaltyShots` (pwhl_penalty_shots), contract C6:
+  // see hockeytechGameDetail.js. Both [] until the pipeline has rows.
   if (url.pathname === '/pwhl/game-box') {
     const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
     if (!gameId) return badRequest('gameId param required');
@@ -975,22 +989,23 @@ Only reference the two teams named above and the numbers given -- no player name
     // 24hr -- Final-game box scores don't change once ingested. 5 min when
     // a row is still unnamed (gameSummary unreachable), so it fills in soon.
     const ttl = (box) => ([...box.skaters, ...box.goalies].every(r => r.player_name) ? 24 * 3600 : 300);
-    // v2: entries cached before rows were named carry no player_name.
-    return cachedJson(env, `pwhl:game-box:v2:${gameId}`, ttl, async () => {
-      const [skaters, goalies, summary] = await Promise.all([
+    // v3: entries cached before goals/penaltyShots carry neither.
+    return cachedJson(env, `pwhl:game-box:v3:${gameId}`, ttl, async () => {
+      const [skaters, goalies, summary, detail] = await Promise.all([
         sbRows(`${SB_URL}/rest/v1/pwhl_skater_game_box?game_id=eq.${gameId}&order=team_id.asc`),
         sbRows(`${SB_URL}/rest/v1/pwhl_goalie_game_box?game_id=eq.${gameId}&order=team_id.asc`),
         fetchGameSummary(
           `${HT_BASE}?feed=statviewfeed&view=gameSummary&game_id=${gameId}&key=${HT_KEY}&client_code=pwhl&lang=en&league_id=`,
           HT_HDR
         ),
+        fetchGameDetailRows('pwhl', gameId),
       ]);
       if (skaters instanceof Response) return skaters;
       if (goalies instanceof Response) return goalies;
 
       const names = {};
       for (const [id, p] of Object.entries(gameSummaryPlayers(summary))) names[id] = p.name;
-      const unnamed = [...new Set([...skaters, ...goalies].map(r => r.player_id))]
+      const unnamed = [...new Set([...skaters, ...goalies, ...detail.shots].map(r => r.player_id))]
         .filter(id => id != null && !names[id]);
       if (unnamed.length) {
         const rows = await sbRowsOr(
@@ -1003,7 +1018,12 @@ Only reference the two teams named above and the numbers given -- no player name
         }
       }
       const withName = (r) => ({ ...r, player_name: names[r.player_id] || null });
-      return { skaters: skaters.map(withName), goalies: goalies.map(withName) };
+      return {
+        skaters: skaters.map(withName),
+        goalies: goalies.map(withName),
+        goals: buildGoals(detail.onIce, summary),
+        penaltyShots: buildPenaltyShots(detail.shots, names),
+      };
     });
   }
 

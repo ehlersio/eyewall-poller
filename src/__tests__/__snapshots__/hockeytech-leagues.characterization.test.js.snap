@@ -37,7 +37,9 @@ exports[`ahl > game-box > response, upstream requests and KV writes; repeat call
         "toi_seconds": 3600,
       },
     ],
+    "goals": [],
     "homeTeamId": 335,
+    "penaltyShots": [],
     "skaters": [
       {
         "assists": 1,
@@ -69,7 +71,7 @@ exports[`ahl > game-box > response, upstream requests and KV writes; repeat call
   },
   "kvWrites": [
     {
-      "key": "ahl:gamebox:1028992",
+      "key": "ahl:gamebox:v2:1028992",
       "ttl": 3600,
     },
   ],
@@ -87,6 +89,12 @@ exports[`ahl > game-box > response, upstream requests and KV writes; repeat call
     {
       "referer": "https://theahl.com/",
       "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=1028992&key=ccb91f29d6744675&client_code=ahl&lang=en&league_id=",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_goal_on_ice?game_id=eq.1028992&order=game_goal_id.asc,player_id.asc&select=*",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_penalty_shots?game_id=eq.1028992&order=period_id.asc,time_seconds.asc&select=*",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_players?player_id=in.(6681,6682,7001)&select=player_id,first_name,last_name",
@@ -2295,7 +2303,7 @@ exports[`ahl > schedule > response, upstream requests and KV writes; repeat call
   ],
   "kvWrites": [
     {
-      "key": "ahl:schedule:335:90",
+      "key": "ahl:schedule:v2:335:90",
       "ttl": 1800,
     },
   ],
@@ -2303,6 +2311,9 @@ exports[`ahl > schedule > response, upstream requests and KV writes; repeat call
   "upstream": [
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?season_id=eq.90&or=(home_team_id.eq.335,away_team_id.eq.335)&order=game_date.asc&limit=150",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_win_probs?season_id=eq.90&or=(home_team_id.eq.335,away_team_id.eq.335)&select=game_id,home_win_prob&order=game_id.asc&limit=200",
     },
   ],
 }
@@ -3375,7 +3386,9 @@ exports[`echl > game-box > response, upstream requests and KV writes; repeat cal
         "toi_seconds": 3600,
       },
     ],
+    "goals": [],
     "homeTeamId": 8,
+    "penaltyShots": [],
     "skaters": [
       {
         "assists": 1,
@@ -3407,7 +3420,7 @@ exports[`echl > game-box > response, upstream requests and KV writes; repeat cal
   },
   "kvWrites": [
     {
-      "key": "echl:gamebox:1028992",
+      "key": "echl:gamebox:v2:1028992",
       "ttl": 3600,
     },
   ],
@@ -3425,6 +3438,12 @@ exports[`echl > game-box > response, upstream requests and KV writes; repeat cal
     {
       "referer": "https://echl.com/",
       "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=1028992&key=2c2b89ea7345cae8&client_code=echl&lang=en&league_id=",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_goal_on_ice?game_id=eq.1028992&order=game_goal_id.asc,player_id.asc&select=*",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_penalty_shots?game_id=eq.1028992&order=period_id.asc,time_seconds.asc&select=*",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_players?player_id=in.(6681,6682,7001)&select=player_id,first_name,last_name",
@@ -5557,7 +5576,7 @@ exports[`echl > schedule > response, upstream requests and KV writes; repeat cal
   ],
   "kvWrites": [
     {
-      "key": "echl:schedule:8:73",
+      "key": "echl:schedule:v2:8:73",
       "ttl": 1800,
     },
   ],
@@ -5565,6 +5584,9 @@ exports[`echl > schedule > response, upstream requests and KV writes; repeat cal
   "upstream": [
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?season_id=eq.73&or=(home_team_id.eq.8,away_team_id.eq.8)&order=game_date.asc&limit=150",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_win_probs?season_id=eq.73&or=(home_team_id.eq.8,away_team_id.eq.8)&select=game_id,home_win_prob&order=game_id.asc&limit=200",
     },
   ],
 }

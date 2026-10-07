@@ -134,6 +134,8 @@ exports[`game-box > HockeyTech and AI unavailable 1`] = `
         "toi_seconds": 3700,
       },
     ],
+    "goals": [],
+    "penaltyShots": [],
     "skaters": [
       {
         "assists": 1,
@@ -151,7 +153,7 @@ exports[`game-box > HockeyTech and AI unavailable 1`] = `
   },
   "kvWrites": [
     {
-      "key": "pwhl:game-box:v2:210",
+      "key": "pwhl:game-box:v3:210",
       "ttl": 86400,
     },
   ],
@@ -195,6 +197,8 @@ exports[`game-box > response, upstream requests and KV writes; repeat call 1`] =
         "toi_seconds": 3700,
       },
     ],
+    "goals": [],
+    "penaltyShots": [],
     "skaters": [
       {
         "assists": 1,
@@ -212,7 +216,7 @@ exports[`game-box > response, upstream requests and KV writes; repeat call 1`] =
   },
   "kvWrites": [
     {
-      "key": "pwhl:game-box:v2:210",
+      "key": "pwhl:game-box:v3:210",
       "ttl": 86400,
     },
   ],
@@ -227,6 +231,12 @@ exports[`game-box > response, upstream requests and KV writes; repeat call 1`] =
     {
       "referer": "https://www.thepwhl.com/",
       "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_goal_on_ice?game_id=eq.210&order=game_goal_id.asc,player_id.asc&select=*",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_penalty_shots?game_id=eq.210&order=period_id.asc,time_seconds.asc&select=*",
     },
   ],
 }
@@ -4270,7 +4280,7 @@ exports[`schedule > HockeyTech and AI unavailable 1`] = `
   ],
   "kvWrites": [
     {
-      "key": "pwhl:schedule:1:8",
+      "key": "pwhl:schedule:v2:1:8",
       "ttl": 1800,
     },
   ],
@@ -4343,7 +4353,7 @@ exports[`schedule > response, upstream requests and KV writes; repeat call 1`] =
   ],
   "kvWrites": [
     {
-      "key": "pwhl:schedule:1:8",
+      "key": "pwhl:schedule:v2:1:8",
       "ttl": 1800,
     },
   ],
@@ -4351,6 +4361,9 @@ exports[`schedule > response, upstream requests and KV writes; repeat call 1`] =
   "upstream": [
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?season_id=eq.8&or=(home_team_id.eq.1,away_team_id.eq.1)&order=game_date.asc&limit=150",
+    },
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_win_probs?season_id=eq.8&or=(home_team_id.eq.1,away_team_id.eq.1)&select=game_id,home_win_prob&order=game_id.asc&limit=200",
     },
   ],
 }

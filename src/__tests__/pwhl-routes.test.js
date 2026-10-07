@@ -521,6 +521,8 @@ describe('GET /pwhl/game-box', () => {
     expect(await res.json()).toEqual({
       skaters: [{ game_id: 210, player_id: 1, team_id: 1, goals: 2, player_name: 'Hilary Knight' }],
       goalies: [{ game_id: 210, player_id: 99, team_id: 2, saves: 30, player_name: null }],
+      goals: [],
+      penaltyShots: [],
     })
   })
 

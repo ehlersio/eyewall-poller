@@ -118,9 +118,9 @@ describe('/ahl/game-box names every row from the game itself (#2)', () => {
     expect(Object.values(names).filter(n => n == null)).toHaveLength(39)
     // Cached briefly, so the names fill in once HockeyTech is back.
     const put = vi.spyOn(env.CACHE, 'put')
-    await env.CACHE.delete('ahl:gamebox:1029013')
+    await env.CACHE.delete('ahl:gamebox:v2:1029013')
     await get('/ahl/game-box?gameId=1029013', env)
-    expect(put).toHaveBeenCalledWith('ahl:gamebox:1029013', expect.any(String), { expirationTtl: 300 })
+    expect(put).toHaveBeenCalledWith('ahl:gamebox:v2:1029013', expect.any(String), { expirationTtl: 300 })
   })
 })
 
