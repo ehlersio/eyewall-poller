@@ -22,6 +22,8 @@ vi.mock('../seasons.js', () => ({
   getAllECHLSeasons: vi.fn(),
   resolveNHLSeason: vi.fn().mockResolvedValue(20252026),
   resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
+  resolveAHLSeason: vi.fn().mockResolvedValue({ seasonId: 94, seasonType: 'regular' }),
+  resolveECHLSeason: vi.fn().mockResolvedValue({ seasonId: 77, seasonType: 'regular' }),
 }))
 vi.mock('../nhl.js', async () => {
   const actual = await vi.importActual('../nhl.js')
@@ -345,6 +347,61 @@ describe('GET /milestones/latest', () => {
     const pwhlCall = seen.find((u) => u.includes('is_pwhl=eq.true'))
     expect(nhlCall).toContain('season=eq.20252026')
     expect(pwhlCall).toContain('season=eq.8')
+  })
+})
+
+describe('C5: AHL/ECHL milestones and trivia (audit 2026-10-06 Phase 3)', () => {
+  it.each([['ahl', 94], ['echl', 77]])('/milestones/latest?sport=%s reads that league\'s rows for its season', async (sport, season) => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([{ id: 41, game_date: '2026-10-11' }]), { status: 200 }))
+    const cache = makeFakeCache()
+
+    const res = await worker.fetch(makeRequest(`/milestones/latest?sport=${sport}`), makeEnv({ CACHE: cache }), makeCtx())
+
+    expect(await res.json()).toEqual({ latestId: 41, gameDate: '2026-10-11' })
+    expect(String(globalThis.fetch.mock.calls[0][0])).toContain(`sport=eq.${sport}&season=eq.${season}`)
+    expect(cache._store.has(`milestones:latest:${sport}:${season}`)).toBe(true)
+  })
+
+  it('/milestones/latest before the sport column exists: nothing new, 200, not cached', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{"code":"42703"}', { status: 400 }))
+    const cache = makeFakeCache()
+    const res = await worker.fetch(makeRequest('/milestones/latest?sport=echl'), makeEnv({ CACHE: cache }), makeCtx())
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ latestId: null, gameDate: null })
+    expect(cache._store.size).toBe(0)
+  })
+
+  it('/milestones/latest still rejects an unknown sport', async () => {
+    const res = await worker.fetch(makeRequest('/milestones/latest?sport=khl'), makeEnv(), makeCtx())
+    expect(res.status).toBe(400)
+  })
+
+  it.each(['ahl', 'echl'])('/trivia/today?sport=%s queries trivia_questions for that sport and team', async (sport) => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-12T15:00:00Z'))
+    try {
+      const seen = []
+      globalThis.fetch = vi.fn((url) => {
+        seen.push(decodeURIComponent(String(url)))
+        return Promise.resolve({ ok: true, json: async () => [{ id: seen.length }] })
+      })
+
+      const res = await worker.fetch(makeRequest(`/trivia/today?sport=${sport}&team=clt`), makeEnv(), makeCtx())
+
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({ easy: { id: expect.any(Number) }, medium: { id: expect.any(Number) } })
+      expect(seen).toHaveLength(3)
+      expect(seen.every(u => u.includes(`sport=eq.${sport}`))).toBe(true)
+      expect(seen.some(u => u.includes('tier=eq.medium') && u.includes('team=eq.CLT'))).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('/trivia/today rejects an unknown sport', async () => {
+    const res = await worker.fetch(makeRequest('/trivia/today?sport=khl'), makeEnv(), makeCtx())
+    expect(res.status).toBe(400)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 })
 

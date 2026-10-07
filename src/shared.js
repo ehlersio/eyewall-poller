@@ -291,6 +291,20 @@ export function etDateString(now = new Date()) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+// 'YYYY-MM-DD' plus `days` calendar days.
+export function addDaysToDateString(dateStr, days) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// How far ahead a scoreboard ("today") route looks for the next game day
+// when today has none: today plus the next 6 days, the window /nhl/today
+// reads (the NHL schedule's gameWeek) and the AHL/ECHL scorebar's
+// numberofdaysahead. Past it the scoreboard is empty rather than showing
+// a game weeks away as the day's slate.
+export const TODAY_LOOKAHEAD_DAYS = 6;
+
 // ── Query params into PostgREST URLs (2026-10) ────────────────
 // Every Supabase read here is a hand-built query string, and request
 // params used to be interpolated into it raw. searchParams.get() decodes,
