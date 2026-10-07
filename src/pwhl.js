@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction, gameResult, endedInOf } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
@@ -51,6 +51,13 @@ async function fetchGameCenterPreview(env, gameId) {
   const raw = unwrapJsonp(await htRes.text());
   await kvPut(env, kvKey, raw, 1800);
   return raw;
+}
+
+// A gameCenterPreview record string ("12-5-2-1"), or null when it's no
+// games at all ("0-0-0-0"): an empty record isn't a record to show.
+export function playedRecord(record) {
+  if (!record) return null;
+  return /[1-9]/.test(String(record)) ? record : null;
 }
 
 // PWHL team ID → abbreviation map
@@ -1784,11 +1791,15 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       // Get today's date in Eastern time (games stored as Eastern dates in pwhl_game_log)
       const todayStr = etDateString();
 
-      // Today's games, or the next day that has some -- see the AHL/ECHL
-      // route in hockeytech.js for why (an empty "no games today" is the
-      // wrong answer out of season).
+      // Today's games, or the next day that has some within the coming
+      // week (TODAY_LOOKAHEAD_DAYS, the /nhl/today window) -- see the
+      // AHL/ECHL route in hockeytech.js for why an empty "no games today"
+      // is the wrong answer around an opener. Past that window it is the
+      // right one: on 2026-10-06 this served a lone preseason game 47 days
+      // out (LV-MIN, 11-22) as the day's slate.
+      const lastDay = addDaysToDateString(todayStr, TODAY_LOOKAHEAD_DAYS);
       const rows = await sbRows(
-        `${SB_URL}/rest/v1/pwhl_game_log?game_date=gte.${todayStr}&${seasonFilter}` +
+        `${SB_URL}/rest/v1/pwhl_game_log?game_date=gte.${todayStr}&game_date=lte.${lastDay}&${seasonFilter}` +
         `&select=game_id,season_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date,period,ot,shootout` +
         `&order=game_date.asc&limit=40`
       );
@@ -2334,7 +2345,12 @@ Write in plain text, no markdown. 1-2 sentences max.`;
         return errorJson(502, { error: 'gameCenterPreview fetch failed', detail: e.message });
       }
 
-      const team = (t) => t ? {
+      // A team block for a game between teams with no season rows (a
+      // preseason game, say) comes back empty -- no team id, "" for the
+      // abbreviation, "0-0-0-0" for every record: null, not a fake record.
+      // A team with an id but no games yet keeps its block, its 0-0-0-0
+      // records null.
+      const team = (t) => parseInt(t?.teamInfo?.id, 10) ? {
         id:            parseInt(t.teamInfo?.id, 10) || null,
         abbreviation:  t.teamInfo?.abbreviation || '',
         name:          t.teamInfo?.name || '',
@@ -2344,9 +2360,9 @@ Write in plain text, no markdown. 1-2 sentences max.`;
         // {wins,losses,...,formattedRecord} object shape as the other
         // teamRecord splits (overall/home/visiting/past_10_games) -- confirmed
         // live against game 326's real payload (Session 51).
-        streak:        t.teamRecord?.streak || null,
-        overallRecord: t.teamRecord?.overall?.formattedRecord || null,
-        last10Record:  t.teamRecord?.past_10_games?.formattedRecord || null,
+        streak:        playedRecord(t.teamRecord?.streak),
+        overallRecord: playedRecord(t.teamRecord?.overall?.formattedRecord),
+        last10Record:  playedRecord(t.teamRecord?.past_10_games?.formattedRecord),
         leadingScorers: (t.leadingScorers || []).slice(0, 5).map(s => ({
           name:   `${s.info?.firstName || ''} ${s.info?.lastName || ''}`.trim(),
           stats:  s.stats || null,

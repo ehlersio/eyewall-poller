@@ -291,6 +291,20 @@ export function etDateString(now = new Date()) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+// 'YYYY-MM-DD' plus `days` calendar days.
+export function addDaysToDateString(dateStr, days) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// How far ahead a scoreboard ("today") route looks for the next game day
+// when today has none: today plus the next 6 days, the window /nhl/today
+// reads (the NHL schedule's gameWeek) and the AHL/ECHL scorebar's
+// numberofdaysahead. Past it the scoreboard is empty rather than showing
+// a game weeks away as the day's slate.
+export const TODAY_LOOKAHEAD_DAYS = 6;
+
 // ── Query params into PostgREST URLs (2026-10) ────────────────
 // Every Supabase read here is a hand-built query string, and request
 // params used to be interpolated into it raw. searchParams.get() decodes,
@@ -510,6 +524,18 @@ export async function sbRows(url, headers = {}) {
 export async function sbRowsOr(url, fallback) {
   const rows = await sbRows(url);
   return rows instanceof Response ? fallback : rows;
+}
+
+// sbRows for a table the pipeline adds by an owner-run migration, which
+// may not exist yet. PostgREST answers a missing table with 404 (PGRST205)
+// and a filter or select on a column it doesn't have with 400 (PGRST204 /
+// 42703): both resolve to null ("no such table yet"), so a route can serve
+// its empty shape instead of a 502. Any other failure is sbError(status).
+export async function sbRowsIfTable(url, headers = {}) {
+  const res = await fetch(url, { headers: { ...sbHeaders(), ...headers } });
+  if (res.status === 404 || res.status === 400) return null;
+  if (!res.ok) return sbError(res.status);
+  return res.json();
 }
 
 // {ahl,echl,pwhl}_players.on_roster (eyewall-pipeline, 2026-10): the

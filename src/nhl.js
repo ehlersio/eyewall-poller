@@ -6,11 +6,12 @@
  */
 
 import { penaltyText, penaltyDescription } from './penaltyText.js';
-import { kvGet, kvPut, json, LIVE_MAX_AGE, nhlSeasonEnd, etDateString, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
+import { kvGet, kvPut, json, LIVE_MAX_AGE, nhlSeasonEnd, etDateString, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, sendLiveActivityPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore, sbParam, sbParamList, sbRowsIfTable, secretMatches, withParamErrors } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
 import { readCronHealth, readOpsHealth } from './ops.js';
-import { resolveNHLSeason, resolvePWHLSeason, resolveAHLSeason, getAllAHLSeasons } from './seasons.js';
+import { resolveNHLSeason, resolveAHLSeason, getAllAHLSeasons } from './seasons.js';
+import { MILESTONE_SPORTS, milestoneScope } from './milestones.js';
 import { buildCallupWatch, nameKey } from './callupWatch.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { fetchTradeTree } from './trades.js';
@@ -380,6 +381,11 @@ const leagueAverageLine = (avg, season) => sharedLeagueAverageLine(avg, seasonLa
 // already IS the season-boundary "roster probably changed some" discount,
 // done from real outcomes instead of a hand-set TOI-retention fraction.
 const ELO_HOME_ADVANTAGE = 35; // FiveThirtyEight's published NHL value; matches eyewall-pipeline/elo.py exactly
+
+// /elo/ratings?league= values. Every league's model uses the same +35 home
+// advantage (pwhl.js, hockeytech.js).
+const ELO_LEAGUES = ['nhl', 'pwhl', 'ahl', 'echl'];
+
 
 async function fetchEloRatings(tc, oppAbbr) {
   const rows = await sbRowsOrThrow(`team_elo_ratings?team=in.(${tc.abbr},${oppAbbr})&select=team,rating`);
@@ -4867,7 +4873,7 @@ async function divisionOdds(env, team, latest) {
   }
 
   // ── Elo ratings — every team's rating, for game win probabilities ─────────────
-  // GET /elo/ratings
+  // GET /elo/ratings[?league=nhl|pwhl|ahl|echl]
   // team_elo_ratings (eyewall-pipeline's elo_ratings.py, a nightly full replay)
   // plus the home advantage, so the frontend computes each matchup's win
   // probability with the exact formula /prediction/analyze (eloWinProb()) and
@@ -4877,16 +4883,27 @@ async function divisionOdds(env, team, latest) {
   // every game card on the schedule. Response: { ratings: { ABBR: rating },
   // homeAdvantage }. 1hr KV (ratings change once a night); a failed read
   // returns `unavailable: true`, and neither it nor an empty table is cached.
+  //
+  // ?league=pwhl|ahl|echl (2026-10; it used to be ignored, so league=pwhl
+  // answered NHL ratings) reads {league}_team_elo_ratings, which
+  // eyewall-pipeline's hockeytech_elo.py writes per HockeyTech team_id:
+  // `ratings` is keyed by team_id there ({ "335": 1532.1 }). Same +35 home
+  // advantage as /pwhl/prediction and /{ahl,echl}/prediction.
   if (url.pathname === '/elo/ratings') {
-    return cachedJson(env, 'nhl:elo-ratings', 3600, async () => {
+    const league = (url.searchParams.get('league') || 'nhl').toLowerCase();
+    if (!ELO_LEAGUES.includes(league)) return badRequest(`league must be one of ${ELO_LEAGUES.join(', ')}`);
+    const nhl = league === 'nhl';
+    return cachedJson(env, `${league}:elo-ratings`, 3600, async () => {
       let rows;
       try {
-        rows = await sbRowsOrThrow('team_elo_ratings?select=team,rating');
+        rows = await sbRowsOrThrow(nhl
+          ? 'team_elo_ratings?select=team,rating'
+          : `${league}_team_elo_ratings?select=team_id,rating&order=team_id.asc`);
       } catch {
         return json({ ratings: {}, homeAdvantage: ELO_HOME_ADVANTAGE, unavailable: true });
       }
       const data = {
-        ratings: Object.fromEntries(rows.map(row => [row.team, Number(row.rating)])),
+        ratings: Object.fromEntries(rows.map(row => [nhl ? row.team : String(row.team_id), Number(row.rating)])),
         homeAdvantage: ELO_HOME_ADVANTAGE,
       };
       return rows.length ? data : json(data); // an empty table isn't cached
@@ -4897,6 +4914,8 @@ async function divisionOdds(env, team, latest) {
   // GET /milestones               — recent milestones, NHL only (feed default)
   // GET /milestones?team=CAR      — filtered to one team
   // GET /milestones?sport=pwhl    — PWHL milestones instead of NHL
+  // GET /milestones?sport=ahl|echl — AHL/ECHL milestones (2026-10, see
+  //                                  milestoneScope()); any other sport is a 400
   // GET /milestones?limit=20      — override default limit (default 50, max 100)
   // Populated nightly by milestones.py (NHL) / pwhl_milestones.py (PWHL), both
   // writing into the same shared `milestones` table distinguished by is_pwhl.
@@ -4915,17 +4934,20 @@ async function divisionOdds(env, team, latest) {
   // queried on here.
   if (url.pathname === '/milestones') {
     const team  = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase();
-    const sport = url.searchParams.get('sport')?.toLowerCase();
-    const isPwhl = sport === 'pwhl';
+    const sport = (url.searchParams.get('sport') || 'nhl').toLowerCase();
+    if (!MILESTONE_SPORTS.includes(sport)) return badRequest(`sport must be one of ${MILESTONE_SPORTS.join(', ')}`);
     const limit = Math.min(parseInt(sbParam(url.searchParams.get('limit'), { type: 'int', name: 'limit' }) || '50', 10) || 50, 100);
-    const season = isPwhl ? (await resolvePWHLSeason(env)).seasonId : await resolveNHLSeason(env);
+    const { season, filter: scope } = await milestoneScope(env, sport);
 
-    return cachedJson(env, `milestones:${sport || 'nhl'}:${team || 'all'}:${limit}:${season}`, 3600, async () => {
-      let filter = `?order=game_date.desc,id.desc&limit=${limit}&is_pwhl=eq.${isPwhl}&season=eq.${season}`;
+    return cachedJson(env, `milestones:${sport}:${team || 'all'}:${limit}:${season}`, 3600, async () => {
+      let filter = `?order=game_date.desc,id.desc&limit=${limit}&${scope}`;
       if (team) filter += `&team=eq.${team}`;
 
-      const rows = await sbRows(`${SB_URL}/rest/v1/milestones${filter}`);
+      const rows = await sbRowsIfTable(`${SB_URL}/rest/v1/milestones${filter}`);
       if (rows instanceof Response) return rows;
+      // No `sport` column yet (AHL/ECHL only; see milestoneScope()): no
+      // milestones, not a 502, and not cached so they show once it lands.
+      if (rows === null) return json([], { maxAge: 300 });
 
       return rows;
     });

@@ -18,13 +18,14 @@
  */
 
 import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.js';
+import { MILESTONE_SPORTS, milestoneScope } from './milestones.js';
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_IDS } from './ahl.js';
 import { handleECHL, ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS, fetchECHLNews, pollECHL } from './echl.js';
-import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog, sbParam, secretMatches, withParamErrors, withHttpCache } from './shared.js';
+import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog, sbParam, sbRowsIfTable, secretMatches, withParamErrors, withHttpCache } from './shared.js';
 import { handleOps, trackCron, checkCronHealth, readCronHealth, readOpsHealth, OPS_SUBS_KEY } from './ops.js';
 import { maybeDispatchWorkflows } from './dispatch.js';
-import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason, resolvePWHLSeason } from './seasons.js';
+import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason } from './seasons.js';
 
 // GET /config/seasons/comparison, one entry per league. NHL's team_seasons is
 // keyed by season/team and has no season metadata; PWHL/AHL/ECHL's
@@ -32,6 +33,9 @@ import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWH
 // and start year (PWHL: and a label) from seasons.js. Active team counts come from the same code
 // maps every roster-aware route uses -- never hardcoded, since PWHL's 2026-27
 // expansion changed its count.
+// /trivia/today?sport= values (trivia_questions.sport).
+const TRIVIA_SPORTS = ['nhl', 'pwhl', 'ahl', 'echl'];
+
 const COMPARISON_LEAGUES = [
   { key: 'nhl',  label: 'NHL',  teams: TEAM_CONFIGS,    table: 'team_seasons?select=season,team&game_type=eq.2&limit=1000', seasonCol: 'season',    teamCol: 'team' },
   { key: 'pwhl', label: 'PWHL', teams: PWHL_TEAM_CODES, table: 'pwhl_team_seasons?select=season_id,team_id&limit=2000',     seasonCol: 'season_id', teamCol: 'team_id', meta: env => getAllPWHLSeasons(env) },
@@ -362,9 +366,11 @@ async function routeRequest(request, env, ctx) {
   // early; accepted for a low-stakes trivia feature, not worth the extra
   // round-trip/complexity of a server-tracked reveal step.
   if (url.pathname === '/trivia/today') {
+    // ahl/echl (2026-10): trivia_questions.py --sport ahl|echl writes easy
+    // and medium tiers for them like PWHL's; there is no hard tier for them.
     const sport = url.searchParams.get('sport')?.toLowerCase();
-    if (!sport || !['nhl', 'pwhl'].includes(sport)) {
-      return badRequest('sport must be nhl or pwhl');
+    if (!sport || !TRIVIA_SPORTS.includes(sport)) {
+      return badRequest(`sport must be one of ${TRIVIA_SPORTS.join(', ')}`);
     }
     const team = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || null;
     // French/English localization, Track B Phase B2. Applied uniformly to
@@ -477,22 +483,21 @@ async function routeRequest(request, env, ctx) {
   // be a strictly worse experience than no badge at all.
   if (url.pathname === '/milestones/latest') {
     const sport = url.searchParams.get('sport')?.toLowerCase();
-    if (!sport || !['nhl', 'pwhl'].includes(sport)) {
-      return badRequest('sport must be nhl or pwhl');
+    if (!sport || !MILESTONE_SPORTS.includes(sport)) {
+      return badRequest(`sport must be one of ${MILESTONE_SPORTS.join(', ')}`);
     }
-    const isPwhl = sport === 'pwhl';
-    const season = isPwhl ? (await resolvePWHLSeason(env)).seasonId : await resolveNHLSeason(env);
+    const { season, filter } = await milestoneScope(env, sport);
     const kvKey  = `milestones:latest:${sport}:${season}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached, { maxAge: 3600 });
 
-    const r = await fetch(
-      `${SB_URL}/rest/v1/milestones?select=id,game_date&order=game_date.desc,id.desc&limit=1&is_pwhl=eq.${isPwhl}&season=eq.${season}`,
-      { headers: sbHeaders() }
+    const rows = await sbRowsIfTable(
+      `${SB_URL}/rest/v1/milestones?select=id,game_date&order=game_date.desc,id.desc&limit=1&${filter}`
     );
-    if (!r.ok) return sbError(r.status);
-    const rows = await r.json();
-    const result = { latestId: rows[0]?.id ?? null, gameDate: rows[0]?.game_date ?? null };
+    if (rows instanceof Response) return rows;
+    const result = { latestId: rows?.[0]?.id ?? null, gameDate: rows?.[0]?.game_date ?? null };
+    // No `sport` column yet (AHL/ECHL): nothing new, and not cached.
+    if (rows === null) return json(result, { maxAge: 300 });
     await kvPut(env, kvKey, result, 3600); // 1hr — matches /milestones' own TTL
     return json(result, { maxAge: 3600 });
   }

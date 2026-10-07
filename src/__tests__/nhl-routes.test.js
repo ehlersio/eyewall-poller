@@ -22,6 +22,8 @@ import { makeEnv, makeCtx, makeRequest, flushWaitUntil, makeFakeCache, mockFetch
 vi.mock('../seasons.js', () => ({
   resolveNHLSeason: vi.fn().mockResolvedValue(20252026),
   resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
+  resolveAHLSeason: vi.fn().mockResolvedValue({ seasonId: 94, seasonType: 'regular' }),
+  resolveECHLSeason: vi.fn().mockResolvedValue({ seasonId: 77, seasonType: 'regular' }),
 }))
 
 // sendPush does real VAPID JWT signing + RFC8291 payload encryption via
@@ -1273,6 +1275,45 @@ describe('GET /elo/ratings', () => {
   })
 })
 
+describe('GET /elo/ratings?league=', () => {
+  // Audit 2026-10-06: league= was ignored, so league=pwhl answered NHL ratings.
+  const get = (qs, env = makeEnv()) =>
+    handleNHL(makeRequest(`/elo/ratings${qs}`), env, makeCtx(), new URL(`https://example.com/elo/ratings${qs}`))
+
+  it.each(['pwhl', 'ahl', 'echl'])('league=%s reads {league}_team_elo_ratings, keyed by team_id, cached under its own key', async (league) => {
+    const cache = makeFakeCache()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [{ team_id: 3, rating: 1561.5 }, { team_id: 12, rating: 1480 }] })
+
+    const res = await get(`?league=${league}`, makeEnv({ CACHE: cache }))
+
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=3600')
+    const body = await res.json()
+    expect(body).toEqual({ ratings: { 3: 1561.5, 12: 1480 }, homeAdvantage: 35 })
+    expect(String(globalThis.fetch.mock.calls[0][0])).toContain(`/rest/v1/${league}_team_elo_ratings?select=team_id,rating&order=team_id.asc`)
+    expect(JSON.parse(cache._store.get(`${league}:elo-ratings`))).toEqual(body)
+    expect(cache._store.has('nhl:elo-ratings')).toBe(false)
+  })
+
+  it('league=nhl (or none, or any case) is the NHL table', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [{ team: 'CAR', rating: 1550 }] })
+    expect(await (await get('?league=NHL')).json()).toEqual({ ratings: { CAR: 1550 }, homeAdvantage: 35 })
+    expect(String(globalThis.fetch.mock.calls[0][0])).toContain('/rest/v1/team_elo_ratings?select=team,rating')
+  })
+
+  it('an unknown league is a 400, not NHL ratings', async () => {
+    const res = await get('?league=khl')
+    expect(res.status).toBe(400)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('a failed league read is unavailable and not cached', async () => {
+    const cache = makeFakeCache()
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404 })
+    expect(await (await get('?league=ahl', makeEnv({ CACHE: cache }))).json()).toEqual({ ratings: {}, homeAdvantage: 35, unavailable: true })
+    expect(cache._store.size).toBe(0)
+  })
+})
+
 describe('GET /player-analytics', () => {
   it('serves from KV cache without hitting Supabase', async () => {
     const env = makeEnv({
@@ -2296,6 +2337,50 @@ describe('GET /milestones', () => {
     const fetchedUrl = String(globalThis.fetch.mock.calls[0][0])
     expect(fetchedUrl).toContain('is_pwhl=eq.true')
     expect(fetchedUrl).toContain('season=eq.8')
+  })
+})
+
+describe('GET /milestones?sport=ahl|echl', () => {
+  // Contract C5 (audit 2026-10-06 Phase 3): AHL/ECHL rows in the shared
+  // milestones table carry sport = 'ahl' | 'echl' and the HockeyTech
+  // season_id, scoped to the live-resolved season like NHL/PWHL.
+  const get = (qs, env = makeEnv()) =>
+    handleNHL(makeRequest(`/milestones${qs}`), env, makeCtx(), new URL(`https://example.com/milestones${qs}`))
+
+  it.each([['ahl', 94], ['echl', 77]])('sport=%s filters on sport and that league\'s season', async (sport, season) => {
+    const rows = [{ id: 7, game_date: '2026-10-11', team: 'CLT', milestone_type: 'hat_trick' }]
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(rows), { status: 200 }))
+    const cache = makeFakeCache()
+
+    const res = await get(`?sport=${sport}&team=clt&limit=5`, makeEnv({ CACHE: cache }))
+
+    expect(await res.json()).toEqual(rows)
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=3600')
+    const u = String(globalThis.fetch.mock.calls[0][0])
+    expect(u).toContain(`sport=eq.${sport}&season=eq.${season}`)
+    expect(u).toContain('team=eq.CLT')
+    expect(u).not.toContain('is_pwhl')
+    expect(cache._store.has(`milestones:${sport}:CLT:5:${season}`)).toBe(true)
+  })
+
+  it.each([400, 404])('no sport column / table yet (PostgREST %i): an empty list, not a 502, not cached', async (status) => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{"code":"42703"}', { status }))
+    const cache = makeFakeCache()
+    const res = await get('?sport=ahl', makeEnv({ CACHE: cache }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([])
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=300')
+    expect(cache._store.size).toBe(0)
+  })
+
+  it('any other failure is still a 502', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 500 }))
+    expect((await get('?sport=echl')).status).toBe(502)
+  })
+
+  it('an unknown sport is a 400 (it used to fall back to NHL silently)', async () => {
+    expect((await get('?sport=khl')).status).toBe(400)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 })
 

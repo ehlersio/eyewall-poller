@@ -937,8 +937,32 @@ describe('GET /pwhl/today', () => {
     )
     const body = await res.json()
 
-    expect(globalThis.fetch.mock.calls[0][0]).toContain('game_date=gte.2026-11-22&season_id=in.(10,11)')
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('game_date=gte.2026-11-22&game_date=lte.2026-11-28&season_id=in.(10,11)')
     expect(body.map(g => g.gameId)).toEqual([353])
+  })
+
+  it('looks at most 6 days ahead: a game weeks away is not "today" (audit 2026-10-06)', async () => {
+    // 2026-10-06: the only scheduled game was LV-MIN preseason on 11-22,
+    // 47 days out, and the Scoreboard showed it as the day's slate.
+    vi.setSystemTime(new Date('2026-10-06T16:00:00Z'))
+    const log = [
+      { game_id: 353, season_id: 10, game_date: '2026-11-22', home_team_id: 12, away_team_id: 2, home_score: 0, away_score: 0, game_state: '9:50 pm EST' },
+    ]
+    // Honours the route's game_date range like PostgREST does.
+    globalThis.fetch = vi.fn((url) => {
+      const u = new URL(String(url))
+      if (!u.pathname.endsWith('pwhl_game_log')) return Promise.resolve({ ok: true, json: async () => [] })
+      const [gte, lte] = u.searchParams.getAll('game_date').map(v => v.slice(4))
+      return Promise.resolve({ ok: true, json: async () => log.filter(g => g.game_date >= gte && (!lte || g.game_date <= lte)) })
+    })
+
+    expect(await (await today()).json()).toEqual([])
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('game_date=gte.2026-10-06&game_date=lte.2026-10-12')
+
+    // Six days out is still the next game day.
+    log[0].game_date = '2026-10-12'
+    const env = makeEnv() // a fresh KV: the empty answer above is cached
+    expect((await (await today(env)).json()).map(g => g.gameId)).toEqual([353])
   })
 
   it('keeps an explicitly different season to that season alone', async () => {
@@ -1410,6 +1434,29 @@ describe('GET /pwhl/preview', () => {
     // miscellaneousRecords/lineup deliberately excluded
     expect(body.homeTeam.miscellaneousRecords).toBeUndefined()
     expect(body.homeTeam.lineup).toBeUndefined()
+  })
+
+  it('an empty team block is null, and a 0-0-0-0 record is null, not a record (audit 2026-10-06 PWHL F10)', async () => {
+    // Live /pwhl/preview?gameId=353 (LV-MIN preseason, 2026-10-06): both
+    // blocks came back with no team id and 0-0-0-0 records.
+    const empty = {
+      teamInfo: { id: null, abbreviation: '', name: '' },
+      goalsFor: 0, goalsAgainst: 0,
+      teamRecord: { streak: '0-0-0-0', overall: { formattedRecord: '0-0-0-0' }, past_10_games: { formattedRecord: '0-0-0-0' } },
+      leadingScorers: [], leadingRookie: null, leadingPIM: null,
+    }
+    const noGamesYet = {
+      ...empty,
+      teamInfo: { id: '12', abbreviation: 'LV', name: 'Las Vegas' },
+    }
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify({ homeTeam: noGamesYet, visitingTeam: empty, previousMeetings: [] }) })
+
+    const body = await (await handlePWHL(
+      makeRequest('/pwhl/preview?gameId=353'), makeEnv(), makeCtx(), new URL('https://example.com/pwhl/preview?gameId=353')
+    )).json()
+
+    expect(body.visitingTeam).toBeNull()
+    expect(body.homeTeam).toMatchObject({ id: 12, abbreviation: 'LV', streak: null, overallRecord: null, last10Record: null })
   })
 
   it('502s when the HockeyTech fetch fails', async () => {
