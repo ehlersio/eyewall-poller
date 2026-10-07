@@ -23,6 +23,7 @@ import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js'
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_IDS } from './ahl.js';
 import { handleECHL, ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS, fetchECHLNews, pollECHL } from './echl.js';
 import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog, sbParam, sbRowsIfTable, secretMatches, withParamErrors, withHttpCache } from './shared.js';
+import { handleOddsRankings } from './leagueOddsRankings.js';
 import { handleOps, trackCron, checkCronHealth, readCronHealth, readOpsHealth, OPS_SUBS_KEY } from './ops.js';
 import { maybeDispatchWorkflows } from './dispatch.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason } from './seasons.js';
@@ -536,6 +537,11 @@ async function routeRequest(request, env, ctx) {
     if (res) return res;
     return errorJson(404, { error: 'Not found' });
   }
+
+  // Playoff odds and power rankings for PWHL/AHL/ECHL (C10/C12): one
+  // definition for the three leagues, ahead of their own handlers.
+  const oddsRankings = await handleOddsRankings(request, env, url);
+  if (oddsRankings) return oddsRankings;
 
   // Route PWHL endpoints
   if (url.pathname.startsWith('/pwhl/')) {
