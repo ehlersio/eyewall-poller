@@ -105,6 +105,8 @@ const CACHE_ROUTE_READABLE = [
   'summary:',         // summary:{gameId} (cron game summary)
   'narrative:',       // narrative:{period}:{gameId}:{abbr}
   'pwhl:narrative:',  // pwhl:narrative:{period}:{gameId}:{abbr}
+  'ahl:narrative:',   // ahl:narrative:{period}:{gameId}:{teamId}[:fr]
+  'echl:narrative:',  // echl:narrative:{period}:{gameId}:{teamId}[:fr]
   'prediction:',      // prediction:{gameId}:{abbr}[:fr]
 ];
 

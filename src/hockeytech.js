@@ -37,7 +37,7 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRowsIfTable, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRowsIfTable, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
@@ -47,6 +47,26 @@ import { buildGoals, buildPenaltyShots, fetchGameDetailRows, fetchWinProbs, with
 // ELO_HOME_ADVANTAGE). hockeytech_elo.py writes the ratings these apply to.
 const ELO_INITIAL_RATING = 1500;
 const ELO_HOME_ADVANTAGE = 35;
+
+// /{league}/summary/narrative answers are kept 30 days: a game's narrative
+// never changes once written.
+const NARRATIVE_TTL = 30 * 24 * 3600;
+
+// ?period= of /{league}/summary/narrative -> its cache-key segment, or null
+// when it isn't one: '1'-'3', 'OT'/'2OT'.. (period 4+ by its label, so
+// period=4 and period=OT share a key), or 'game'. No shootout narrative.
+export function narrativePeriodKey(raw) {
+  const s = String(raw ?? '').trim();
+  if (s === 'game') return 'game';
+  if (/^[1-9]\d?$/.test(s)) {
+    const n = Number(s);
+    if (n <= 3) return s;
+    const name = hockeytechPeriodLabel(n);
+    return name === 'SO' ? null : name;
+  }
+  const ot = s.toUpperCase().match(/^([2-9]?)OT$/);
+  return ot ? `${ot[1]}OT` : null;
+}
 
 /**
  * @param {object} cfg
@@ -596,6 +616,92 @@ export function createHockeyTechLeague(cfg) {
         pkSv:   { pct: row.pct_pk_sv  ?? null, label: 'PK SV%',          note: `Percentile rank vs ${label} goalies, penalty-kill save percentage` },
       },
     };
+  }
+
+  // The /summary/narrative prompt (contract C8). Mirrors /pwhl/summary/
+  // narrative's, minus Corsi: the best/worst period is ranked by shots on
+  // goal here, the only shot count these leagues have. `teamId` names the
+  // team when the client sent no abbreviation or name.
+  function summaryNarrativePrompt(body, { periodKey, teamId }) {
+    const {
+      oppAbbr, carName, oppName, periodLabel,
+      carSOG, oppSOG, carGoals, oppGoals,
+      carHits, carFOPct, carHDCF, oppHDCF,
+      penaltyCount, carPenaltyCount,
+      bestPeriod, worstPeriod,
+      goalieNames,
+    } = body;
+    const carAbbr = body.carAbbr || teamCodes[teamId] || String(teamId);
+    const goals = Array.isArray(body.goals) ? body.goals : [];
+    const isGame = periodKey === 'game';
+
+    // Full team names in prose, so the model writes "the Wolves", not "CHI".
+    const carDisplay = carName || carAbbr;
+    const oppDisplay = oppName || oppAbbr || 'their opponent';
+    const matchup = oppAbbr ? `${carDisplay} (${carAbbr}) vs ${oppDisplay} (${oppAbbr})` : `${carDisplay} (${carAbbr}) vs ${oppDisplay}`;
+
+    const goalies = (Array.isArray(goalieNames) ? goalieNames : [])
+      .filter(n => typeof n === 'string' && n.trim());
+    const goalieLine = goalies.length ? `\n${carDisplay} goalie in net: ${goalies.join(', then ')}` : '';
+
+    const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const pair = (a, b) => (num(a) != null && num(b) != null ? `${a}–${b}` : null);
+    const joinParts = parts => parts.filter(Boolean).join(' · ');
+    const lines = parts => parts.filter(Boolean).join('\n');
+
+    const goalLines = goals.map(g => {
+      const who = g?.scorerName || (g?.isCar ? carDisplay : oppDisplay);
+      const str = g?.strength && g.strength !== 'ev' ? ` (${String(g.strength).toUpperCase()})` : '';
+      const when = [g?.time ? `at ${g.time}` : null, isGame ? hockeytechPeriodLabel(g?.period) : null].filter(Boolean).join(' ');
+      return `${g?.isCar ? carDisplay : oppDisplay}: ${who}${when ? ` ${when}` : ''}${str}`;
+    }).join('\n');
+
+    const sog = pair(carSOG, oppSOG), hd = pair(carHDCF, oppHDCF);
+    const shotLine = joinParts([sog ? `Shots on goal: ${sog}` : null, hd ? `High-danger shots: ${hd}` : null]);
+    const hits = num(carHits) != null ? `Hits: ${carHits}` : null;
+    const fo = num(carFOPct) != null ? `${carFOPct}%` : null;
+    const penaltiesKnown = num(penaltyCount) != null && num(carPenaltyCount) != null;
+    const periodLine = (title, p) => {
+      const name = hockeytechPeriodLabel(p?.period), shots = pair(p?.carSOG, p?.oppSOG);
+      return name && shots ? `${title}: ${name} (${carDisplay} outshot ${shots})` : null;
+    };
+    const samePeriod = bestPeriod?.period != null && bestPeriod.period === worstPeriod?.period;
+    const periodName = (typeof periodLabel === 'string' && periodLabel.trim())
+      || (/^\d+$/.test(periodKey) ? hockeytechPeriodLabel(periodKey) : periodKey);
+    const tone = 'Neutral, factual tone: describe what happened using only the numbers given. No betting or wagering language, no predictions.';
+
+    if (isGame) {
+      return `You are Sticks, EyeWall Analytics' ${label} game analyst. Write a punchy 2-3 sentence final game summary. Use the full team names (e.g. "${carDisplay}", "${oppDisplay}") when referring to teams — never use abbreviations in the narrative.
+${lines([
+  `Game: ${matchup}`,
+  pair(carGoals, oppGoals) ? `Score: ${carDisplay} ${carGoals}–${oppGoals} ${oppDisplay}` : null,
+  shotLine,
+  joinParts([
+    fo ? `Faceoff Win%: ${fo}` : null,
+    hits,
+    penaltiesKnown ? `Penalties: ${carDisplay} ${carPenaltyCount}–${penaltyCount - carPenaltyCount} ${oppDisplay}` : null,
+  ]),
+  `Goals:\n${goalLines || 'None'}${goalieLine}`,
+  periodLine('Best period', bestPeriod),
+  samePeriod ? null : periodLine('Worst period', worstPeriod),
+])}
+
+${tone} Write in plain text, no markdown, no bullet points. Be specific about what happened.`;
+    }
+    return `You are Sticks, EyeWall Analytics' ${label} analyst. Write a punchy 1-2 sentence period summary. Use the full team names (e.g. "${carDisplay}", "${oppDisplay}") — never abbreviations in the narrative.
+${lines([
+  `${periodName ? `Period: ${periodName} — ` : ''}${matchup}`,
+  shotLine,
+  joinParts([
+    pair(carGoals, oppGoals) ? `Goals: ${carGoals}–${oppGoals}` : null,
+    hits,
+    fo ? `Faceoffs: ${fo}` : null,
+  ]),
+  penaltiesKnown ? `Penalties this period: ${penaltyCount} (${carDisplay} took ${carPenaltyCount})` : null,
+  `${goalLines ? 'Goals:\n' + goalLines : 'No goals this period.'}${goalieLine}`,
+])}
+
+${tone} Write in plain text, no markdown. 1-2 sentences max.`;
   }
 
   // ── HTTP routes ────────────────────────────────────────────────────
@@ -1491,6 +1597,66 @@ Only reference the two teams named above and the numbers given -- no player name
           return { narrative };
         } catch (e) {
           console.error(`[${label}] head-to-head narrative AI error:`, e);
+          return errorJson(502, { error: 'AI generation failed' });
+        }
+      });
+    }
+
+    // POST /{league}/summary/narrative?gameId=&period=<1|2|3|OT|2OT..|game>&teamId=&locale=
+    // EyeWall AI period/final narrative (contract C8), the AHL/ECHL analog
+    // of /pwhl/summary/narrative. The client posts the stats it already
+    // built from /live + /summary (same keys as the PWHL hook, minus Corsi
+    // and blocked shots, which these leagues don't have):
+    //   carAbbr, oppAbbr, carName, oppName, periodLabel, carSOG, oppSOG,
+    //   carGoals, oppGoals, carHDCF, oppHDCF, penaltyCount, carPenaltyCount,
+    //   bestPeriod/worstPeriod { period, carSOG, oppSOG } (game only),
+    //   goalieNames[], goals[{ isCar, scorerName, time, period, strength }]
+    // and optionally carHits/carFOPct (the box scores hardcode both to 0,
+    // so the app leaves them out). A stat that isn't sent is left out of
+    // the prompt, never printed as 0 or "null".
+    // One answer per game, period, team and language, shared by everyone:
+    // KV `{league}:narrative:{period}:{gameId}:{teamId}[:fr]`, 30 days,
+    // readable through GET /cache/ (nhl.js CACHE_ROUTE_READABLE). Rate-
+    // limited only on a cache miss, like the other narrative routes.
+    // Period 4+ is filed under its label (period=4 and period=OT share a
+    // key); the shootout has no narrative.
+    if (url.pathname === `${P}/summary/narrative` && request.method === 'POST') {
+      const gameId = sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' });
+      const teamId = sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' });
+      const periodKey = narrativePeriodKey(url.searchParams.get('period'));
+      if (!gameId || !teamId || !periodKey) return badRequest('gameId, teamId and period (1-3, OT, 2OT.., game) required');
+      const locale = requestLocale(url);
+      const cacheKey = `${key}:narrative:${periodKey}:${gameId}:${teamId}${localeKeySuffix(locale)}`;
+
+      return cachedJson(env, cacheKey, NARRATIVE_TTL, async () => {
+        const limited = await checkAiRateLimit(env, request, `${key}-summary-narrative`);
+        if (limited) return limited;
+
+        let body;
+        try { body = await request.json(); } catch {
+          return badRequest('Invalid JSON');
+        }
+        if (!body || typeof body !== 'object') return badRequest('Invalid JSON');
+
+        const prompt = localizePrompt(summaryNarrativePrompt(body, { periodKey, teamId }), locale);
+        const isGame = periodKey === 'game';
+        try {
+          const aiResponse = await generateText(env, {
+            messages:   [{ role: 'user', content: prompt }],
+            max_tokens: isGame ? 160 : 100,
+          });
+          const narrative = (aiResponse.response || '').trim();
+          if (!narrative) return errorJson(502, { error: 'Empty AI response' });
+
+          // The share card has room for about one sentence of a final.
+          let cardNarrative = null;
+          if (isGame && narrative.length > 120) {
+            const firstSentence = narrative.match(/^[^.!?]+[.!?]/);
+            cardNarrative = firstSentence ? firstSentence[0].trim() : narrative.slice(0, 120) + '…';
+          }
+          return { narrative, cardNarrative };
+        } catch (e) {
+          console.error(`[${label}] summary narrative AI error:`, e);
           return errorJson(502, { error: 'AI generation failed' });
         }
       });
