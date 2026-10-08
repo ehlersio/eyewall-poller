@@ -5108,8 +5108,8 @@ exports[`summary > Supabase unavailable 1`] = `
   },
   "kvWrites": [
     {
-      "key": "pwhl:gamesummary:210",
-      "ttl": 3600,
+      "key": "pwhl:gamesummary:210:live",
+      "ttl": 60,
     },
   ],
   "status": 200,
@@ -5284,12 +5284,15 @@ exports[`summary > response, upstream requests and KV writes; repeat call 1`] = 
   },
   "kvWrites": [
     {
-      "key": "pwhl:gamesummary:210",
+      "key": "pwhl:gamesummary:210:final",
       "ttl": 3600,
     },
   ],
   "status": 200,
   "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.210&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1",
+    },
     {
       "referer": "https://www.thepwhl.com/",
       "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",

@@ -571,6 +571,22 @@ export async function cachedJson(env, key, ttl, build) {
   return json(data, { maxAge: seconds });
 }
 
+// cachedJson() for a per-game view that keeps changing until the game is
+// final (HockeyTech's gameSummary: periods, shots, three stars). A final
+// copy is kept `finalTtl` seconds under `${key}:final`; until then the copy
+// lives `liveTtl` seconds under `${key}:live`, so a copy cached mid-game is
+// never served once the game is final. `isFinal()` is only asked when no
+// final copy is cached, so a final game costs one KV read. KV's minimum TTL
+// is 60s.
+export const GAME_LIVE_TTL = 60;
+export async function cachedUntilFinal(env, key, { isFinal, build, finalTtl, liveTtl = GAME_LIVE_TTL }) {
+  const finalKey = `${key}:final`;
+  const cached = await kvGet(env, finalKey);
+  if (cached) return json(cached, { maxAge: finalTtl });
+  const final = await isFinal();
+  return cachedJson(env, final ? finalKey : `${key}:live`, final ? finalTtl : liveTtl, build);
+}
+
 // ── HTTP caching (audit 2026-10-06 §5) ───────────────────────
 // Every GET JSON response carries `Cache-Control: public, max-age=N` and a
 // weak ETag, so the browser reuses a response for N seconds and then

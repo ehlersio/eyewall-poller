@@ -37,7 +37,7 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRowsIfTable, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRowsIfTable, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
@@ -102,6 +102,22 @@ export function createHockeyTechLeague(cfg) {
     client: key, base: cfg.ht.base, key: cfg.ht.key,
     siteId: cfg.ht.siteId, leagueId: cfg.ht.leagueId, headers: cfg.ht.headers,
   }, rows, opts);
+
+  // One game's game_log row with the scorebar's live status and score, or
+  // null. game_log doesn't have every game: the ECHL preseason is never
+  // ingested, and a mid-season addition waits for the nightly. Those games
+  // are on /today from HockeyTech's scorebar, so teams, score and status
+  // come from the same (60s-cached) read then; /live used to answer null
+  // teams, 'pre' and 0-0 for a game in progress (audit 2026-10-06, AHL/ECHL
+  // F4). /live and /summary both read a game's state from here.
+  async function liveGameRow(env, gameId) {
+    const gameRows = await sbRowsOr(
+      `${table('game_log')}?game_id=eq.${gameId}&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1`,
+      []
+    ).catch(() => []);
+    if (gameRows[0]) return (await live(env, gameRows))[0];
+    return (await upcomingFromScorebar(env, etDateString())).find(g => g.game_id === gameId) || null;
+  }
 
   // ?season= param, live-resolving the current season when omitted.
   async function seasonParam(url, env) {
@@ -1309,11 +1325,14 @@ ${tone} Write in plain text, no markdown. 1-2 sentences max.`;
     // /pwhl/summary, except the team stats drop hits/faceoffAttempts/
     // faceoffWins/faceoffWinPercentage: they read 0 in every real game, so
     // passing them through would show a fabricated "0 hits" stat line.
+    // Cached 1 h once the game is final (game_log + scorebar, as /live
+    // decides it), 60 s before that: the app re-reads it every period.
     if (url.pathname === `${P}/summary`) {
       const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
       if (!gameId) return badRequest('gameId required');
 
-      return cachedJson(env, `${key}:gamesummary:${gameId}`, 3600, async () => {
+      const isFinal = async () => deriveGameStatus(await liveGameRow(env, gameId)) === 'final';
+      return cachedUntilFinal(env, `${key}:gamesummary:${gameId}`, { isFinal, finalTtl: 3600, build: async () => {
         const htRes = await htFetch(htGameUrl('gameSummary', gameId));
         if (!htRes.ok) return errorJson(502, { error: `HockeyTech ${htRes.status}` });
 
@@ -1424,7 +1443,7 @@ ${tone} Write in plain text, no markdown. 1-2 sentences max.`;
           visitingTeamStats: stripFakeStats(raw.visitingTeam?.stats),
         };
         return payload;
-      });
+      } });
     }
 
     // GET /{league}/preview?gameId=1028992
@@ -1993,21 +2012,7 @@ Only reference the two teams named above and the numbers given -- no player name
           return null; // unknown/unconfirmed event type — skip
         }).filter(Boolean);
 
-        const gameRows = await sbRowsOr(
-          `${table('game_log')}?game_id=eq.${gameId}&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1`,
-          []
-        ).catch(() => []);
-        let gameRow = gameRows[0] ? (await live(env, gameRows))[0] : null;
-        // game_log doesn't have every game: the ECHL preseason is never
-        // ingested, and a mid-season addition waits for the nightly. Those
-        // games are on /today from HockeyTech's scorebar, so take teams,
-        // score and status from the same (60s-cached) read here too; this
-        // used to answer null teams, 'pre' and 0-0 for a game in progress
-        // (audit 2026-10-06, AHL/ECHL F4).
-        if (!gameRow) {
-          const todayStr = etDateString();
-          gameRow = (await upcomingFromScorebar(env, todayStr)).find(g => g.game_id === gameId) || null;
-        }
+        const gameRow = await liveGameRow(env, gameId);
 
         let homeScore = 0, awayScore = 0, gameStatus = 'pre';
         if (gameRow) {

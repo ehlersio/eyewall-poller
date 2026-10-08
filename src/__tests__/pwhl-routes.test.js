@@ -1289,9 +1289,9 @@ describe('GET /pwhl/summary', () => {
     expect(res.status).toBe(400)
   })
 
-  it('serves from KV cache without hitting HockeyTech', async () => {
+  it('serves a final game from KV cache without hitting HockeyTech', async () => {
     const cached = { periods: [], mvps: [], venue: 'Cached Arena', officials: { referees: [], linesmen: [] }, coaches: { home: null, away: null }, homeTeamStats: {}, visitingTeamStats: {} }
-    const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:gamesummary:261': cached }) })
+    const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:gamesummary:261:final': cached }) })
 
     const res = await handlePWHL(
       makeRequest('/pwhl/summary?gameId=261'), env, makeCtx(), new URL('https://example.com/pwhl/summary?gameId=261')
@@ -1384,7 +1384,7 @@ describe('GET /pwhl/preview', () => {
     expect(res.status).toBe(400)
   })
 
-  it('serves from KV cache without hitting HockeyTech', async () => {
+  it('serves a final game from KV cache without hitting HockeyTech', async () => {
     const cached = { gameId: 210, homeTeam: null }
     const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:preview:210': cached }) })
     const res = await handlePWHL(
@@ -2525,7 +2525,7 @@ describe('GET /pwhl/player/career', () => {
     expect(res.status).toBe(400)
   })
 
-  it('serves from KV cache without hitting HockeyTech', async () => {
+  it('serves a final game from KV cache without hitting HockeyTech', async () => {
     const cached = { player_id: 31, regularSeason: { goals: 38 }, playoffs: { goals: 4 } }
     const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:player:career:31': cached }) })
 
@@ -2672,7 +2672,7 @@ describe('GET /pwhl/transactions', () => {
     }]
   }
 
-  it('serves from KV cache without hitting HockeyTech', async () => {
+  it('serves a final game from KV cache without hitting HockeyTech', async () => {
     const cached = { transactions: [{ date: '2026-08-27', player: 'Neena Brick (F)', team: 'Seattle Torrent', type: 'ADD', action: 'Signed', from: '' }] }
     const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:transactions:8': cached }) })
 
