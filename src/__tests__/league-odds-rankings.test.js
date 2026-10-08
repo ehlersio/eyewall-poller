@@ -138,6 +138,47 @@ for (const lg of LEAGUES) {
       expect(env.CACHE._store.size).toBe(0)
     })
 
+    it('games_played (eyewall-pipeline#217) is selected and passed through', async () => {
+      const env = makeEnv()
+      const latest = { ...oddsRow(lg, '2026-11-20', 0.62, 88), games_played: 12 }
+      mockSupabase([{ match: `${T}?select=season_id`, rows: [latest] }])
+      const body = await (await get(`/${lg.key}/playoff-odds?teamId=${lg.teamId}`, env)).json()
+      expect(urls()[0]).toContain(',games_played&')
+      expect(body.latest.games_played).toBe(12)
+      expect(urls()).toHaveLength(2) // no retry
+    })
+
+    it('before the games_played migration (PostgREST 400): one retry with the old columns, games_played null, not KV-cached', async () => {
+      const env = makeEnv()
+      const latest = oddsRow(lg, '2026-11-20', 0.62, 88)
+      const history = [{ run_date: '2026-11-20', make_playoffs_pct: 0.62, proj_points_p50: 88 }]
+      mockSupabase([
+        { match: 'games_played', status: 400, rows: { code: '42703', message: 'column playoff_odds.games_played does not exist' } },
+        { match: `${T}?select=season_id`, rows: [latest] },
+        { match: `${T}?select=run_date`, rows: history },
+      ])
+      const res = await get(`/${lg.key}/playoff-odds?teamId=${lg.teamId}`, env)
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ latest: { ...latest, games_played: null }, history, stale: false })
+      const [first, retry] = urls()
+      expect(first).toContain('games_played')
+      expect(retry).toContain(`${T}?select=season_id`)
+      expect(retry).not.toContain('games_played')
+      expect(urls()).toHaveLength(3)
+      expect(env.CACHE._store.size).toBe(0)
+
+      // Once the column exists the next request reads it (nothing cached).
+      mockSupabase([{ match: `${T}?select=season_id`, rows: [{ ...latest, games_played: 30 }] }])
+      expect((await (await get(`/${lg.key}/playoff-odds?teamId=${lg.teamId}`, env)).json()).latest.games_played).toBe(30)
+    })
+
+    it('table missing: the retry is missing too -> the empty shape', async () => {
+      const env = makeEnv()
+      mockSupabase([{ match: T, status: 404, rows: { code: 'PGRST205' } }])
+      expect(await (await get(`/${lg.key}/playoff-odds?teamId=${lg.teamId}`, env)).json()).toEqual({ latest: null, history: [] })
+      expect(urls()).toHaveLength(2)
+    })
+
     it('400 without or with a malformed teamId/season, before any read', async () => {
       const env = makeEnv()
       mockSupabase([])

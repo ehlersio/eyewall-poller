@@ -37,7 +37,7 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRowsIfTable, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRowsIfTable, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
@@ -1809,10 +1809,14 @@ Only reference the two teams named above and the numbers given -- no player name
     // preseason and regular season weren't in it on 10-05), so when it has
     // no game today the HockeyTech scorebar's next week is read too, and
     // its first game day wins if it comes sooner (upcomingFromScorebar()).
+    // Both look at most TODAY_LOOKAHEAD_DAYS (6) ahead, /pwhl/today's and
+    // /nhl/today's window: game_log had no cap, so an off-season answer
+    // could be a lone game weeks out served as the day's slate.
     if (url.pathname === `${P}/today`) {
       const season = await seasonParam(url, env);
       return cachedJson(env, `${key}:today:${season}`, 60, async () => {
         const todayStr = etDateString();
+        const lastDay = addDaysToDateString(todayStr, TODAY_LOOKAHEAD_DAYS);
         const seasonIds = await todaySeasonIds(env, season);
 
         // Today's games, or the next day that has some. One query either
@@ -1820,7 +1824,7 @@ Only reference the two teams named above and the numbers given -- no player name
         // whichever date comes back first. Out of season this is what stops
         // the scoreboard from being a permanently empty "no games today".
         const rows = await sbRows(
-          `${table('game_log')}?game_date=gte.${todayStr}&season_id=in.(${seasonIds.join(',')})` +
+          `${table('game_log')}?game_date=gte.${todayStr}&game_date=lte.${lastDay}&season_id=in.(${seasonIds.join(',')})` +
           `&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date` +
           `&order=game_date.asc&limit=40`
         );
@@ -1829,7 +1833,7 @@ Only reference the two teams named above and the numbers given -- no player name
         let gameDate = rows[0]?.game_date || null;
         let dayRows;
         if (gameDate !== todayStr) {
-          const upcoming = await upcomingFromScorebar(env, todayStr);
+          const upcoming = (await upcomingFromScorebar(env, todayStr)).filter(g => g.game_date <= lastDay);
           const sbDate = upcoming[0]?.game_date || null;
           if (sbDate && (!gameDate || sbDate < gameDate)) {
             gameDate = sbDate;

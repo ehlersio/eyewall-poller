@@ -15,13 +15,24 @@
 const SKATER_SUMS = ['gp', 'goals', 'assists', 'points', 'shots', 'pp_goals', 'sh_goals', 'pim', 'plus_minus'];
 const GOALIE_SUMS = ['gp', 'wins', 'losses', 'ot_losses', 'shutouts', 'saves', 'goals_against', 'shots_against'];
 
-// "1648:49" -> seconds, or null when the column is missing/unparseable.
+// A goalie row's time on ice -> seconds, or null when the column is
+// missing/unparseable. The pipeline stores HockeyTech's own text, which
+// comes two ways: "1648:49" (minutes:seconds, the league-wide rows) and
+// "1294" (whole minutes, view=players' minutes_played on the per-team rows
+// of eyewall-pipeline#190 -- every traded goalie's rows in 2025-26).
 function toiSeconds(toi) {
-  const m = /^(\d+):(\d{1,2})$/.exec(String(toi ?? '').trim());
-  return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
+  if (typeof toi === 'number') return Number.isFinite(toi) && toi >= 0 ? Math.round(toi * 60) : null;
+  const s = String(toi ?? '').trim();
+  const mmss = /^(\d+):(\d{1,2})$/.exec(s);
+  if (mmss) return parseInt(mmss[1], 10) * 60 + parseInt(mmss[2], 10);
+  return /^\d+(\.\d+)?$/.test(s) ? Math.round(parseFloat(s) * 60) : null;
 }
 
-function formatToi(seconds) {
+// Summed seconds back as text, in the rows' own form: whole minutes when
+// every row was whole minutes, otherwise minutes:seconds.
+function formatToi(seconds, rows) {
+  const minutesOnly = rows.every(r => typeof r.toi === 'number' || /^\d+(\.\d+)?$/.test(String(r.toi ?? '').trim()));
+  if (minutesOnly) return String(Math.round(seconds / 60));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
@@ -47,7 +58,9 @@ function displayTeam(rows, currentTeamId) {
  * Several: SKATER_SUMS / GOALIE_SUMS summed; a goalie's sv_pct (saves /
  * shots against, 3 dp) and gaa (goals against per 60 of TOI, 2 dp) are
  * recomputed from the sums -- null when a row lacks what's needed -- and
- * toi is the summed time. `teams` keeps every per-team row.
+ * toi is the summed time. `teams` keeps every per-team row. Before
+ * 2026-10-08 a whole-minutes toi ("1294") didn't parse, so every traded
+ * goalie (Brossoit, Shepard 2025-26) came back with gaa null.
  *
  * @param {object[]} rows   the player's rows for one season
  * @param {'skater'|'goalie'} kind
@@ -67,7 +80,7 @@ export function combineSeasonRows(rows, kind, currentTeamId = null) {
     out.sv_pct = shots ? round(out.saves / shots, 3) : null;
     const secs = rows.map(r => toiSeconds(r.toi));
     const total = secs.every(s => s != null) ? secs.reduce((a, b) => a + b, 0) : null;
-    out.toi = total != null ? formatToi(total) : null;
+    out.toi = total != null ? formatToi(total, rows) : null;
     out.gaa = total && out.goals_against != null ? round(out.goals_against * 3600 / total, 2) : null;
   }
   return out;

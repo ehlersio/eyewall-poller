@@ -35,6 +35,7 @@ import { handlePWHL, fetchPWHLNews, pwhlLeagueAverages } from '../pwhl.js'
 import { FRENCH_INSTRUCTION } from '../shared.js'
 import { hockeytechPeriodLabel, hockeytechPeriodNumber } from '../hockeytechGame.js'
 import { events as bosOtt2ot } from './fixtures/pwhl-344-pbp.js'
+import { events as seaMtlShootout, gameLogRow as seaMtlRow, penaltyShot277 } from './fixtures/pwhl-326-shootout-pbp.js'
 
 beforeEach(() => {
   globalThis.fetch = vi.fn()
@@ -2742,5 +2743,155 @@ describe('GET /pwhl/summary -- endedIn', () => {
   it('falls back to hasShootout, and says nothing for a game in progress', async () => {
     expect(await summaryFor({ final: '1', status: '' }, { hasShootout: true })).toBe('SO')
     expect(await summaryFor({ final: '0', status: '3rd Period' }, { hasShootout: false })).toBe(null)
+  })
+})
+
+// ── W13 (2026-10-08) ─────────────────────────────────────────────────
+// Real playoff rows: pwhl_team_seasons season 9 (2025-26 playoffs), MTL's
+// as /pwhl/team-seasons/compare served them on 2026-10-08.
+describe('GET /pwhl/standings for a playoff season (W13b)', () => {
+  const playoffRows = [
+    { team_id: 3, season_id: 9, season_type: 'playoffs', gp: 9, wins: 6, losses: 3, ot_losses: 0, points: 18, goals_for: 20, goals_against: 15, pp_pct: 0.158, pk_pct: 0.929 },
+  ]
+  const install = () => {
+    globalThis.fetch = vi.fn((url) => {
+      const u = decodeURIComponent(String(url))
+      if (u.includes('pwhl_team_seasons')) {
+        return Promise.resolve({ ok: true, json: async () => (u.includes('season_type=eq.playoffs') ? playoffRows : []) })
+      }
+      return Promise.resolve({ ok: true, json: async () => [{ game_id: 300, home_team_id: 3, away_team_id: 1, home_score: 2, away_score: 1 }] })
+    })
+  }
+  const standings = (season) => handlePWHL(
+    makeRequest(`/pwhl/standings?season=${season}`), makeEnv(), makeCtx(), new URL(`https://example.com/pwhl/standings?season=${season}`)
+  )
+
+  it('season 9 serves the playoff teams\' rows (was [])', async () => {
+    install()
+    const body = await (await standings(9)).json()
+    expect(body).toHaveLength(1)
+    expect(body[0]).toMatchObject({ team_id: 3, season_type: 'playoffs', points: 18, l10W: 1, streakType: 'W' })
+    const teamRead = globalThis.fetch.mock.calls.map(([u]) => String(u)).find(u => u.includes('pwhl_team_seasons'))
+    expect(teamRead).toContain('season_id=eq.9&season_type=eq.playoffs&')
+  })
+
+  it('a regular season still filters regular', async () => {
+    install()
+    await standings(8)
+    const teamRead = globalThis.fetch.mock.calls.map(([u]) => String(u)).find(u => u.includes('pwhl_team_seasons'))
+    expect(teamRead).toContain('season_id=eq.8&season_type=eq.regular&')
+  })
+
+  it('season types unavailable: the season id alone picks the rows', async () => {
+    getAllPWHLSeasonTypes.mockResolvedValueOnce(null)
+    install()
+    await standings(9)
+    const teamRead = globalThis.fetch.mock.calls.map(([u]) => String(u)).find(u => u.includes('pwhl_team_seasons'))
+    expect(teamRead).toContain('season_id=eq.9&order=points.desc')
+    expect(teamRead).not.toContain('season_type')
+  })
+})
+
+describe('PWHL percentile routes pick the row by the season id\'s type (W13c)', () => {
+  for (const [route, table] of [['player', 'pwhl_player_seasons'], ['goalie', 'pwhl_goalie_seasons']]) {
+    it(`/pwhl/${route}/percentiles?season=9 reads the playoff row`, async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [{ player_id: 198, team_id: 3, season_id: 9, season_type: 'playoffs' }] })
+      const env = makeEnv()
+      const res = await handlePWHL(
+        makeRequest(`/pwhl/${route}/percentiles?id=198&season=9`), env, makeCtx(), new URL(`https://example.com/pwhl/${route}/percentiles?id=198&season=9`)
+      )
+      const body = await res.json()
+      expect(body).toMatchObject({ season_id: 9, season_type: 'playoffs' })
+      const read = globalThis.fetch.mock.calls.map(([u]) => String(u)).find(u => u.includes(table))
+      expect(read).toContain('season_id=eq.9&season_type=eq.playoffs&')
+      expect(await env.CACHE.get(`pwhl:${route}:percentiles:198:9:playoffs`)).not.toBeNull()
+    })
+
+    it(`/pwhl/${route}/percentiles: no row for a playoff id answers its type, not 'regular'`, async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+      const res = await handlePWHL(
+        makeRequest(`/pwhl/${route}/percentiles?id=999&season=9`), makeEnv(), makeCtx(), new URL(`https://example.com/pwhl/${route}/percentiles?id=999&season=9`)
+      )
+      expect(await res.json()).toMatchObject({ season_id: 9, season_type: 'playoffs' })
+    })
+
+    it(`/pwhl/${route}/percentiles: unknown type for the id -> the id alone, season_type null when no row`, async () => {
+      getAllPWHLSeasonTypes.mockResolvedValueOnce(null)
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
+      const res = await handlePWHL(
+        makeRequest(`/pwhl/${route}/percentiles?id=999&season=9`), makeEnv(), makeCtx(), new URL(`https://example.com/pwhl/${route}/percentiles?id=999&season=9`)
+      )
+      expect(await res.json()).toMatchObject({ season_id: 9, season_type: null })
+      const read = globalThis.fetch.mock.calls.map(([u]) => String(u)).find(u => u.includes(table))
+      expect(read).toContain('season_id=eq.9&limit=1')
+      expect(read).not.toContain('season_type=eq.')
+    })
+  }
+})
+
+// What the app's hockeyTechLiveStore reads from /{league}/today and
+// /{league}/live: today rows { gameId, homeTeamId, awayTeamId,
+// homeTeamCode, awayTeamCode, homeScore, awayScore, status }, live
+// { gameId, homeScore, awayScore, events[{ eventType, period, time }] } --
+// with a last 'shootout' event read as "SO" (lastEventClock).
+describe('/pwhl/live carries what hockeyTechLiveStore needs, like /{ahl,echl}/live (W13e)', () => {
+  const install = ({ pbp = seaMtlShootout, row = seaMtlRow } = {}) => {
+    globalThis.fetch = vi.fn((url) => {
+      const u = new URL(String(url))
+      if (u.pathname.endsWith('pwhl_game_log')) return Promise.resolve({ ok: true, json: async () => (row ? [row] : []) })
+      const view = u.searchParams.get('view')
+      if (view === 'gameCenterPlayByPlay') return Promise.resolve({ ok: true, text: async () => `(${JSON.stringify(pbp)})` })
+      if (view === 'gameSummary') return Promise.resolve({ ok: true, text: async () => '({})' })
+      return Promise.resolve({ ok: true, json: async () => ({ SiteKit: { Scorebar: [] } }) })
+    })
+  }
+  const live = (id = 326) => handlePWHL(makeRequest(`/pwhl/live/${id}`), makeEnv(), makeCtx(), new URL(`https://example.com/pwhl/live/${id}`))
+
+  it('PWHL 326 (SEA 1-2 MTL, SO): the final score is the game\'s, not the goal-event count (was 1-1)', async () => {
+    install()
+    const body = await (await live()).json()
+    expect(body).toMatchObject({ gameId: 326, homeTeamId: 8, awayTeamId: 3, homeScore: 1, awayScore: 2, gameStatus: 'final' })
+    expect(body.events.filter(e => e.eventType === 'goal')).toHaveLength(2)
+  })
+
+  it('PWHL 326: the 12 shootout attempts are listed, in period 7, with team/shooter/goalie/isGoal', async () => {
+    install()
+    const body = await (await live()).json()
+    const so = body.events.filter(e => e.eventType === 'shootout')
+    expect(so).toHaveLength(12)
+    expect(so.every(e => e.period === 7 && (e.teamId === 8 || e.teamId === 3) && e.shooter?.id && e.goalie?.id)).toBe(true)
+    expect(so.filter(e => e.isGoal).length).toBeGreaterThan(0)
+    expect(so[0]).toEqual({
+      eventType: 'shootout', period: 7, time: '0:00', timeSeconds: 0, teamId: 8,
+      shooter: { id: 34, firstName: 'Alex', lastName: 'Carpenter', jerseyNumber: 25 },
+      goalie: { id: 28, firstName: 'Ann-Renée', lastName: 'Desbiens', jerseyNumber: 35 },
+      isGoal: false,
+    })
+    // The store's clock reads the last event: a shootout attempt.
+    expect(body.events.at(-1).eventType).toBe('shootout')
+  })
+
+  it('a penalty shot (PWHL 277, shooter_team) is listed with its real period and time', async () => {
+    install({ pbp: [penaltyShot277], row: { game_id: 277, home_team_id: 8, away_team_id: 4, home_score: 0, away_score: 0, game_state: 'In Progress', game_status_code: 2 } })
+    const body = await (await live(277)).json()
+    expect(body.events).toEqual([{
+      eventType: 'penaltyshot', period: 3, time: '10:08', timeSeconds: 608, teamId: 8,
+      shooter: { id: 34, firstName: 'Alex', lastName: 'Carpenter', jerseyNumber: 25 },
+      goalie: { id: 222, firstName: 'Gwyneth', lastName: 'Philips', jerseyNumber: 33 },
+      isGoal: true,
+    }])
+  })
+
+  it('while live the score is still counted from goal events', async () => {
+    install({ row: { ...seaMtlRow, game_state: 'In Progress', game_status_code: 2, home_score: 0, away_score: 0 } })
+    const body = await (await live()).json()
+    expect(body).toMatchObject({ gameStatus: 'live', homeScore: 1, awayScore: 1 })
+  })
+
+  it('the game row is read with game_id, so the scorebar\'s live status lays over it', async () => {
+    install()
+    await live()
+    const read = globalThis.fetch.mock.calls.map(([u]) => String(u)).find(u => u.includes('pwhl_game_log'))
+    expect(read).toContain('select=game_id,home_team_id,away_team_id,home_score,away_score,')
   })
 })
