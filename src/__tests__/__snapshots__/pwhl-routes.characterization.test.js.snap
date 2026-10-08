@@ -1025,6 +1025,16 @@ exports[`live/:gameId > Supabase unavailable 1`] = `
         "y": 80,
       },
       {
+        "eventType": "shootout",
+        "goalie": null,
+        "isGoal": false,
+        "period": 7,
+        "shooter": null,
+        "teamId": null,
+        "time": "0:00",
+        "timeSeconds": 0,
+      },
+      {
         "assists": [
           {
             "firstName": "Sam",
@@ -1135,7 +1145,7 @@ exports[`live/:gameId > missing required param 1`] = `
 exports[`live/:gameId > response, upstream requests and KV writes; repeat call 1`] = `
 {
   "body": {
-    "awayScore": 0,
+    "awayScore": 2,
     "awayTeamId": 2,
     "events": [
       {
@@ -1326,6 +1336,16 @@ exports[`live/:gameId > response, upstream requests and KV writes; repeat call 1
         "y": 80,
       },
       {
+        "eventType": "shootout",
+        "goalie": null,
+        "isGoal": false,
+        "period": 7,
+        "shooter": null,
+        "teamId": null,
+        "time": "0:00",
+        "timeSeconds": 0,
+      },
+      {
         "assists": [
           {
             "firstName": "Sam",
@@ -1432,7 +1452,7 @@ exports[`live/:gameId > response, upstream requests and KV writes; repeat call 1
       "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=210&key=446521baf8c38984&client_code=pwhl&lang=en&league_id=",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.210&select=home_team_id,away_team_id,game_state,game_status_code&limit=1",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.210&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1",
     },
   ],
 }

@@ -1,0 +1,34 @@
+// src/__tests__/fixtures/pwhl-326-shootout-pbp.js
+// Real data: PWHL game 326 (MTL 2 @ SEA 1, SO, 2025-26 regular season),
+// HockeyTech's gameCenterPlayByPlay fetched 2026-10-08: the goal,
+// goalie_change and shootout events plus the last overtime shot, in feed
+// order, details trimmed to the fields the Worker reads. The 12 shootout
+// attempts carry no period or time and name the team as shooterTeam.
+// Before 2026-10-08 /pwhl/live dropped them and answered the final 1-1.
+// pwhl_game_log: home SEA (8) 1, away MTL (3) 2, shootout true.
+
+export const events = [
+  {"event": "goalie_change", "details": {"period": {"id": "1"}, "time": "0:00", "team_id": "8", "goalieComingIn": {"id": 155, "firstName": "Corinne", "lastName": "Schroeder", "jerseyNumber": 30}, "goalieGoingOut": null}},
+  {"event": "goalie_change", "details": {"period": {"id": "1"}, "time": "0:00", "team_id": "3", "goalieComingIn": {"id": 28, "firstName": "Ann-Renée", "lastName": "Desbiens", "jerseyNumber": 35}, "goalieGoingOut": null}},
+  {"event": "goal", "details": {"period": {"id": "2"}, "time": "7:37", "team": {"id": 3, "abbreviation": "MTL"}, "scoredBy": {"id": 42, "firstName": "Abby", "lastName": "Roque", "jerseyNumber": 11}, "assists": [{"id": 253, "firstName": "Nicole", "lastName": "Gosling", "jerseyNumber": 61}, {"id": 31, "firstName": "Marie-Philip", "lastName": "Poulin", "jerseyNumber": 29}], "properties": {"isPowerPlay": "1", "isShortHanded": "0", "isEmptyNet": "0", "isPenaltyShot": "0", "isInsuranceGoal": "0", "isGameWinningGoal": "0"}}},
+  {"event": "goal", "details": {"period": {"id": "3"}, "time": "10:11", "team": {"id": 8, "abbreviation": "SEA"}, "scoredBy": {"id": 34, "firstName": "Alex", "lastName": "Carpenter", "jerseyNumber": 25}, "assists": [{"id": 17, "firstName": "Theresa", "lastName": "Schafzahl", "jerseyNumber": 37}, {"id": 196, "firstName": "Cayla", "lastName": "Barnes", "jerseyNumber": 3}], "properties": {"isPowerPlay": "1", "isShortHanded": "0", "isEmptyNet": "0", "isPenaltyShot": "0", "isInsuranceGoal": "0", "isGameWinningGoal": "0"}}},
+  {"event": "shot", "details": {"period": {"id": "4"}, "time": "4:59", "shooterTeamId": "3", "shooter": {"id": 31, "firstName": "Marie-Philip", "lastName": "Poulin", "jerseyNumber": 29}, "goalie": {"id": 155, "firstName": "Corinne", "lastName": "Schroeder", "jerseyNumber": 30}, "shotType": "Wrist", "shotQuality": "Quality on net", "isGoal": false, "xLocation": 475, "yLocation": 191}},
+  {"event": "shootout", "details": {"shooter": {"id": 34, "firstName": "Alex", "lastName": "Carpenter", "jerseyNumber": 25}, "goalie": {"id": 28, "firstName": "Ann-Renée", "lastName": "Desbiens", "jerseyNumber": 35}, "isGoal": false, "isGameWinningGoal": false, "shooterTeam": {"id": 8, "abbreviation": "SEA"}}},
+  {"event": "shootout", "details": {"shooter": {"id": 42, "firstName": "Abby", "lastName": "Roque", "jerseyNumber": 11}, "goalie": {"id": 155, "firstName": "Corinne", "lastName": "Schroeder", "jerseyNumber": 30}, "isGoal": true, "isGameWinningGoal": false, "shooterTeam": {"id": 3, "abbreviation": "MTL"}}},
+  {"event": "shootout", "details": {"shooter": {"id": 210, "firstName": "Julia", "lastName": "Gosling", "jerseyNumber": 88}, "goalie": {"id": 28, "firstName": "Ann-Renée", "lastName": "Desbiens", "jerseyNumber": 35}, "isGoal": false, "isGameWinningGoal": false, "shooterTeam": {"id": 8, "abbreviation": "SEA"}}},
+  {"event": "shootout", "details": {"shooter": {"id": 31, "firstName": "Marie-Philip", "lastName": "Poulin", "jerseyNumber": 29}, "goalie": {"id": 155, "firstName": "Corinne", "lastName": "Schroeder", "jerseyNumber": 30}, "isGoal": false, "isGameWinningGoal": false, "shooterTeam": {"id": 3, "abbreviation": "MTL"}}},
+  {"event": "shootout", "details": {"shooter": {"id": 13, "firstName": "Hilary", "lastName": "Knight", "jerseyNumber": 21}, "goalie": {"id": 28, "firstName": "Ann-Renée", "lastName": "Desbiens", "jerseyNumber": 35}, "isGoal": true, "isGameWinningGoal": false, "shooterTeam": {"id": 8, "abbreviation": "SEA"}}},
+  {"event": "shootout", "details": {"shooter": {"id": 274, "firstName": "Natálie", "lastName": "Mlýnková", "jerseyNumber": 96}, "goalie": {"id": 155, "firstName": "Corinne", "lastName": "Schroeder", "jerseyNumber": 30}, "isGoal": false, "isGameWinningGoal": false, "shooterTeam": {"id": 3, "abbreviation": "MTL"}}},
+  {"event": "shootout", "details": {"shooter": {"id": 34, "firstName": "Alex", "lastName": "Carpenter", "jerseyNumber": 25}, "goalie": {"id": 28, "firstName": "Ann-Renée", "lastName": "Desbiens", "jerseyNumber": 35}, "isGoal": false, "isGameWinningGoal": false, "shooterTeam": {"id": 8, "abbreviation": "SEA"}}},
+  {"event": "shootout", "details": {"shooter": {"id": 42, "firstName": "Abby", "lastName": "Roque", "jerseyNumber": 11}, "goalie": {"id": 155, "firstName": "Corinne", "lastName": "Schroeder", "jerseyNumber": 30}, "isGoal": false, "isGameWinningGoal": false, "shooterTeam": {"id": 3, "abbreviation": "MTL"}}},
+  {"event": "shootout", "details": {"shooter": {"id": 62, "firstName": "Aneta", "lastName": "Tejralová", "jerseyNumber": 2}, "goalie": {"id": 28, "firstName": "Ann-Renée", "lastName": "Desbiens", "jerseyNumber": 35}, "isGoal": false, "isGameWinningGoal": false, "shooterTeam": {"id": 8, "abbreviation": "SEA"}}},
+  {"event": "shootout", "details": {"shooter": {"id": 31, "firstName": "Marie-Philip", "lastName": "Poulin", "jerseyNumber": 29}, "goalie": {"id": 155, "firstName": "Corinne", "lastName": "Schroeder", "jerseyNumber": 30}, "isGoal": false, "isGameWinningGoal": false, "shooterTeam": {"id": 3, "abbreviation": "MTL"}}},
+  {"event": "shootout", "details": {"shooter": {"id": 13, "firstName": "Hilary", "lastName": "Knight", "jerseyNumber": 21}, "goalie": {"id": 28, "firstName": "Ann-Renée", "lastName": "Desbiens", "jerseyNumber": 35}, "isGoal": false, "isGameWinningGoal": false, "shooterTeam": {"id": 8, "abbreviation": "SEA"}}},
+  {"event": "shootout", "details": {"shooter": {"id": 201, "firstName": "Lina", "lastName": "Ljungblom", "jerseyNumber": 25}, "goalie": {"id": 155, "firstName": "Corinne", "lastName": "Schroeder", "jerseyNumber": 30}, "isGoal": true, "isGameWinningGoal": true, "shooterTeam": {"id": 3, "abbreviation": "MTL"}}},
+]
+
+export const gameLogRow = { game_id: 326, home_team_id: 8, away_team_id: 3, home_score: 1, away_score: 2, game_state: 'Final', game_status_code: 4, ot: false, shootout: true }
+
+// PWHL game 277 (2025-26): Alex Carpenter's penalty-shot goal for SEA,
+// P3 10:08 -- the PBP's penaltyshot event names the team shooter_team.
+export const penaltyShot277 = {"event": "penaltyshot", "details": {"period": {"id": "3"}, "time": "10:08", "shooter": {"id": 34, "firstName": "Alex", "lastName": "Carpenter", "jerseyNumber": 25}, "goalie": {"id": 222, "firstName": "Gwyneth", "lastName": "Philips", "jerseyNumber": 33}, "isGoal": true, "shooter_team": {"id": 8, "abbreviation": "SEA"}}}

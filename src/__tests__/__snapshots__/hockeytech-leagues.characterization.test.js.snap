@@ -3319,7 +3319,7 @@ exports[`ahl > today > response, upstream requests and KV writes; repeat call 1`
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_date=gte.2026-01-15&season_id=in.(90,92)&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&order=game_date.asc&limit=40",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_date=gte.2026-01-15&game_date=lte.2026-01-21&season_id=in.(90,92)&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&order=game_date.asc&limit=40",
     },
     {
       "referer": "https://theahl.com/",
@@ -6591,7 +6591,7 @@ exports[`echl > today > response, upstream requests and KV writes; repeat call 1
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_date=gte.2026-01-15&season_id=in.(73,76)&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&order=game_date.asc&limit=40",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_date=gte.2026-01-15&game_date=lte.2026-01-21&season_id=in.(73,76)&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code,game_date&order=game_date.asc&limit=40",
     },
     {
       "referer": "https://echl.com/",

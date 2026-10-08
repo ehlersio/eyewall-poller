@@ -26,6 +26,26 @@ async function seasonParam(url, env) {
   return (await resolvePWHLSeason(env)).seasonId;
 }
 
+// The type of a PWHL season id ('regular', 'playoffs', 'preseason', ...)
+// from HockeyTech's bootstrap (getAllPWHLSeasonTypes), or null when it
+// can't be told. A season id belongs to exactly one type, so routes that
+// take ?season= filter by that id's own type: a hardcoded
+// season_type=eq.regular answered nothing for a playoff id (season 9).
+async function pwhlSeasonTypeOf(env, seasonId) {
+  try {
+    return (await getAllPWHLSeasonTypes(env))?.[String(seasonId)] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// `&season_type=eq.<type>` for a season id, or '' when its type is
+// unknown (the season_id filter alone then picks its rows).
+async function seasonTypeFilter(env, seasonId) {
+  const type = await pwhlSeasonTypeOf(env, seasonId);
+  return type ? `&season_type=eq.${encodeURIComponent(type)}` : '';
+}
+
 // extractCareerTotal/extractRows/extractBioPoints/extractPhoto moved to
 // shared.js (2026-08-29) -- generic HockeyTech view=player table parsers,
 // AHL's ahl.js needs the exact same ones for /ahl/player/career.
@@ -554,11 +574,16 @@ export const handlePWHL = withParamErrors(handlePWHLRoutes);
 async function handlePWHLRoutes(request, env, ctx, url) {
   // ── PWHL endpoints ─────────────────────────────────────────────────────────
 
+  // ?season= of any type: a playoff id (9) serves the playoff teams' rows
+  // (pwhl_team_seasons, as /team-seasons/compare reads them) with L10 and
+  // streak from that season's games. It used to filter season_type=regular
+  // and answer [] for every playoff season.
   if (url.pathname === '/pwhl/standings') {
     const season = await seasonParam(url, env);
     return cachedJson(env, `pwhl:standings:${season}`, 3600, async () => {
+      const typeFilter = await seasonTypeFilter(env, season);
       const [rows, games] = await Promise.all([
-        sbRows(`${SB_URL}/rest/v1/pwhl_team_seasons?season_id=eq.${season}&season_type=eq.regular&order=points.desc&limit=12`),
+        sbRows(`${SB_URL}/rest/v1/pwhl_team_seasons?season_id=eq.${season}${typeFilter}&order=points.desc&limit=12`),
         sbRowsOr(`${SB_URL}/rest/v1/pwhl_game_log?season_id=eq.${season}&game_state=eq.Final&order=game_id.desc&limit=500&select=game_id,home_team_id,away_team_id,home_score,away_score,ot,shootout`, []),
       ]);
       if (rows instanceof Response) return rows;
@@ -1125,16 +1150,21 @@ Only reference the two teams named above and the numbers given -- no player name
   if (url.pathname === '/pwhl/player/percentiles') {
     const playerId    = sbParam(url.searchParams.get('id'), { type: 'int', name: 'id' });
     const seasonQuery = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
-    const seasonType  = sbParam(url.searchParams.get('seasonType'), { type: 'id', name: 'seasonType' }) || 'regular';
+    const seasonTypeQ = sbParam(url.searchParams.get('seasonType'), { type: 'id', name: 'seasonType' });
     if (!playerId) return badRequest('id required');
+    // A ?season= id's own type (9 -> playoffs) unless ?seasonType= says
+    // otherwise; with no ?season=, the latest regular season (or
+    // ?seasonType=). Unknown type for a given id: the id alone picks it.
+    const seasonType = seasonTypeQ || (seasonQuery ? await pwhlSeasonTypeOf(env, seasonQuery) : 'regular');
+    const typeQ = seasonType ? `&season_type=eq.${encodeURIComponent(seasonType)}` : '';
 
     // 1hr -- matches /pwhl/player/landing's TTL
-    return cachedJson(env, `pwhl:player:percentiles:${playerId}:${seasonQuery || 'latest'}:${seasonType}`, 3600, async () => {
+    return cachedJson(env, `pwhl:player:percentiles:${playerId}:${seasonQuery || 'latest'}:${seasonType || 'any'}`, 3600, async () => {
       const cols = 'player_id,team_id,season_id,season_type,toi_per_game,xg_for,finishing,' +
         'pct_goals,pct_a1,pct_penalties,pct_finishing';
       const statsQuery = seasonQuery
-        ? `player_id=eq.${playerId}&season_id=eq.${seasonQuery}&season_type=eq.${seasonType}&limit=1&select=${cols}`
-        : `player_id=eq.${playerId}&season_type=eq.${seasonType}&order=season_id.desc&limit=1&select=${cols}`;
+        ? `player_id=eq.${playerId}&season_id=eq.${seasonQuery}${typeQ}&limit=1&select=${cols}`
+        : `player_id=eq.${playerId}${typeQ}&order=season_id.desc&limit=1&select=${cols}`;
 
       let rows;
       try {
@@ -1149,7 +1179,7 @@ Only reference the two teams named above and the numbers given -- no player name
         player_id:   parseInt(playerId, 10),
         team_id:     row.team_id ?? null,
         season_id:   row.season_id ?? (seasonQuery ? parseInt(seasonQuery, 10) : null),
-        season_type: row.season_type ?? seasonType,
+        season_type: row.season_type ?? seasonType ?? null,
         toi_per_game: row.toi_per_game ?? null,
         xg_for:       row.xg_for       ?? null,
         finishing:    row.finishing    ?? null,
@@ -1191,17 +1221,22 @@ Only reference the two teams named above and the numbers given -- no player name
   if (url.pathname === '/pwhl/goalie/percentiles') {
     const playerId    = sbParam(url.searchParams.get('id'), { type: 'int', name: 'id' });
     const seasonQuery = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
-    const seasonType  = sbParam(url.searchParams.get('seasonType'), { type: 'id', name: 'seasonType' }) || 'regular';
+    const seasonTypeQ = sbParam(url.searchParams.get('seasonType'), { type: 'id', name: 'seasonType' });
     if (!playerId) return badRequest('id required');
+    // A ?season= id's own type (9 -> playoffs) unless ?seasonType= says
+    // otherwise; with no ?season=, the latest regular season (or
+    // ?seasonType=). Unknown type for a given id: the id alone picks it.
+    const seasonType = seasonTypeQ || (seasonQuery ? await pwhlSeasonTypeOf(env, seasonQuery) : 'regular');
+    const typeQ = seasonType ? `&season_type=eq.${encodeURIComponent(seasonType)}` : '';
 
     // 1hr -- matches /pwhl/player/percentiles' TTL
-    return cachedJson(env, `pwhl:goalie:percentiles:${playerId}:${seasonQuery || 'latest'}:${seasonType}`, 3600, async () => {
+    return cachedJson(env, `pwhl:goalie:percentiles:${playerId}:${seasonQuery || 'latest'}:${seasonType || 'any'}`, 3600, async () => {
       const cols = 'player_id,team_id,season_id,season_type,gsax,gsax_per60,' +
         'ev_sv_pct,hd_sv_pct,md_sv_pct,pk_sv_pct,' +
         'pct_gsax,pct_gsax60,pct_ev_sv,pct_hd_sv,pct_md_sv,pct_pk_sv';
       const statsQuery = seasonQuery
-        ? `player_id=eq.${playerId}&season_id=eq.${seasonQuery}&season_type=eq.${seasonType}&limit=1&select=${cols}`
-        : `player_id=eq.${playerId}&season_type=eq.${seasonType}&order=season_id.desc&limit=1&select=${cols}`;
+        ? `player_id=eq.${playerId}&season_id=eq.${seasonQuery}${typeQ}&limit=1&select=${cols}`
+        : `player_id=eq.${playerId}${typeQ}&order=season_id.desc&limit=1&select=${cols}`;
 
       let rows;
       try {
@@ -1216,7 +1251,7 @@ Only reference the two teams named above and the numbers given -- no player name
         player_id:   parseInt(playerId, 10),
         team_id:     row.team_id ?? null,
         season_id:   row.season_id ?? (seasonQuery ? parseInt(seasonQuery, 10) : null),
-        season_type: row.season_type ?? seasonType,
+        season_type: row.season_type ?? seasonType ?? null,
         gsax:   row.gsax        ?? null,
         gsax60: row.gsax_per60  ?? null,
         evSvPct: row.ev_sv_pct != null ? Math.round(row.ev_sv_pct * 1000) / 10 : null,
@@ -1856,6 +1891,10 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
 
   // GET /pwhl/live/:gameId
   // Fetches + normalises live PBP from HockeyTech. KV TTL: 30s live, 1hr final.
+  // Same payload as /{ahl,echl}/live (what the app's hockeyTechLiveStore
+  // reads: gameId, home/away team ids and scores, gameStatus, events with
+  // period/time/eventType), plus PWHL-only blocked_shot/faceoff/hit events,
+  // goalieStats and faceoffStats.
   if (url.pathname.startsWith('/pwhl/live/')) {
     const gameId = parseInt(url.pathname.split('/pwhl/live/')[1], 10);
     if (!gameId) return badRequest('gameId required');
@@ -1955,6 +1994,24 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
           };
         }
 
+        // Penalty shots and shootout attempts, the same events (and shape)
+        // as /{ahl,echl}/live: no coordinates, the team under shooterTeam
+        // (shooter_team on older payloads). Shootout attempts carry no
+        // period or time, so they're period 7 ('SO', hockeytechPeriodNumber)
+        // -- the store's live chip reads a last event of type 'shootout' as
+        // "SO". Before 2026-10-08 both were dropped here (PWHL 326, SEA-MTL,
+        // 12 shootout attempts).
+        if (type === 'penaltyshot' || type === 'shootout') {
+          return {
+            ...base,
+            ...(type === 'shootout' ? { period: normPeriod('SO') } : {}),
+            teamId:  parseInt((d.shooterTeam ?? d.shooter_team)?.id, 10) || null,
+            shooter: normPlayer(d.shooter),
+            goalie:  normPlayer(d.goalie),
+            isGoal:  !!d.isGoal,
+          };
+        }
+
         if (type === 'penalty') {
           return {
             ...base,
@@ -2005,7 +2062,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
 
       // Derive live score + game status from Supabase (home/away team IDs needed to split goals)
       const gameRows = await sbRowsOr(
-        `${SB_URL}/rest/v1/pwhl_game_log?game_id=eq.${gameId}&select=home_team_id,away_team_id,game_state,game_status_code&limit=1`,
+        `${SB_URL}/rest/v1/pwhl_game_log?game_id=eq.${gameId}&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1`,
         []
       ).catch(() => []);
       const gameRow = gameRows[0] ? (await withLive(env, gameRows))[0] : null;
@@ -2017,6 +2074,13 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
           else awayScore++;
         }
         gameStatus = deriveGameStatus(gameRow);
+        // A final's official score counts the shootout winner's goal, which
+        // no goal event carries (as /{ahl,echl}/live does): PWHL 326 ended
+        // SEA 1-2 MTL (SO) and this used to answer 1-1.
+        if (gameStatus === 'final' && Number.isFinite(gameRow.home_score) && Number.isFinite(gameRow.away_score)) {
+          homeScore = gameRow.home_score;
+          awayScore = gameRow.away_score;
+        }
       }
 
       // Parse gameSummary for goalie stats + faceoff pcts (best-effort, non-fatal)

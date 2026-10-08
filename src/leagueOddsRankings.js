@@ -10,6 +10,8 @@
  *     team per nightly run in {league}_playoff_odds (every run kept).
  *     -> { latest: {row}, history: [{ run_date, make_playoffs_pct,
  *          proj_points_p50 }] (that season, oldest first), stale }
+ *     `latest.games_played` is null (and the answer not KV-cached) until
+ *     the owner adds that column (eyewall-pipeline#217).
  *     `stale`: the latest run is more than 48 h old (run_date anchored at
  *     noon UTC, as nhl.js /playoff-odds does), i.e. the nightly has missed
  *     two runs or the regular season is over. `make_playoffs_pct` and
@@ -48,8 +50,12 @@ const RANKINGS_HISTORY = 28;
 const RANKINGS_LIMIT_MAX = 100;
 export const ODDS_STALE_HOURS = 48;
 
-const ODDS_COLUMNS = 'season_id,team_id,run_date,make_playoffs_pct,win_division_pct,' +
+const ODDS_BASE_COLUMNS = 'season_id,team_id,run_date,make_playoffs_pct,win_division_pct,' +
   'proj_points_p10,proj_points_p50,proj_points_p90,current_points,games_remaining,sims,format';
+// games_played (eyewall-pipeline#217, P15) comes from an owner-run
+// migration that may land after this deploys: until then PostgREST answers
+// 400 for the unknown column, and the read is retried once without it.
+const ODDS_COLUMNS = `${ODDS_BASE_COLUMNS},games_played`;
 
 // run_date is the pipeline's America/New_York date; noon UTC keeps the age
 // from flipping on time zones.
@@ -82,15 +88,29 @@ async function playoffOdds(env, league, url) {
   return cachedJson(env, `${league}:playoff-odds:${teamId}:${season || 'latest'}`, TTL, async () => {
     try {
       const bySeason = season ? `&season_id=eq.${season}` : '';
-      const [latest] = await rowsOrEmpty(
-        `${table(league, 'playoff_odds')}?select=${ODDS_COLUMNS}&team_id=eq.${teamId}${bySeason}&order=run_date.desc&limit=1`
-      );
+      const latestUrl = (cols) =>
+        `${table(league, 'playoff_odds')}?select=${cols}&team_id=eq.${teamId}${bySeason}&order=run_date.desc&limit=1`;
+      // sbRowsIfTable answers null for a 400 (unknown column) as for a 404
+      // (no table): with games_played not added yet, the old column list
+      // still reads the row, served with games_played null and not KV-
+      // cached, so the column shows as soon as the migration runs.
+      let rows = await sbRowsIfTable(latestUrl(ODDS_COLUMNS));
+      let withoutGamesPlayed = false;
+      if (rows === null) {
+        rows = await sbRowsIfTable(latestUrl(ODDS_BASE_COLUMNS));
+        withoutGamesPlayed = Array.isArray(rows);
+      }
+      if (rows instanceof Response) throw new ReadFailed(`Supabase ${rows.status}`);
+      const latest = rows?.[0]
+        ? (withoutGamesPlayed ? { ...rows[0], games_played: null } : rows[0])
+        : null;
       if (!latest) return json(empty);
       const history = await rowsOrEmpty(
         `${table(league, 'playoff_odds')}?select=run_date,make_playoffs_pct,proj_points_p50` +
         `&team_id=eq.${teamId}&season_id=eq.${latest.season_id}&order=run_date.asc&limit=${ODDS_HISTORY_MAX}`
       );
-      return { latest, history, stale: isOddsRunStale(latest.run_date) };
+      const result = { latest, history, stale: isOddsRunStale(latest.run_date) };
+      return withoutGamesPlayed ? json(result) : result;
     } catch (e) {
       if (!(e instanceof ReadFailed)) throw e;
       console.warn(`[${league}] playoff-odds unavailable: ${e.message}`);

@@ -17,6 +17,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { makeEnv, makeCtx, makeRequest, makeFakeCache } from './route-harness.js'
 import { scorebar as echlScorebar } from './fixtures/echl-scorebar-2026-10.js'
+import { goalieSeasons as tradedGoalies, players as tradedGoaliePlayers } from './fixtures/ahl-2025-26-traded-goalies.js'
 import { combineSeasonRows, combineByPlayer } from '../hockeytechSeasonRows.js'
 
 const sendPushMock = vi.hoisted(() => vi.fn())
@@ -166,6 +167,47 @@ describe('/ahl/league-players with traded players', () => {
   })
 })
 
+// ── traded goalies' GAA (W13a) ───────────────────────────────────────
+// The real per-team rows store toi as whole minutes ("1294"); before
+// 2026-10-08 that didn't parse and every traded goalie's combined row had
+// gaa null. GAA = summed GA * 60 / summed minutes.
+describe('traded goalies: GAA from summed GA and minutes (Brossoit, Shepard 2025-26)', () => {
+  const rowsOf = (id) => tradedGoalies.filter(r => r.player_id === id)
+
+  it('combineSeasonRows: Brossoit RFD + SJ', () => {
+    const g = combineSeasonRows(rowsOf(4961), 'goalie', 404)
+    expect(g).toMatchObject({ gp: 28, wins: 15, losses: 11, ot_losses: 1, saves: 764, shots_against: 848, goals_against: 84, toi: '1649' })
+    expect(g.gaa).toBe(3.06)     // 84 * 60 / 1649
+    expect(g.sv_pct).toBe(0.901) // 764 / 848
+    expect(g.team_id).toBe(405)  // now SD: the team he played most for
+  })
+
+  it('combineSeasonRows: Shepard BEL + LAV', () => {
+    const g = combineSeasonRows(rowsOf(8647), 'goalie', 415)
+    expect(g).toMatchObject({ gp: 19, goals_against: 62, toi: '1087', team_id: 415 })
+    expect(g.gaa).toBe(3.42)     // 62 * 60 / 1087
+    expect(g.sv_pct).toBe(0.887) // 487 / 549
+  })
+
+  it('a mix of whole-minute and minutes:seconds rows sums to minutes:seconds', () => {
+    const [rfd, sj] = rowsOf(4961)
+    const g = combineSeasonRows([rfd, { ...sj, toi: '1294:30' }], 'goalie', 404)
+    expect(g.toi).toBe('1649:30')
+    expect(g.gaa).toBe(3.06)
+  })
+
+  it('/ahl/league-players: both listed once with GAA and SV%', async () => {
+    installFetch({ tables: { ahl_player_seasons: [], ahl_goalie_seasons: tradedGoalies, ahl_players: tradedGoaliePlayers } })
+    const { status, body } = await get(handleAHL, '/ahl/league-players?season=90')
+    expect(status).toBe(200)
+    expect(body.goalies.map(g => [g.last_name, g.gp, g.gaa, g.sv_pct])).toEqual([
+      ['Brossoit', 28, 3.06, 0.901],
+      ['Shepard', 19, 3.42, 0.887],
+    ])
+    expect(body.goalies.every(g => g.teams.length === 2)).toBe(true)
+  })
+})
+
 // ── /ahl/player/landing ──────────────────────────────────────────────
 describe('/ahl/player/landing with traded players', () => {
   it('Clarke 2025-26 from per-team rows: the whole season, with each team\'s part', async () => {
@@ -229,6 +271,31 @@ describe('/echl/today looks ahead into the next season', () => {
     const { body } = await get(handleECHL, '/echl/today?season=78')
     expect(body.map(x => x.gameId)).toEqual([Number(g.ID)])
     expect(urls().some(u => u.includes('numberofdaysahead=6'))).toBe(false)
+  })
+
+  // W13d: the /pwhl/today window (W9). game_log had no upper bound, so in
+  // the off-season a lone game weeks out was served as the day's slate.
+  it('looks at most 6 days ahead in game_log and the scorebar', async () => {
+    vi.setSystemTime(new Date('2026-07-01T16:00:00Z'))
+    const g = echlScorebar.find(x => x.Date === '2026-10-17')
+    const log = [{ game_id: Number(g.ID), game_date: '2026-10-17', home_team_id: Number(g.HomeID), away_team_id: Number(g.VisitorID), home_score: 0, away_score: 0, game_state: '7:05 pm EDT', game_status_code: 1 }]
+    // Honours the route's game_date range like PostgREST does.
+    const inRange = (params) => {
+      const [gte, lte] = params.getAll('game_date').map(v => v.slice(4))
+      return log.filter(r => r.game_date >= gte && (!lte || r.game_date <= lte))
+    }
+    // A scorebar row past the window (the feed is asked for 6 days; this
+    // guards the route if it ever sends more).
+    installFetch({ tables: { echl_game_log: inRange }, scorebar: [{ ...g, Date: '2026-07-10' }] })
+    const { body } = await get(handleECHL, '/echl/today?season=76')
+    expect(body).toEqual([])
+    expect(urls().find(u => u.includes('echl_game_log'))).toContain('game_date=gte.2026-07-01&game_date=lte.2026-07-07')
+
+    // Six days out is still the next game day.
+    vi.setSystemTime(new Date('2026-10-11T16:00:00Z'))
+    installFetch({ tables: { echl_game_log: inRange }, scorebar: [] })
+    const res = await handleECHL(makeRequest('/echl/today?season=76'), makeEnv(), makeCtx(), new URL('https://example.com/echl/today?season=76'))
+    expect((await res.json()).map(x => [x.gameId, x.gameDate])).toEqual([[Number(g.ID), '2026-10-17']])
   })
 
   it('nothing anywhere: an empty list, not an invented game', async () => {
