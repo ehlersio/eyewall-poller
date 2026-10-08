@@ -2915,12 +2915,15 @@ exports[`ahl > summary > response, upstream requests and KV writes; repeat call 
   },
   "kvWrites": [
     {
-      "key": "ahl:gamesummary:1028992",
+      "key": "ahl:gamesummary:1028992:final",
       "ttl": 3600,
     },
   ],
   "status": 200,
   "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/ahl_game_log?game_id=eq.1028992&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1",
+    },
     {
       "referer": "https://theahl.com/",
       "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=1028992&key=ccb91f29d6744675&client_code=ahl&lang=en&league_id=",
@@ -6188,12 +6191,15 @@ exports[`echl > summary > response, upstream requests and KV writes; repeat call
   },
   "kvWrites": [
     {
-      "key": "echl:gamesummary:1028992",
+      "key": "echl:gamesummary:1028992:final",
       "ttl": 3600,
     },
   ],
   "status": 200,
   "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/echl_game_log?game_id=eq.1028992&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1",
+    },
     {
       "referer": "https://echl.com/",
       "url": "https://lscluster.hockeytech.com/feed/index.php?feed=statviewfeed&view=gameSummary&game_id=1028992&key=2c2b89ea7345cae8&client_code=echl&lang=en&league_id=",

@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { kvGet, kvPut, json, cachedJson, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction, gameResult, endedInOf } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
@@ -262,6 +262,16 @@ export async function fetchPWHLNews(env) {
 // fetchScorebar() in shared.js for why game_log alone lags.
 const PWHL_SCOREBAR = { client: 'pwhl', base: HT_BASE, key: HT_KEY, siteId: '0', leagueId: '', headers: HT_HDR };
 const withLive = (env, rows, opts) => withLiveScorebar(env, PWHL_SCOREBAR, rows, opts);
+
+// One game's pwhl_game_log row with the scorebar's live status and score,
+// or null. /pwhl/live and /pwhl/summary both read a game's state from here.
+async function liveGameRow(env, gameId) {
+  const gameRows = await sbRowsOr(
+    `${SB_URL}/rest/v1/pwhl_game_log?game_id=eq.${gameId}&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1`,
+    []
+  ).catch(() => []);
+  return gameRows[0] ? (await withLive(env, gameRows))[0] : null;
+}
 
 // No calendar gate: a Nov-Jun month check used to skip the poll, which
 // would have hidden the 2026-27 preseason (Nov 22-30 is inside it, but an
@@ -2061,11 +2071,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       }).filter(Boolean);
 
       // Derive live score + game status from Supabase (home/away team IDs needed to split goals)
-      const gameRows = await sbRowsOr(
-        `${SB_URL}/rest/v1/pwhl_game_log?game_id=eq.${gameId}&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1`,
-        []
-      ).catch(() => []);
-      const gameRow = gameRows[0] ? (await withLive(env, gameRows))[0] : null;
+      const gameRow = await liveGameRow(env, gameId);
 
       let homeScore = 0, awayScore = 0, gameStatus = 'pre';
       if (gameRow) {
@@ -2136,12 +2142,15 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
   // GET /pwhl/summary?gameId=210
   // Returns normalized HockeyTech gameSummary: periods with goal details,
   // MVPs (three stars), and team stats. Used by usePWHLPeriodSummary hook.
-  // TTL: 1hr (immutable once game is final).
+  // TTL: 1hr once the game is final (pwhl_game_log + scorebar, as
+  // /pwhl/live decides it), 60s before that: the app re-reads it every
+  // period.
   if (url.pathname === '/pwhl/summary') {
     const gameId = parseInt(sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '0', 10);
     if (!gameId) return badRequest('gameId required');
 
-    return cachedJson(env, `pwhl:gamesummary:${gameId}`, 3600, async () => {
+    const isFinal = async () => deriveGameStatus(await liveGameRow(env, gameId)) === 'final';
+    return cachedUntilFinal(env, `pwhl:gamesummary:${gameId}`, { isFinal, finalTtl: 3600, build: async () => {
       const htRes = await fetch(
         `${HT_BASE}?feed=statviewfeed&view=gameSummary&game_id=${gameId}&key=${HT_KEY}&client_code=pwhl&lang=en&league_id=`,
         { headers: HT_HDR }
@@ -2269,7 +2278,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
           : null,
       };
       return payload;
-    });
+    } });
   }
 
   // POST /pwhl/summary/narrative?gameId=210&period=1

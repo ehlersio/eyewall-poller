@@ -307,7 +307,7 @@ Key patterns:
 | `pwhl:news` | 25hr populated / 5min empty | PWHL news feed. Written by both `/pwhl/news/ingest` (nightly pipeline) and `fetchPWHLNews()` (on-demand cold-cache path) — both now use the same TTL (fixed 2026-08-14, was a 30min/5min mismatch that let the nightly job's fuller article set get silently replaced by the on-demand path's narrower 3-source result once a day). |
 | `pwhl:today:{season}` | 60s | Today's PWHL games + status |
 | `pwhl:live:{gameId}` | 30s live / 1hr final | PWHL live PBP |
-| `pwhl:gamesummary:{gameId}` | 1hr | PWHL game summary (goals, MVPs, team stats, venue, officials, head coaches) |
+| `pwhl:gamesummary:{gameId}:final` / `:live` | 1hr final, 60s before | PWHL game summary (goals, MVPs, team stats, venue, officials, head coaches). Final or not is `pwhl_game_log` + scorebar, as `/pwhl/live` decides it; `max-age` follows the TTL, and a copy cached mid-game (`:live`) is never served once the game is final (`shared.js`'s `cachedUntilFinal()`) |
 | `pwhl:narrative:{period}:{gameId}:{carAbbr}` | 24hr | AI period/game narrative per team perspective |
 | `{pwhl,ahl,echl}:playoff-odds:{teamId}:{season\|latest}` | 1hr | `/{league}/playoff-odds` (C10); empty/unavailable answers aren't cached |
 | `{pwhl,ahl,echl}:power-rankings:{teamId\|all}:{season\|latest}:{limit}[:fr]` | 1hr | `/{league}/power-rankings` (C12); empty/unavailable answers aren't cached |
@@ -336,7 +336,7 @@ Key patterns:
 | `ahl:player:career:{playerId}` / `echl:player:career:{playerId}` | 24hr | Career Regular Season/Playoffs totals, live HockeyTech `view=player` proxy |
 | `ahl:pshots:{playerId}:{season}` / `echl:pshots:{playerId}:{season}` | 6hr | Single skater's shot heat map data |
 | `ahl:lastgame:{teamId}:{season}` / `echl:lastgame:{teamId}:{season}` | 1hr | Most recent completed game, opponent abbr resolved |
-| `ahl:gamesummary:{gameId}` / `echl:gamesummary:{gameId}` | 1hr | Game summary (goals, MVPs, officials, coaches, venue) — hits/faceoff fields stripped |
+| `ahl:gamesummary:{gameId}:final` / `:live` (and `echl:`) | 1hr final, 60s before | Game summary (goals, MVPs, officials, coaches, venue) — hits/faceoff fields stripped. Live/final as for `pwhl:gamesummary` (game_log + scorebar, the `/live` route's detection) |
 | `ahl:gcpreview:{gameId}` / `echl:gcpreview:{gameId}` | 30min | Pre-game preview, raw HockeyTech `gameCenterPreview` passthrough |
 | `ahl:gamebox:{gameId}` / `echl:gamebox:{gameId}` | 1hr | Per-player box score (skaters + goalies), name-enriched |
 | `ahl:pgamelog:{playerId}:{season}` | 1hr | Per-game log for a single player — **AHL only**, no ECHL equivalent (see [AHL & ECHL](#ahl--echl)) |
