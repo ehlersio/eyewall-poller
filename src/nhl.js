@@ -2108,6 +2108,10 @@ export function liveActivityState(game, pbp, { final = false } = {}) {
     status: final ? 'final' : 'live',
     lastEvent,
     strength,
+    // Shots on goal, the play-by-play's (it's fetched this tick), else the
+    // scoreboard's; null when neither has one -- never a made-up 0.
+    homeSog: pbp?.homeTeam?.sog ?? game.homeTeam?.sog ?? null,
+    awaySog: pbp?.awayTeam?.sog ?? game.awayTeam?.sog ?? null,
   };
 }
 
@@ -2175,7 +2179,9 @@ async function pushLiveActivities(env, gameId, state, { end = false } = {}) {
   const lastKey = `la:last:${gameId}`;
   const last = await kvGet(env, lastKey);
   if (!end && last && JSON.stringify(last) === JSON.stringify(state)) return;
-  const withoutClock = st => JSON.stringify({ ...st, clock: null });
+  // The clock and shots change all game long: they ride at priority 5,
+  // which iOS doesn't budget. Goals, penalties and periods go at 10.
+  const withoutClock = st => JSON.stringify({ ...st, clock: null, homeSog: null, awaySog: null });
   const priority = end || !last || withoutClock(state) !== withoutClock(last) ? 10 : 5;
   const now = Math.floor(Date.now() / 1000);
   const results = await Promise.all(tokens.map(t => sendLiveActivityPush(t, {
