@@ -6,6 +6,7 @@
  */
 
 import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
+import { hockeyTechLiveActivityState, startLiveActivities, pushLiveActivities } from './liveActivity.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction, gameResult, endedInOf } from './hockeytechPrediction.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
@@ -304,7 +305,9 @@ export async function pollPWHL(env) {
       []
     );
     if (!logged?.length) return;
-    const games = await withLive(env, logged);
+    // withClock: the period/clock fields pollPWHLGame()'s Live Activity
+    // state reads.
+    const games = await withLive(env, logged, { withClock: true });
 
     // Live games, plus games that have gone final -- pollPWHLGame() sends a
     // final game's game-over push once, then skips it.
@@ -514,6 +517,20 @@ async function pollPWHLGame(env, game) {
     }
   }
 
+  // ── Lock-screen Live Activities ──────────────────────────
+  // Each live tick: start one for every follower of either team (once per
+  // device per game), then push the state to every activity. Same as
+  // hockeytech.js's pollGame().
+  if (deriveGameStatus(game) === 'live') {
+    const laState = hockeyTechLiveActivityState(game, events, { teamCodes: PWHL_TEAM_CODES });
+    await startLiveActivities(env, 'pwhl', { gameId, homeAbbr, awayAbbr }, laState).catch(e =>
+      console.error(`[PWHL] Live Activity start error (game ${gameId}):`, e.message)
+    );
+    await pushLiveActivities(env, 'pwhl', gameId, laState).catch(e =>
+      console.error(`[PWHL] Live Activity push error (game ${gameId}):`, e.message)
+    );
+  }
+
   // ── Game over ────────────────────────────────────────────
   if (deriveGameStatus(game) === 'final') {
     const finalKey = `pwhl:push:final:${gameId}`;
@@ -526,6 +543,16 @@ async function pollPWHLGame(env, game) {
       const endedIn = 'ended_in' in game
         ? game.ended_in
         : (await withLive(env, [game], { withEndedIn: true }))[0].ended_in;
+      // The final state to every Live Activity, which then ends. Once:
+      // this block runs once per game (finalKey). A row without the
+      // scorebar's period (game_log already final) asks it for that too.
+      await pushLiveActivities(env, 'pwhl', gameId, async () => {
+        const laGame = 'period_name_short' in game ? game
+          : (await withLive(env, [game], { withEndedIn: true, withClock: true }))[0];
+        return hockeyTechLiveActivityState({ ...laGame, ended_in: endedIn }, events, { teamCodes: PWHL_TEAM_CODES, final: true });
+      }, { end: true }).catch(e =>
+        console.error(`[PWHL] Live Activity end error (game ${gameId}):`, e.message)
+      );
       const fin = finalLabel(endedIn);
       const ot  = endedInSuffix(endedIn);
       // The final into pwhl_game_log (ot/shootout, as pwhl_live_refresh.py

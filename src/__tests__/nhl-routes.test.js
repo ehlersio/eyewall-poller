@@ -4367,7 +4367,8 @@ describe('POST /live-activity/start-token', () => {
     const env = makeEnv({ CACHE: makeFakeCache({}) })
     await post(env, { token, team: 'car', locale: 'fr' })
     const res = await post(env, { token, team: 'CAR', locale: 'fr' })
-    expect(await res.json()).toEqual({ ok: true, team: 'CAR' })
+    // `team` is kept for app builds that send `team` (and read it back).
+    expect(await res.json()).toEqual({ ok: true, teams: ['nhl:CAR'], team: 'CAR' })
     expect(await list(env, 'CAR')).toEqual([{ token, locale: 'fr' }])
   })
 
@@ -4405,7 +4406,7 @@ describe('startLiveActivities()', () => {
     expect(token).toBe(a)
     expect(opts).toMatchObject({
       event: 'start', state, attributesType: 'GameActivityAttributes',
-      attributes: { gameId: 2026010044, homeAbbr: 'CAR', awayAbbr: 'NSH', homeColor: '#ff0f0f', followAbbr: 'CAR' },
+      attributes: { gameId: 2026010044, homeAbbr: 'CAR', awayAbbr: 'NSH', homeColor: '#ff0f0f', followAbbr: 'CAR', league: 'nhl' },
       alert: { title: 'NSH @ CAR' },
     })
     expect(sendLiveActivityPushMock.mock.calls[1][1].alert.body).toMatch(/écran verrouillé/)

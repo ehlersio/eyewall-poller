@@ -39,6 +39,7 @@
 
 import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRowsIfTable, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
+import { hockeyTechLiveActivityState, startLiveActivities, pushLiveActivities } from './liveActivity.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
 import { combineSeasonRows, combineByPlayer } from './hockeytechSeasonRows.js';
 import { buildGoals, buildPenaltyShots, fetchGameDetailRows, fetchWinProbs, withWinProbs } from './hockeytechGameDetail.js';
@@ -271,7 +272,9 @@ export function createHockeyTechLeague(cfg) {
         .filter(g => g.game_date === todayStr && !loggedIds.has(g.game_id));
       const rows = [...logged, ...unlogged];
       if (!rows.length) return;
-      const games = await live(env, rows);
+      // withClock: the period/clock fields pollGame()'s Live Activity
+      // state reads.
+      const games = await live(env, rows, { withClock: true });
 
       // Live games, plus games that have gone final -- pollGame() sends a
       // final game's game-over push once, then skips it.
@@ -466,6 +469,19 @@ export function createHockeyTechLeague(cfg) {
       }
     }
 
+    // ── Lock-screen Live Activities ────────────────────────
+    // Each live tick: start one for every follower of either team (once
+    // per device per game), then push the state to every activity.
+    if (deriveGameStatus(game) === 'live') {
+      const laState = hockeyTechLiveActivityState(game, events, { teamCodes });
+      await startLiveActivities(env, key, { gameId, homeAbbr, awayAbbr }, laState).catch(e =>
+        console.error(`[${label}] Live Activity start error (game ${gameId}):`, e.message)
+      );
+      await pushLiveActivities(env, key, gameId, laState).catch(e =>
+        console.error(`[${label}] Live Activity push error (game ${gameId}):`, e.message)
+      );
+    }
+
     // ── Game over ──────────────────────────────────────────
     // Any goals since the last tick were processed above, so the final
     // score here matches the goal pushes already sent.
@@ -480,6 +496,16 @@ export function createHockeyTechLeague(cfg) {
         const endedIn = 'ended_in' in game
           ? game.ended_in
           : (await live(env, [game], { withEndedIn: true }))[0].ended_in;
+        // The final state to every Live Activity, which then ends. Once:
+        // this block runs once per game (finalKey). A row without the
+        // scorebar's period (game_log already final) asks it for that too.
+        await pushLiveActivities(env, key, gameId, async () => {
+          const laGame = 'period_name_short' in game ? game
+            : (await live(env, [game], { withEndedIn: true, withClock: true }))[0];
+          return hockeyTechLiveActivityState({ ...laGame, ended_in: endedIn }, events, { teamCodes, final: true });
+        }, { end: true }).catch(e =>
+          console.error(`[${label}] Live Activity end error (game ${gameId}):`, e.message)
+        );
         const fin = finalLabel(endedIn);
         const ot  = endedInSuffix(endedIn);
         // The final into game_log, once, before the push that announces it.
