@@ -127,8 +127,11 @@ export function deriveGameStatus(gameRow) {
 // so the cron and every route share one HockeyTech call a minute.
 //
 // `ht`: { client, base, key, siteId, leagueId, headers }. Resolves to
-// { [gameId]: { game_status_code, game_state, home_score, away_score } },
-// or {} when the feed is unreachable (callers then use game_log as-is).
+// { [gameId]: { game_status_code, game_state, home_score, away_score,
+// ended_in, period_name_short, game_clock, intermission } }, or {} when
+// the feed is unreachable (callers then use game_log as-is). The last
+// three are the Live Activity's period and clock (liveActivity.js), laid
+// over rows only on request -- see withLiveScorebar().
 export async function fetchScorebar(env, ht) {
   const kvKey = `${ht.client}:scorebar`;
   const cached = await kvGet(env, kvKey);
@@ -155,6 +158,12 @@ export async function fetchScorebar(env, ht) {
         // GameStatusString is plain "Final" whatever the ending; the long
         // form says "Final OT" / "Final SO".
         ended_in:         code === 4 ? endedInFromStatus(g.GameStatusStringLong) : null,
+        // PeriodNameShort: '1'-'3', then 'OT'/'2OT'.. (AHL) or 'OT1'/
+        // 'OT2'.. (ECHL, PWHL), and 'SO'. GameClock is the time left in
+        // the period ('07:58'). Intermission is '1' between periods.
+        period_name_short: typeof g.PeriodNameShort === 'string' && g.PeriodNameShort ? g.PeriodNameShort : null,
+        game_clock:        typeof g.GameClock === 'string' && g.GameClock ? g.GameClock : null,
+        intermission:      g.Intermission == null ? null : String(g.Intermission) === '1',
       };
     }
     await kvPut(env, kvKey, map, 60);
@@ -168,11 +177,21 @@ export async function fetchScorebar(env, ht) {
 // fetch when every row is already final -- the scorebar only ever moves a
 // game toward final -- unless `withEndedIn`: the AHL/ECHL game_log may not
 // carry ended_in, so a route that reports OT/SO for today's finals asks
-// the scorebar anyway.
-export async function withLiveScorebar(env, ht, rows, { withEndedIn = false } = {}) {
+// the scorebar anyway. The period/clock/intermission fields are only laid
+// on with `withClock` (the pollers' Live Activity state), so the routes
+// serving these rows answer exactly what they did before.
+const SCOREBAR_CLOCK_FIELDS = ['period_name_short', 'game_clock', 'intermission'];
+export async function withLiveScorebar(env, ht, rows, { withEndedIn = false, withClock = false } = {}) {
   if (!withEndedIn && !rows.some(r => deriveGameStatus(r) !== 'final')) return rows;
   const live = await fetchScorebar(env, ht);
-  return rows.map(r => (live[r.game_id] ? { ...r, ...live[r.game_id] } : r));
+  return rows.map(r => {
+    const s = live[r.game_id];
+    if (!s) return r;
+    if (withClock) return { ...r, ...s };
+    const base = { ...s };
+    for (const f of SCOREBAR_CLOCK_FIELDS) delete base[f];
+    return { ...r, ...base };
+  });
 }
 
 // 'OT' | 'SO' | null from HockeyTech's long status text ("Final OT",
@@ -1446,7 +1465,7 @@ export async function sendAPNsPush(sub, payload, env) {
 }
 
 // Live Activity update/end for one activity push token (the iOS app's
-// lock-screen game tracker -- see nhl.js's pushLiveActivities()). Same APNs
+// lock-screen game tracker -- see liveActivity.js's pushLiveActivities()). Same APNs
 // key and JWT as sendAPNsPush, with the Live Activity push type and topic.
 // `state` is the activity's ContentState; its keys must match
 // GameActivityAttributes.swift in eyewall-analytics. Priority 10 is for
