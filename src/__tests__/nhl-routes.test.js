@@ -2937,7 +2937,7 @@ describe('poll() — multi-team dual broadcast', () => {
       homeTeam: { id: 12, abbrev: 'CAR', score: 1 },
       awayTeam: { id: 13, abbrev: 'FLA', score: 0 },
     }
-    const pbpAt = clock => ({ periodDescriptor: { number: 1, periodType: 'REG' }, clock: { timeRemaining: clock }, plays: [] })
+    const pbpAt = (clock, sog = 5) => ({ periodDescriptor: { number: 1, periodType: 'REG' }, clock: { timeRemaining: clock }, plays: [], homeTeam: { sog }, awayTeam: { sog: 4 } })
     mockScoreboardAndPbp({ liveGames: [liveGame], pbpByGameId: { '2025020600': pbpAt('12:00') } })
     await poll(env, makeCtx())
     await poll(env, makeCtx()) // unchanged -> no second push
@@ -2948,6 +2948,11 @@ describe('poll() — multi-team dual broadcast', () => {
     await poll(env, makeCtx())
     expect(sendLiveActivityPushMock).toHaveBeenCalledTimes(2)
     expect(sendLiveActivityPushMock.mock.calls[1][1]).toMatchObject({ priority: 5, state: { clock: '11:00' } })
+
+    // A shot is a clock-like change too: priority 5.
+    mockScoreboardAndPbp({ liveGames: [liveGame], pbpByGameId: { '2025020600': pbpAt('10:00', 6) } })
+    await poll(env, makeCtx())
+    expect(sendLiveActivityPushMock.mock.calls[2][1]).toMatchObject({ priority: 5, state: { homeSog: 6, awaySog: 4 } })
   })
 
   it('ends Live Activities with the final score, and drops a dead token', async () => {
@@ -4438,7 +4443,15 @@ describe('liveActivityState()', () => {
       homeScore: 2, awayScore: 1, periodLabel: '2nd', clock: '07:58', inIntermission: false, status: 'live',
       lastEvent: 'PEN · FLA · Tkachuk · High-sticking · 2 min',
       strength: 'CAR PP',
+      homeSog: null, awaySog: null,
     })
+  })
+
+  it('carries shots on goal, the play-by-play\'s first, then the scoreboard\'s', () => {
+    const withSog = { ...pbp, homeTeam: { sog: 21 }, awayTeam: { sog: 18 } }
+    expect(liveActivityState(game, withSog)).toMatchObject({ homeSog: 21, awaySog: 18 })
+    const scoreboard = { ...game, homeTeam: { ...game.homeTeam, sog: 9 }, awayTeam: { ...game.awayTeam, sog: 7 } }
+    expect(liveActivityState(scoreboard, pbp)).toMatchObject({ homeSog: 9, awaySog: 7 })
   })
 
   it('names a goal and labels 5v3, empty nets and playoff OTs', () => {
