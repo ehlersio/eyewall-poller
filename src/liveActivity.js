@@ -38,8 +38,7 @@ const LA_START_ALERT = {
 // The attributes' dot colours, by league then abbr: each team's on-dark
 // displayColor in eyewall-analytics (what the app sends when it starts one
 // itself). KEEP IN SYNC with utils/teamConfig.js (NHL), pwhlConfig.js,
-// ahlConfig.js and echlConfig.js. Every ECHL team (and the AHL's ONT)
-// still has the app's neutral placeholder, '#6B7280', as its displayColor.
+// ahlConfig.js and echlConfig.js.
 //
 // These maps are also the list of teams a start token may follow: only
 // current teams, keyed by the same abbrs as the poller's team maps
@@ -48,8 +47,8 @@ const LA_START_ALERT = {
 export const LA_TEAM_COLORS = {
   nhl: { ANA: '#F47A38', BOS: '#FFB81C', BUF: '#649cff', CAR: '#ff0f0f', CBJ: '#4e9fff', CGY: '#ef3654', CHI: '#f52c4e', COL: '#c85e80', DAL: '#009365', DET: '#ef384c', EDM: '#FF4C00', FLA: '#5b9ef9', LAK: '#818181', MIN: '#2b926b', MTL: '#e04b5b', NJD: '#ef384c', NSH: '#FFB81C', NYI: '#649cff', NYR: '#689bff', OTT: '#e24b5b', PHI: '#F74902', PIT: '#FCB514', SEA: '#99D9D9', SJS: '#008e99', STL: '#659bff', TBL: '#5f9cff', TOR: '#42a0ff', UTA: '#6CAEDF', VAN: '#009645', VGK: '#B4975A', WPG: '#5b9ef9', WSH: '#5b9ef9' },
   pwhl: { BOS: '#3DA58A', MIN: '#A77BCA', MTL: '#D4576A', NY: '#00A8AB', OTT: '#BF2B45', TOR: '#3579FF', SEA: '#5DB8B8', VAN: '#4A90D9', DET: '#E3475E', HAM: '#E14C62', LV: '#818916', SJS: '#0083ED' },
-  ahl: { HFD: '#0084E0', PRO: '#FBB337', LV: '#F58220', WBS: '#FEC23D', HER: '#AC7374', CLT: '#FF0A34', SPR: '#EB3E59', ROC: '#E44861', SYR: '#4D82D5', TOR: '#0A7EFF', CLE: '#1B87D4', UTC: '#E44857', BEL: '#F13159', LAV: '#3080F2', HAM: '#0081F2', MB: '#297FF2', MIL: '#4280E1', GR: '#EC3D58', CHI: '#FF0927', RFD: '#E94358', TEX: '#1F9747', IA: '#00965B', BAK: '#327AFF', ONT: '#6B7280', SD: '#FF4C00', SJ: '#2C909C', TUC: '#C96081', COL: '#4E7CE8', HSK: '#C3C7C9', ABB: '#009841', CGY: '#F13755', CV: '#0082F1' },
-  echl: { ADK: '#6B7280', GSO: '#6B7280', MNE: '#6B7280', NOR: '#6B7280', REA: '#6B7280', TRE: '#6B7280', TR: '#6B7280', WOR: '#6B7280', ATL: '#6B7280', FLA: '#6B7280', GVL: '#6B7280', JAX: '#6B7280', ORL: '#6B7280', SAV: '#6B7280', SC: '#6B7280', BLM: '#6B7280', CIN: '#6B7280', FW: '#6B7280', IND: '#6B7280', KAL: '#6B7280', TOL: '#6B7280', WHL: '#6B7280', ALN: '#6B7280', IDH: '#6B7280', KC: '#6B7280', NM: '#6B7280', RC: '#6B7280', TAH: '#6B7280', TUL: '#6B7280', WIC: '#6B7280' },
+  ahl: { HFD: '#0084E0', PRO: '#FBB337', LV: '#F58220', WBS: '#FEC23D', HER: '#AC7374', CLT: '#FF0A34', SPR: '#EB3E59', ROC: '#E44861', SYR: '#4D82D5', TOR: '#0A7EFF', CLE: '#1B87D4', UTC: '#E44857', BEL: '#F13159', LAV: '#3080F2', HAM: '#0081F2', MB: '#297FF2', MIL: '#4280E1', GR: '#EC3D58', CHI: '#FF0927', RFD: '#E94358', TEX: '#1F9747', IA: '#00965B', BAK: '#327AFF', ONT: '#A4A9AD', SD: '#FF4C00', SJ: '#2C909C', TUC: '#C96081', COL: '#4E7CE8', HSK: '#C3C7C9', ABB: '#009841', CGY: '#F13755', CV: '#0082F1' },
+  echl: { ADK: '#F13352', GSO: '#966EC6', MNE: '#0088CA', NOR: '#4278FF', REA: '#916FC9', TRE: '#508EC8', TR: '#D0D2CE', WOR: '#0A7CFF', ATL: '#CA5F62', FLA: '#00944F', GVL: '#147DFB', JAX: '#597ED0', ORL: '#926ED1', SAV: '#57BA47', SC: '#007DFB', BLM: '#EA3E58', CIN: '#E24860', FW: '#FF7800', IND: '#D95358', KAL: '#E24A4E', TOL: '#6799C8', WHL: '#FCB514', ALN: '#E5455B', IDH: '#4381D3', KC: '#F15F22', NM: '#DD4F57', RC: '#DF4C5C', TAH: '#5395CE', TUL: '#5181CC', WIC: '#0B7CFF' },
 };
 
 export function isLiveActivityTeam(league, abbr) {
