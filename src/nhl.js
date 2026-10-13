@@ -8,11 +8,11 @@
 import { penaltyText, penaltyDescription } from './penaltyText.js';
 import { startLiveActivities as startLeagueLiveActivities, pushLiveActivities, handleLiveActivity } from './liveActivity.js';
 import { checkPublicWriteRateLimit, readJsonObject, h2hNarrativeStats, isAllowedPushEndpoint, isValidPushKeys, normalizeApnsToken, subId, MAX_PUSH_SUBS, PUSH_SUBS_TTL, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, ParamError } from './shared.js';
-import { kvGet, kvPut, json, LIVE_MAX_AGE, nhlSeasonEnd, etDateString, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore, sbParam, sbParamList, sbRowsIfTable, secretMatches, withParamErrors } from './shared.js';
+import { kvGet, kvPut, json, LIVE_MAX_AGE, nhlSeasonEnd, etDateString, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore, sbParam, sbParamList, sbRowsIfTable, secretMatches, readPollSecret, withParamErrors } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
-import { readCronHealth, readOpsHealth } from './ops.js';
-import { resolveNHLSeason, resolveAHLSeason, getAllAHLSeasons } from './seasons.js';
+import { readCronHealth } from './ops.js';
+import { resolveNHLSeason, resolveAHLSeason, getAllAHLSeasons, readCachedSeasons } from './seasons.js';
 import { MILESTONE_SPORTS, milestoneScope } from './milestones.js';
 import { buildCallupWatch, nameKey } from './callupWatch.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
@@ -2534,7 +2534,7 @@ async function handleNHLRoutes(request, env, ctx, url) {
 
   // Manual news refresh (protected)
   if (url.pathname === '/news/refresh') {
-    const secret = url.searchParams.get('secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     const tc    = await getTeamConfig(request, env);
     const items = await fetchNews(env, tc.abbr);
@@ -3728,20 +3728,20 @@ Only reference the two teams named above and the numbers given -- no player name
     return json(map, { maxAge });
   }
 
-  // Health
+  // Health -- public, so deliberately thin (audit 2026-10-13): is the
+  // Worker up, which season does it think each league is in, and did each
+  // poller's last tick succeed. Subscriber counts, live game ids, error
+  // text and the ops reports are on the owner-only /admin/health.
   if (url.pathname === '/health') {
-    const liveId   = await kvGet(env, 'live:gameId');
-    const liveIds  = await kvGet(env, 'live:gameIds');
-    const subs     = (await kvGet(env, 'push:subs')) || [];
-    const [cron, ops] = await Promise.all([readCronHealth(env), readOpsHealth(env)]);
+    const [cron, seasons] = await Promise.all([readCronHealth(env), readCachedSeasons(env)]);
     return json({
       ok: true,
-      liveGameId:  liveId,        // this app's own team's live game, if any (back-compat)
-      liveGameIds: liveIds || [], // every live NHL game right now, any team
-      subscribers: subs.length,
-      timestamp:   new Date().toISOString(),
-      cron, // per league: { lastPollAt, lastOkAt, lastError } (ops.js trackCron)
-      ops,  // per source: the latest /ops/notify report
+      timestamp: new Date().toISOString(),
+      seasons, // cached only: /health never fetches upstream (seasons.js readCachedSeasons)
+      // per league: when it last ticked and whether that tick succeeded
+      cron: Object.fromEntries(Object.entries(cron).map(([league, r]) => [
+        league, r ? { lastPollAt: r.lastPollAt ?? null, lastOk: !r.lastError } : null,
+      ])),
     });
   }
 
@@ -3881,7 +3881,7 @@ Only reference the two teams named above and the numbers given -- no player name
 
   // Manual poll
   if (url.pathname === '/poll') {
-    const secret = url.searchParams.get('secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     await poll(env, ctx);
     await flushAlertLog(env);
@@ -3890,7 +3890,7 @@ Only reference the two teams named above and the numbers given -- no player name
 
   // Manual social post test (protected)
   if (url.pathname === '/social/test') {
-    const secret = url.searchParams.get('secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     const testSummary = {
       won: true, carScore: 4, oppScore: 2, oppAbbr: 'BOS',
@@ -3911,7 +3911,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Refresh MoneyPuck for ALL 32 teams — useful after season URL updates.
   // Fires waitUntil for each team so they all compute in parallel without blocking.
   if (url.pathname === '/moneypuck/refresh/all') {
-    const secret = url.searchParams.get('secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     const teams = Object.keys(TEAM_CONFIGS);
     await env.CACHE.delete('moneypuck:raw'); // clear shared raw cache once
@@ -3939,7 +3939,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // items for every RSS-format feed when this route unconditionally
   // called parseAtom() on all of them.
   if (url.pathname === '/atom/ingest' && request.method === 'POST') {
-    const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     let bundle;
     try {
@@ -3990,7 +3990,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Cloudflare Workers IPs are blocked by MoneyPuck; GitHub-hosted runners are not.
   // GitHub Actions fetches the CSV and POSTs it here once daily.
   if (url.pathname === '/moneypuck/ingest' && request.method === 'POST') {
-    const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     let csvText;
     try {
@@ -4024,7 +4024,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Generate summary for most recent completed game (protected, for testing)
   // MoneyPuck analytics endpoint
   if (url.pathname === '/moneypuck/refresh') {
-    const secret = url.searchParams.get('secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     const tc = await getTeamConfig(request, env);
     await env.CACHE.delete(`moneypuck:skaters:${tc.abbr}`);
@@ -4039,7 +4039,7 @@ Only reference the two teams named above and the numbers given -- no player name
 
   // Refresh PP/PK unit compositions from Supabase → KV
   if (url.pathname === '/pp-units/refresh') {
-    const secret = url.searchParams.get('secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     const season   = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' }) || String(await resolveNHLSeason(env));
     const gameType = sbParam(url.searchParams.get('gameType'), { type: 'int', name: 'gameType' }) || '2';
@@ -4055,7 +4055,7 @@ Only reference the two teams named above and the numbers given -- no player name
   }
 
   if (url.pathname === '/summary/generate') {
-    const secret = url.searchParams.get('secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     const tc       = await getTeamConfig(request, env);
     const schedule = await kvGet(env, scheduleKey(tc.abbr, tc.season));
@@ -4088,7 +4088,7 @@ Only reference the two teams named above and the numbers given -- no player name
     const forceRegen = url.searchParams.get('force') === '1';
     // Forced regeneration is a billed AI call that skips the cache: owner
     // only (audit 2026-10-06 Worker F7).
-    if (forceRegen && !secretMatches(url.searchParams.get('secret'), env.POLL_SECRET)) return unauthorized();
+    if (forceRegen && !secretMatches(readPollSecret(request, url), env.POLL_SECRET)) return unauthorized();
     if (!gameId) return badRequest('gameId required');
     const tc = await getTeamConfig(request, env);
 
@@ -4371,7 +4371,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
 
   // Send a test notification (protected)
   if (url.pathname === '/push/test') {
-    const secret = url.searchParams.get('secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     await broadcast(env, {
       title: '🚨 Test Notification',
@@ -5048,7 +5048,8 @@ async function divisionOdds(env, team, latest) {
   // Body: { prompt: string }
   // Returns: { analysis: string }
   if (url.pathname === '/draft/analyze' && request.method === 'POST') {
-    const secret = request.headers.get('X-Poll-Secret');
+    // Header only: this route never took ?secret=, so it doesn't start now.
+    const secret = readPollSecret(request, url, { allowQuery: false });
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
 
     let body;

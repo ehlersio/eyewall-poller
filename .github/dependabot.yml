@@ -14,3 +14,15 @@ updates:
         patterns:
           - "@eslint/*"
           - "eslint*"
+  # Workflow actions are pinned to commit SHAs (audit 2026-10-13); this
+  # keeps the pins, and their version comments, moving.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"

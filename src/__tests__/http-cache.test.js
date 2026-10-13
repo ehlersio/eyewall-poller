@@ -152,6 +152,16 @@ describe('no-store', () => {
     expect(authed.headers.get('Cache-Control')).toBe('no-store')
   })
 
+  it('on a GET carrying the secret in a header, the preferred form since 2026-10-13', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({ standings: [{ teamAbbrev: { default: 'CAR' } }] }) })
+    for (const header of ['X-Poll-Secret', 'x-ingest-secret']) {
+      const res = await get('/cache/standings', env, { [header]: 'test-poll-secret' })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('Cache-Control'), header).toBe('no-store')
+      expect(res.headers.get('ETag'), header).toBeNull()
+    }
+  })
+
   it('leaves the CORS preflight alone', async () => {
     const res = await handleRequest(makeRequest('/roster', { method: 'OPTIONS' }), makeEnv(), makeCtx())
     expect(res.status).toBe(204)

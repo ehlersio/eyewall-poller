@@ -413,6 +413,29 @@ export function secretMatches(provided, secret) {
   return diff === 0;
 }
 
+// The POLL_SECRET a caller sent, for secretMatches(). Headers first:
+// X-Poll-Secret is the preferred form, x-ingest-secret is what the
+// pipeline's ingest calls already send. The ?secret= query form still
+// works but is deprecated -- Cloudflare's observability logs record full
+// URLs, so a secret in the query string ends up in the logs (audit
+// 2026-10-13). The pipeline's /ops/notify calls still use it. A route
+// that never took the query form passes `allowQuery: false`.
+export const POLL_SECRET_HEADERS = ['X-Poll-Secret', 'x-ingest-secret'];
+export function readPollSecret(request, url = new URL(request.url), { allowQuery = true } = {}) {
+  for (const name of POLL_SECRET_HEADERS) {
+    const value = request.headers.get(name);
+    if (value) return value;
+  }
+  return allowQuery ? url.searchParams.get('secret') : null;
+}
+
+// Does this request carry an owner credential of any kind? Such a response
+// is never cached (noStore() below).
+function hasOwnerCredential(request, url) {
+  return url.searchParams.has('secret') || request.headers.has('Authorization')
+    || POLL_SECRET_HEADERS.some(name => request.headers.has(name));
+}
+
 // ── Response helpers ──────────────────────────────────────────
 
 // `maxAge` (seconds) sets the browser cache lifetime: pass the route's KV
@@ -427,7 +450,7 @@ export function corsHeaders() {
   return {
     'Access-Control-Allow-Origin':  '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Poll-Secret, x-ingest-secret',
   };
 }
 
@@ -714,7 +737,8 @@ export async function cachedUntilFinal(env, key, { isFinal, build, finalTtl, liv
 // fills in), capped at MAX_MAX_AGE; a route with no KV cache of its own
 // gets DEFAULT_MAX_AGE. Live-game routes (LIVE_PATHS) are capped at
 // LIVE_MAX_AGE whatever they ask for. POST/DELETE, errors, owner calls
-// (`secret=`, `force=`, an Authorization header) are `no-store`.
+// (`secret=`, `force=`, an Authorization, X-Poll-Secret or x-ingest-secret
+// header) are `no-store`.
 export const DEFAULT_MAX_AGE = 30;
 // One hour at most. A KV entry is served with its full TTL even when it
 // expires a minute later, so a 24-hour max-age could leave a device a day
@@ -766,7 +790,7 @@ function noStore(request, res, url) {
   const method = request.method;
   if (method !== 'GET' && method !== 'HEAD') return true;
   if (res.status >= 400) return true;
-  return url.searchParams.has('secret') || url.searchParams.has('force') || request.headers.has('Authorization');
+  return url.searchParams.has('force') || hasOwnerCredential(request, url);
 }
 
 // Sets the caching headers on one response (see above). OPTIONS and

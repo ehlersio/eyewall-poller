@@ -19,7 +19,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { makeEnv, makeCtx, makeRequest, flushWaitUntil, makeFakeCache, mockFetchWithAI, aiCalls, aiPrompt } from './route-harness.js'
 
-vi.mock('../seasons.js', () => ({
+vi.mock('../seasons.js', async () => ({
+  // Real: reads KV only, which is what the /health tests check.
+  readCachedSeasons: (await vi.importActual('../seasons.js')).readCachedSeasons,
   resolveNHLSeason: vi.fn().mockResolvedValue(20252026),
   resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
   resolveAHLSeason: vi.fn().mockResolvedValue({ seasonId: 94, seasonType: 'regular' }),
@@ -52,23 +54,57 @@ beforeEach(() => {
 })
 
 describe('GET /health', () => {
-  it('reports subscriber count and live game id from KV, defaulting when both are cold', async () => {
+  // Public, so thin since 2026-10-13: the counts and live ids moved to the
+  // owner-only /admin/health (worker.js; covered in ops.test.js).
+  it('reports ok with null seasons and an empty cron block when KV is cold, fetching nothing', async () => {
+    globalThis.fetch = vi.fn()
     const env = makeEnv()
     const res = await handleNHL(makeRequest('/health'), env, makeCtx(), new URL('https://example.com/health'))
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body).toMatchObject({ ok: true, liveGameId: null, subscribers: 0 })
+    expect(body).toEqual({
+      ok: true,
+      timestamp: expect.any(String),
+      seasons: { nhl: null, pwhl: null, ahl: null, echl: null },
+      cron: { nhl: null, pwhl: null, ahl: null, echl: null },
+    })
+    // Public route: never reaches the NHL or HockeyTech.
+    expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
-  it('reflects real KV state when populated', async () => {
+  it('reports each league\'s cached season, an override first', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({
+      'config:season:nhl': { seasonId: '20262027', resolvedAt: 'x', source: 'live' },
+      'config:season:pwhl': { seasonId: 11, seasonType: 'regular', startYear: 2026, resolvedAt: 'x', source: 'live' },
+      'config:season:ahl': { seasonId: 92, seasonType: 'playoffs', resolvedAt: 'x', source: 'live' },
+      'config:season:ahl:override': { seasonId: 93, seasonType: 'regular' },
+    }) })
+    const body = await (await handleNHL(makeRequest('/health'), env, makeCtx(), new URL('https://example.com/health'))).json()
+    expect(body.seasons).toEqual({
+      nhl: { seasonId: '20262027' },
+      pwhl: { seasonId: 11, seasonType: 'regular' },
+      ahl: { seasonId: 93, seasonType: 'regular' },
+      echl: null,
+    })
+
+    // An NHL override is the bare id.
+    const overridden = makeEnv({ CACHE: makeFakeCache({ 'config:season:nhl:override': 20272028 }) })
+    const body2 = await (await handleNHL(makeRequest('/health'), overridden, makeCtx(), new URL('https://example.com/health'))).json()
+    expect(body2.seasons.nhl).toEqual({ seasonId: 20272028 })
+  })
+
+  it('leaves out subscriber counts, live game ids and poller error text even when KV has them', async () => {
+    const store = {
+      'live:gameId': 2025030415,
+      'live:gameIds': [2025030415],
+      'push:subs': [{ endpoint: 'a' }, { endpoint: 'b' }],
+      'health:cron:nhl': { lastPollAt: '2026-10-13T10:00:00Z', lastOkAt: '2026-10-13T09:00:00Z', lastError: 'NHL 503 secret detail', failingSince: '2026-10-13T09:01:00Z' },
+      'health:cron:pwhl': { lastPollAt: '2026-10-13T10:00:00Z', lastOkAt: '2026-10-13T10:00:00Z', lastError: null },
+    }
     const env = makeEnv({
       CACHE: {
-        async get(key) {
-          if (key === 'live:gameId') return JSON.stringify(2025030415)
-          if (key === 'push:subs') return JSON.stringify([{ endpoint: 'a' }, { endpoint: 'b' }])
-          return null
-        },
+        async get(key) { return key in store ? JSON.stringify(store[key]) : null },
         async put() {},
         async list() { return { keys: [] } },
       },
@@ -77,8 +113,14 @@ describe('GET /health', () => {
     const res = await handleNHL(makeRequest('/health'), env, makeCtx(), new URL('https://example.com/health'))
     const body = await res.json()
 
-    expect(body.liveGameId).toBe(2025030415)
-    expect(body.subscribers).toBe(2)
+    expect(body.cron.nhl).toEqual({ lastPollAt: '2026-10-13T10:00:00Z', lastOk: false })
+    expect(body.cron.pwhl).toEqual({ lastPollAt: '2026-10-13T10:00:00Z', lastOk: true })
+    expect(body).not.toHaveProperty('liveGameId')
+    expect(body).not.toHaveProperty('liveGameIds')
+    expect(body).not.toHaveProperty('subscribers')
+    expect(body).not.toHaveProperty('ops')
+    expect(JSON.stringify(body)).not.toContain('NHL 503')
+    expect(JSON.stringify(body)).not.toContain('2025030415')
   })
 })
 

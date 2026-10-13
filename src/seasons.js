@@ -845,6 +845,23 @@ export async function getSeasonsConfig(env) {
   return { nhl: { seasonId: nhl }, pwhl: { ...pwhl, next, preseason }, ahl, echl };
 }
 
+// Each league's current season as the resolvers last cached it, an
+// override first (as in the resolvers), without fetching anything: the
+// public /health must not reach the NHL or HockeyTech on a stranger's
+// request. refreshSeasonsCache() rewarms these every tick, so a null means
+// live resolution itself is failing (the resolvers don't cache a fallback).
+export async function readCachedSeasons(env) {
+  const read = async league => {
+    const override = await kvGet(env, `config:season:${league}:override`).catch(() => null);
+    return override ?? kvGet(env, `config:season:${league}`).catch(() => null);
+  };
+  const [nhl, pwhl, ahl, echl] = await Promise.all(['nhl', 'pwhl', 'ahl', 'echl'].map(read));
+  const hockeyTech = s => (s?.seasonId != null ? { seasonId: s.seasonId, seasonType: s.seasonType ?? null } : null);
+  // An NHL override is the bare season id; the resolver's own entry is an object.
+  const nhlId = nhl != null && typeof nhl === 'object' ? nhl.seasonId : nhl;
+  return { nhl: nhlId != null ? { seasonId: nhlId } : null, pwhl: hockeyTech(pwhl), ahl: hockeyTech(ahl), echl: hockeyTech(echl) };
+}
+
 // Called from scheduled() (runs every ~60s). This does NOT force a
 // network re-fetch on every tick — resolveNHLSeason/resolvePWHLSeason/
 // resolveAHLSeason/resolveECHLSeason already check the KV cache first and

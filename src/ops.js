@@ -6,7 +6,7 @@
  * days left /health saying ok:true (audit 2026-10-06 §4, §7). This module
  * is the one place failures are reported to:
  *
- *  - POST /ops/notify?secret=<POLL_SECRET>  — pipeline workflows (and the
+ *  - POST /ops/notify (POLL_SECRET, X-Poll-Secret) — pipeline workflows (and the
  *    Worker itself) report { source, status, title, body?, url? }. The
  *    latest report per source is kept in `health:ops:<source>` (no TTL);
  *    a non-ok report pushes to every device in `ops:subs`, at most once
@@ -18,7 +18,7 @@
  *    season hasn't completed a tick for CRON_STALE_MS.
  */
 
-import { kvGet, kvPut, json, errorJson, badRequest, unauthorized, verifyAdminUser, sendPush, subId, nhlSeasonEnd, secretMatches } from './shared.js';
+import { kvGet, kvPut, json, errorJson, badRequest, unauthorized, verifyAdminUser, sendPush, subId, nhlSeasonEnd, secretMatches, readPollSecret } from './shared.js';
 import { resolveNHLSeason, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons } from './seasons.js';
 
 export const OPS_SUBS_KEY = 'ops:subs';
@@ -84,7 +84,7 @@ async function readJson(request) {
 export async function handleOps(request, env, url) {
   if (url.pathname === '/ops/notify') {
     if (request.method !== 'POST') return errorJson(405, { error: 'POST required' });
-    if (!secretMatches(url.searchParams.get('secret'), env.POLL_SECRET)) return unauthorized();
+    if (!secretMatches(readPollSecret(request, url), env.POLL_SECRET)) return unauthorized();
     const body = await readJson(request);
     if (!body || typeof body.source !== 'string' || !SOURCE_RE.test(body.source)) {
       return badRequest('source must be 1-100 letters, digits, . _ or -');

@@ -38,7 +38,7 @@
  */
 
 import { ParamError, readJsonObject, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, h2hNarrativeStats, hockeyTechNarrativeReady, scorebarPeriodNumber } from './shared.js';
-import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRowsIfTable, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRowsIfTable, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, readPollSecret, withParamErrors } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
 import { hockeyTechLiveActivityState, startLiveActivities, pushLiveActivities } from './liveActivity.js';
 import { gameSummaryPlayers, fetchGameSummary, isExtraAttackerPull, hockeytechPeriodLabel, hockeytechPeriodNumber } from './hockeytechGame.js';
@@ -1621,7 +1621,7 @@ ${tone} Write in plain text, no markdown. 1-2 sentences max.`;
       const forceRegen = url.searchParams.get('force') === '1';
       // Forced regeneration is a billed AI call that skips the cache: owner
       // only (audit 2026-10-06 Worker F7).
-      if (forceRegen && !secretMatches(url.searchParams.get('secret'), env.POLL_SECRET)) return unauthorized();
+      if (forceRegen && !secretMatches(readPollSecret(request, url), env.POLL_SECRET)) return unauthorized();
 
       // French gets its own key (':fr'); English keeps the original one.
       // ':elo' so predictions cached under the old point-split win % aren't
@@ -1870,7 +1870,7 @@ Only reference the two teams named above and the numbers given -- no player name
 
     // POST /{league}/news/bust — invalidate the news cache so the next GET refetches
     if (url.pathname === `${P}/news/bust` && request.method === 'POST') {
-      const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
+      const secret = readPollSecret(request, url);
       if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
       await env.CACHE.delete(`${key}:news`);
       console.log(`${label} news cache busted`);
@@ -1880,7 +1880,7 @@ Only reference the two teams named above and the numbers given -- no player name
     // POST /{league}/news/ingest — articles from GitHub Actions
     // (eyewall-pipeline's nightly {league}_news.py).
     if (url.pathname === `${P}/news/ingest` && request.method === 'POST') {
-      const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
+      const secret = readPollSecret(request, url);
       if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
       let articles;
       try {
