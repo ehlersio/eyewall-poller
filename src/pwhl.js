@@ -6,7 +6,7 @@
  */
 
 import { ParamError, readJsonObject, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, h2hNarrativeStats, hockeyTechNarrativeReady } from './shared.js';
-import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, readPollSecret, withParamErrors } from './shared.js';
 import { hockeyTechLiveActivityState, startLiveActivities, pushLiveActivities } from './liveActivity.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction, gameResult, endedInOf } from './hockeytechPrediction.js';
@@ -1624,7 +1624,7 @@ Only reference the two teams named above and the numbers given -- no player name
 
   // POST /pwhl/news/bust — invalidate news cache so next GET triggers fresh fetch
   if (url.pathname === '/pwhl/news/bust' && request.method === 'POST') {
-    const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     await env.CACHE.delete('pwhl:news');
     console.log('PWHL news cache busted');
@@ -1635,7 +1635,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // Force-invalidates PWHL KV caches for a team so fresh data is served.
   // Call after pipeline ingestion or when data looks stale.
   if (url.pathname === '/pwhl/cache/bust' && request.method === 'POST') {
-    const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     const teamId = parseInt(sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' }) || '0', 10);
     const season = await seasonParam(url, env);
@@ -1661,7 +1661,7 @@ Only reference the two teams named above and the numbers given -- no player name
   // (eyewall-pipeline's pwhl_news.py, run once nightly via pwhl-nightly.yml).
   // GH Actions runner IPs are not blocked by these RSS sources; Worker IPs are.
   if (url.pathname === '/pwhl/news/ingest' && request.method === 'POST') {
-    const secret = url.searchParams.get('secret') || request.headers.get('x-ingest-secret');
+    const secret = readPollSecret(request, url);
     if (!secretMatches(secret, env.POLL_SECRET)) return unauthorized();
     let articles;
     try {
@@ -2622,7 +2622,7 @@ Write in plain text, no markdown. 1-2 sentences max.`;
     const forceRegen = url.searchParams.get('force') === '1';
     // Forced regeneration is a billed AI call that skips the cache: owner
     // only (audit 2026-10-06 Worker F7).
-    if (forceRegen && !secretMatches(url.searchParams.get('secret'), env.POLL_SECRET)) return unauthorized();
+    if (forceRegen && !secretMatches(readPollSecret(request, url), env.POLL_SECRET)) return unauthorized();
 
     // French gets its own key (':fr'); English keeps the original one.
     const locale = requestLocale(url);

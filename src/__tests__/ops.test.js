@@ -296,17 +296,56 @@ describe('notifyOps', () => {
 })
 
 describe('/health and /admin/health', () => {
-  it('/health carries every league\'s cron record and every ops report', async () => {
+  it('/health is thin: ok, timestamp, seasons and a per-league lastPollAt/lastOk', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('no network in tests'))
     const env = makeEnv()
     await trackCron(env, 'nhl', async () => {})
-    await notifyOps(env, { source: 'nightly.yml', status: 'failure', title: 'Nightly failed' })
+    await trackCron(env, 'ahl', async () => { throw new Error('HockeyTech 503 at https://lscluster.example/feed?key=abc') })
+    await notifyOps(env, { source: 'nightly.yml', status: 'failure', title: 'Nightly failed', body: 'GitHub said 422' })
+    await env.CACHE.put('push:subs', JSON.stringify([WEB_SUB]))
+    await env.CACHE.put('live:gameIds', JSON.stringify([2026020001]))
+    await env.CACHE.put('config:season:nhl', JSON.stringify({ seasonId: '20262027', resolvedAt: 'x', source: 'live' }))
+    await env.CACHE.put('config:season:ahl', JSON.stringify({ seasonId: 93, seasonType: 'regular', resolvedAt: 'x', source: 'live' }))
     // /health lives in nhl.js; go through the real dispatcher.
     const res = await handleRequest(makeRequest('/health'), env, makeCtx())
     const body = await res.json()
-    expect(body.cron.nhl).toMatchObject({ lastError: null })
-    expect(body.cron.lastOkAt).toBeUndefined()
+    expect(Object.keys(body).sort()).toEqual(['cron', 'ok', 'seasons', 'timestamp'])
+    expect(body.ok).toBe(true)
+    expect(body.seasons).toEqual({ nhl: { seasonId: '20262027' }, pwhl: null, ahl: { seasonId: 93, seasonType: 'regular' }, echl: null })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect(Object.keys(body.seasons)).toEqual(['nhl', 'pwhl', 'ahl', 'echl'])
     expect(Object.keys(body.cron)).toEqual(['nhl', 'pwhl', 'ahl', 'echl'])
+    expect(body.cron.nhl).toEqual({ lastPollAt: expect.any(String), lastOk: true })
+    expect(body.cron.ahl).toEqual({ lastPollAt: expect.any(String), lastOk: false })
+    expect(body.cron.pwhl).toBeNull()
+    // None of the owner-only detail leaks.
+    const text = JSON.stringify(body)
+    for (const leak of ['HockeyTech 503', 'lastError', 'nightly.yml', '422', 'subscribers', 'liveGameId', '2026020001']) {
+      expect(text).not.toContain(leak)
+    }
+  })
+
+  it('/admin/health has what /health dropped: subscriber count, live ids, full cron and ops records', async () => {
+    const env = makeEnv()
+    await trackCron(env, 'ahl', async () => { throw new Error('HockeyTech 503') })
+    await notifyOps(env, { source: 'nightly.yml', status: 'failure', title: 'Nightly failed' })
+    await env.CACHE.put('push:subs', JSON.stringify([WEB_SUB, IOS_SUB, WEB_SUB]))
+    await env.CACHE.put('live:gameId', JSON.stringify(2026020001))
+    await env.CACHE.put('live:gameIds', JSON.stringify([2026020001, 2026020002]))
+    const headers = asAdmin()
+    const body = await (await handleRequest(makeRequest('/admin/health', { headers }), env, makeCtx())).json()
+    expect(body.subscribers).toBe(3)
+    expect(body.liveGameId).toBe(2026020001)
+    expect(body.liveGameIds).toEqual([2026020001, 2026020002])
+    expect(body.cron.ahl).toMatchObject({ lastError: 'HockeyTech 503', failingSince: expect.any(String) })
     expect(body.ops['nightly.yml']).toMatchObject({ status: 'failure', title: 'Nightly failed' })
+    expect(JSON.stringify(body)).not.toContain(WEB_SUB.endpoint)
+  })
+
+  it('/admin/health defaults the live ids and counts when nothing is stored', async () => {
+    const headers = asAdmin()
+    const body = await (await handleRequest(makeRequest('/admin/health', { headers }), makeEnv(), makeCtx())).json()
+    expect(body).toMatchObject({ subscribers: 0, opsSubscribers: 0, liveGameId: null, liveGameIds: [] })
   })
 
   it('/admin/health keeps news sources separate and reports the ops subscriber count, not the subscriptions', async () => {

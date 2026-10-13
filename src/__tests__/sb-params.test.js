@@ -6,7 +6,7 @@
 // verified live). POLL_SECRET is compared in constant time.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { sbParam, sbParamList, ParamError, secretMatches, withParamErrors } from '../shared.js'
+import { sbParam, sbParamList, ParamError, secretMatches, readPollSecret, corsHeaders, withParamErrors } from '../shared.js'
 import { handleRequest } from '../worker.js'
 import { handleNHL } from '../nhl.js'
 import { handlePWHL } from '../pwhl.js'
@@ -147,5 +147,53 @@ describe('secretMatches', () => {
     expect(right.status).toBe(200)
     const unset = await handleRequest(makeRequest('/cache/bust?key=standings', { method: 'POST' }), makeEnv({ POLL_SECRET: undefined }), makeCtx())
     expect(unset.status).toBe(401)
+  })
+})
+
+describe('readPollSecret', () => {
+  // Query-string secrets land in Cloudflare's observability logs (audit
+  // 2026-10-13), so a header wins; ?secret= still works for now.
+  const read = (path, headers) => readPollSecret(makeRequest(path, { headers }))
+
+  it('prefers X-Poll-Secret, then x-ingest-secret, then ?secret=', () => {
+    expect(read('/poll?secret=q', { 'X-Poll-Secret': 'h', 'x-ingest-secret': 'i' })).toBe('h')
+    expect(read('/poll?secret=q', { 'x-ingest-secret': 'i' })).toBe('i')
+    expect(read('/poll?secret=q')).toBe('q')
+    expect(read('/poll')).toBeNull()
+  })
+
+  it('reads header names case-insensitively and takes an already-parsed URL', () => {
+    const req = makeRequest('/poll?secret=q', { headers: { 'x-poll-secret': 'h' } })
+    expect(readPollSecret(req, new URL(req.url))).toBe('h')
+  })
+
+  it('allowQuery: false ignores ?secret= (/draft/analyze never took it)', () => {
+    const req = makeRequest('/draft/analyze?secret=q')
+    expect(readPollSecret(req, new URL(req.url), { allowQuery: false })).toBeNull()
+    const withHeader = makeRequest('/draft/analyze?secret=q', { headers: { 'X-Poll-Secret': 'h' } })
+    expect(readPollSecret(withHeader, new URL(withHeader.url), { allowQuery: false })).toBe('h')
+  })
+
+  it('an empty header falls through to the next form', () => {
+    expect(read('/poll?secret=q', { 'X-Poll-Secret': '' })).toBe('q')
+  })
+
+  it('lets a browser send either header (CORS preflight)', () => {
+    const allowed = corsHeaders()['Access-Control-Allow-Headers'].toLowerCase()
+    expect(allowed).toContain('x-poll-secret')
+    expect(allowed).toContain('x-ingest-secret')
+  })
+
+  it('gates the secret routes by header as well as by query', async () => {
+    const env = makeEnv()
+    const post = headers => handleRequest(makeRequest('/cache/bust?key=standings', { method: 'POST', headers }), env, makeCtx())
+    expect((await post({ 'X-Poll-Secret': 'test-poll-secret' })).status).toBe(200)
+    expect((await post({ 'x-ingest-secret': 'test-poll-secret' })).status).toBe(200)
+    expect((await post({ 'X-Poll-Secret': 'nope' })).status).toBe(401)
+    // A wrong header is not rescued by a right query secret: the header wins.
+    const mixed = await handleRequest(makeRequest('/cache/bust?key=standings&secret=test-poll-secret', {
+      method: 'POST', headers: { 'X-Poll-Secret': 'nope' },
+    }), env, makeCtx())
+    expect(mixed.status).toBe(401)
   })
 })

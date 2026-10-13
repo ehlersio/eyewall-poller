@@ -22,7 +22,7 @@ import { MILESTONE_SPORTS, milestoneScope } from './milestones.js';
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_IDS } from './ahl.js';
 import { handleECHL, ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS, fetchECHLNews, pollECHL } from './echl.js';
-import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog, sbParam, sbRowsIfTable, secretMatches, withParamErrors, withHttpCache } from './shared.js';
+import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog, sbParam, sbRowsIfTable, secretMatches, readPollSecret, withParamErrors, withHttpCache } from './shared.js';
 import { handleOddsRankings } from './leagueOddsRankings.js';
 import { handleOps, trackCron, checkCronHealth, readCronHealth, readOpsHealth, OPS_SUBS_KEY } from './ops.js';
 import { maybeDispatchWorkflows } from './dispatch.js';
@@ -101,7 +101,7 @@ async function routeRequest(request, env, ctx) {
     return new Response(null, { status: 204, headers: corsHeaders() });
   }
 
-  // POST /cache/bust?key=<kv key>&secret=<POLL_SECRET>
+  // POST /cache/bust?key=<kv key>  (X-Poll-Secret: <POLL_SECRET>)
   // Drops one KV entry so the next request for it rebuilds from live code.
   //
   // Added after a real incident (2026-09): the /players-search-index paging
@@ -111,22 +111,23 @@ async function routeRequest(request, env, ctx) {
   // wrangler. There was no way to do that over HTTP.
   //
   // Deliberately NOT a general "delete any key" endpoint. Nearly every entry
-  // here is a regenerable cache, but a few are the only copy of real data:
-  // `push:subs` holds every push subscription, and `config:season:*:override`
-  // holds a season override someone set on purpose. Deleting those would
-  // destroy data rather than refresh it, so they're refused outright --
-  // the secret protects against strangers, this protects against a typo.
+  // here is a regenerable cache, but a few are the only copy of real data
+  // (PROTECTED_KV_PREFIXES): push and ops subscriptions, Live Activity
+  // tokens, health and alert records, the APNs JWT, and season overrides
+  // someone set on purpose. Deleting those would destroy data rather than
+  // refresh it, so they're refused outright -- the secret protects against
+  // strangers, this protects against a typo.
   //
   // Must be matched here, before the fall-through to handleNHL, which owns
   // the read-only `/cache/:key` route and would otherwise treat "bust" as
   // the name of a key to look up.
   if (url.pathname === '/cache/bust') {
     if (request.method !== 'POST') return errorJson(405, { error: 'POST required' });
-    if (!secretMatches(url.searchParams.get('secret'), env.POLL_SECRET)) return unauthorized();
+    if (!secretMatches(readPollSecret(request, url), env.POLL_SECRET)) return unauthorized();
 
     const key = url.searchParams.get('key');
     if (!key) return badRequest('key is required');
-    if (key.startsWith('push:') || key.includes(':override')) {
+    if (isProtectedKvKey(key)) {
       return errorJson(403, { error: `${key} holds real data, not a cache -- refusing to delete it` });
     }
 
@@ -522,15 +523,29 @@ async function routeRequest(request, env, ctx) {
     const list = await env.CACHE.list({ prefix: 'health:' });
     const newsKeys = list.keys.map(k => k.name)
       .filter(n => !n.startsWith('health:cron:') && !n.startsWith('health:ops:'));
-    const [records, cron, ops, opsSubs] = await Promise.all([
+    const [records, cron, ops, opsSubs, pushSubs, liveGameId, liveGameIds] = await Promise.all([
       Promise.all(newsKeys.map(n => kvGet(env, n))),
       readCronHealth(env),
       readOpsHealth(env),
       kvGet(env, OPS_SUBS_KEY),
+      kvGet(env, 'push:subs'),
+      kvGet(env, 'live:gameId'),
+      kvGet(env, 'live:gameIds'),
     ]);
     const sources = records.filter(Boolean).sort((a, b) => a.key.localeCompare(b.key));
-    // The ops subscriber count only -- never the subscriptions themselves.
-    return json({ sources, cron, ops, opsSubscribers: (opsSubs || []).length, checkedAt: new Date().toISOString() });
+    // Subscriber counts only -- never the subscriptions themselves. The
+    // live ids, counts and full cron/ops records were on the public
+    // /health until 2026-10-13.
+    return json({
+      sources,
+      cron, // per league: { lastPollAt, lastOkAt, lastError, failingSince? } (ops.js trackCron)
+      ops,  // per source: the latest /ops/notify report
+      opsSubscribers: (opsSubs || []).length,
+      subscribers: (pushSubs || []).length,
+      liveGameId: liveGameId ?? null, // this app's own team's live game, if any
+      liveGameIds: liveGameIds || [], // every live NHL game right now, any team
+      checkedAt: new Date().toISOString(),
+    });
   }
 
   // Owner ops alerts: /ops/notify (POLL_SECRET), /ops/subscribe and
@@ -590,6 +605,17 @@ export async function runScheduled(env, ctx) {
   } finally {
     await flushAlertLog(env).catch(e => console.error('Alert log flush error:', e.message));
   }
+}
+
+// KV keys /cache/bust refuses to delete: each is the only copy of real
+// data, not a cache. `ops:subs` (owner devices), `la:*` (Live Activity
+// tokens and per-team start lists), `health:*` (poller, ops and news-feed
+// records), `alerts:*` (the recent-alerts log), `apns:*` (the signed APNs
+// JWT), `push:*` (every push subscription) and any `*:override` (a season
+// override set by hand).
+export const PROTECTED_KV_PREFIXES = ['ops:', 'la:', 'health:', 'alerts:', 'apns:', 'push:'];
+export function isProtectedKvKey(key) {
+  return PROTECTED_KV_PREFIXES.some(prefix => key.startsWith(prefix)) || key.includes(':override');
 }
 
 export default {

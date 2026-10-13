@@ -43,7 +43,7 @@ vi.mock('../pwhl.js', async () => {
   }
 })
 
-import worker from '../worker.js'
+import worker, { isProtectedKvKey } from '../worker.js'
 import { handleNHL } from '../nhl.js'
 import { handlePWHL } from '../pwhl.js'
 import { getSeasonsConfig, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons } from '../seasons.js'
@@ -466,6 +466,47 @@ describe('POST /cache/bust', () => {
       expect(res.status).toBe(403)
       expect(await env.CACHE.get(key)).not.toBeNull()
     }
+  })
+
+  it('refuses every key family that is the only copy of its data (audit 2026-10-13)', async () => {
+    const keys = [
+      'ops:subs', 'la:CAR:2025020001', 'la:start:2025020001', 'la:startteams:2026-10-13',
+      'health:ops:nightly.yml', 'health:cron:nhl', 'health:pwhl:espn', 'alerts:recent:NHL:CAR',
+      'apns:jwt', 'push:subs', 'config:season:pwhl:override', 'config:season:ahl:override',
+    ]
+    const env = makeEnv({ CACHE: makeFakeCache(Object.fromEntries(keys.map(k => [k, { keep: true }]))) })
+
+    for (const key of keys) {
+      const res = await bust(env, `?key=${encodeURIComponent(key)}&secret=test-poll-secret`)
+      expect(res.status, key).toBe(403)
+      expect(await env.CACHE.get(key), key).not.toBeNull()
+    }
+  })
+
+  it('still busts caches whose names merely resemble a protected prefix', async () => {
+    // `live:` is not `la:`, `pwhl:health...` is not `health:`.
+    const env = makeEnv({ CACHE: makeFakeCache({ 'live:gameIds': [1], 'pwhl:news': [1] }) })
+    for (const key of ['live:gameIds', 'pwhl:news']) {
+      expect((await bust(env, `?key=${key}&secret=test-poll-secret`)).status).toBe(200)
+      expect(await env.CACHE.get(key)).toBeNull()
+    }
+  })
+
+  it('isProtectedKvKey matches by prefix, and any override', () => {
+    expect(isProtectedKvKey('health:ops:dispatch-nightly')).toBe(true)
+    expect(isProtectedKvKey('config:season:echl:override')).toBe(true)
+    expect(isProtectedKvKey('players-search-index')).toBe(false)
+    expect(isProtectedKvKey('schedule:CAR:20262027')).toBe(false)
+  })
+
+  it('accepts the secret in an X-Poll-Secret header', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({ 'nhl:today': [1] }) })
+    const res = await worker.fetch(
+      makeRequest('/cache/bust?key=nhl:today', { method: 'POST', headers: { 'X-Poll-Secret': 'test-poll-secret' } }),
+      env, makeCtx()
+    )
+    expect(res.status).toBe(200)
+    expect(await env.CACHE.get('nhl:today')).toBeNull()
   })
 
   it('does not shadow the read-only /cache/:key route', async () => {
