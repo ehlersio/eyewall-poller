@@ -3267,11 +3267,11 @@ exports[`ahl > team-seasons/head-to-head/narrative > response, upstream requests
   "status": 200,
   "upstream": [
     {
-      "aiPrompt": "You are Sticks, EyeWall's hockey analyst. Write a punchy 2-3 sentence head-to-head summary for Home Club vs Away Club.
+      "aiPrompt": "You are Sticks, EyeWall's hockey analyst. Write a punchy 2-3 sentence head-to-head summary for Toronto Marlies vs Rochester Americans.
 
-All-time record (since 2025-26): Home Club 2-1 Away Club, across 3 meetings.
-Last 3: Home Club 2-1 Away Club.
-Current streak: Home Club has won 1 straight.
+All-time record (since 2025-26): Toronto Marlies 2-1 Rochester Americans, across 3 meetings.
+Last 3: Toronto Marlies 2-1 Rochester Americans.
+Current streak: Toronto Marlies has won 1 straight.
 
 IMPORTANT: Only 3 meetings exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.
 Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.",
@@ -6542,11 +6542,11 @@ exports[`echl > team-seasons/head-to-head/narrative > response, upstream request
   "status": 200,
   "upstream": [
     {
-      "aiPrompt": "You are Sticks, EyeWall's hockey analyst. Write a punchy 2-3 sentence head-to-head summary for Home Club vs Away Club.
+      "aiPrompt": "You are Sticks, EyeWall's hockey analyst. Write a punchy 2-3 sentence head-to-head summary for Florida Everblades vs Trois-Rivières Lions.
 
-All-time record (since 2025-26): Home Club 2-1 Away Club, across 3 meetings.
-Last 3: Home Club 2-1 Away Club.
-Current streak: Home Club has won 1 straight.
+All-time record (since 2025-26): Florida Everblades 2-1 Trois-Rivières Lions, across 3 meetings.
+Last 3: Florida Everblades 2-1 Trois-Rivières Lions.
+Current streak: Florida Everblades has won 1 straight.
 
 IMPORTANT: Only 3 meetings exist between these teams. Do not describe this as a "trend," "rivalry," or "dominance" -- that's too small a sample to support it. It's fine to note the limited history plainly.
 Only reference the two teams named above and the numbers given -- no player names, no invented stats or games. Plain text only, no markdown, no bullet points.",

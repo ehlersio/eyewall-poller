@@ -96,8 +96,9 @@ export function aiPrompt(fetchMock, callIndex = 0) {
   return JSON.parse(call[1].body).messages
 }
 
-// Fake env.AI_ROUTE_LIMITER — the Workers-native rate-limit binding guarding
-// the AI-calling routes (Session 48, Item 3). Defaults to always-allow so
+// Fake env.AI_ROUTE_LIMITER / env.PUBLIC_WRITE_LIMITER — the Workers-native
+// rate-limit bindings guarding the AI-calling routes (Session 48, Item 3)
+// and the public write routes (security audit 2026-10-13). Defaults to always-allow so
 // existing/new tests don't need to know about it; override per-test to
 // exercise the 429 path once a route actually checks it.
 export function makeFakeRateLimiter(limitImpl) {
@@ -108,6 +109,9 @@ export function makeEnv(overrides = {}) {
   return {
     CACHE: makeFakeCache(),
     AI_ROUTE_LIMITER: makeFakeRateLimiter(),
+    // The public write routes' limiter (/push/subscribe, /push/unsubscribe,
+    // /live-activity/*; shared.js checkPublicWriteRateLimit()), always-allow.
+    PUBLIC_WRITE_LIMITER: makeFakeRateLimiter(),
     OPENROUTER_API_KEY: 'test-openrouter-key',
     POLL_SECRET: 'test-poll-secret',
     VAPID_PUBLIC_KEY: undefined,

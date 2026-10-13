@@ -34,6 +34,20 @@ name         = "AI_ROUTE_LIMITER"
 namespace_id = "1001"
 simple       = { limit = 10, period = 60 }
 
+# Rate limiting binding -- guards the unauthenticated WRITE routes the app
+# calls without a secret: POST /push/subscribe, /push/unsubscribe,
+# /live-activity/register and /live-activity/start-token (security audit
+# 2026-10-13). 30 calls a minute per route per IP is far above what one
+# device sends (a subscribe or token registration per launch or settings
+# change) and stops a script filling push:subs or the Live Activity token
+# lists. Same provisioning as AI_ROUTE_LIMITER above; without the binding
+# (e.g. a local `wrangler dev` with it removed) the routes run unlimited
+# and log once (shared.js checkPublicWriteRateLimit()).
+[[ratelimits]]
+name         = "PUBLIC_WRITE_LIMITER"
+namespace_id = "1002"
+simple       = { limit = 30, period = 60 }
+
 # Secrets (set via `wrangler secret put <NAME>` — never commit values here):
 #   POLL_SECRET
 #   VAPID_PUBLIC_KEY

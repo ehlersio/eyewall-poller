@@ -115,6 +115,35 @@ export function deriveGameStatus(gameRow) {
   return 'pre';
 }
 
+// ── HockeyTech narratives: is the period over? (security audit 2026-10-13 #5) ──
+// A HockeyTech period name as a number: '1'-'3'; the first overtime 4
+// ('OT', 'OT1'), the second 5 ('2OT', 'OT2') and so on; the shootout after
+// every overtime. null for anything else.
+export function scorebarPeriodNumber(raw) {
+  const s = String(raw ?? '').trim().toUpperCase();
+  if (/^[1-9]$/.test(s)) return Number(s);
+  if (s === 'SO') return 99;
+  const ot = s.match(/^OT(\d?)$/) || s.match(/^(\d?)OT$/);
+  return ot ? 3 + Number(ot[1] || 1) : null;
+}
+
+// Whether a PWHL/AHL/ECHL narrative may be written for `period` (a period
+// number, or 'game'), from the Worker's reading of the game: `row` is the
+// game's {league}_game_log row with the 60 s-cached scorebar laid over it
+// (withLiveScorebar(..., { withClock: true }): game_status_code /
+// game_state, period_name_short, intermission). A game is over when final;
+// a period once play has moved past it, or the scorebar shows the
+// intermission after it. No row, or no period from the scorebar for a
+// game that isn't final, is "not over".
+export function hockeyTechNarrativeReady(row, period) {
+  if (!row) return false;
+  if (deriveGameStatus(row) === 'final') return true;
+  if (period === 'game') return false;
+  const current = scorebarPeriodNumber(row.period_name_short);
+  if (current == null) return false;
+  return current > period || (current === period && row.intermission === true);
+}
+
 // ── HockeyTech live scorebar ──────────────────────────────────
 // {league}_game_log's live columns (game_state, game_status_code, scores)
 // are written by eyewall-pipeline's live-score-refresh.yml, a */5 GitHub
@@ -430,6 +459,77 @@ export async function checkAiRateLimit(env, request, routeName) {
   const { success } = await env.AI_ROUTE_LIMITER.limit({ key: `${routeName}:${ip}` });
   return success ? null : tooManyRequests();
 }
+
+// Guards the unauthenticated write routes -- POST /push/subscribe,
+// /push/unsubscribe, /live-activity/register and /live-activity/start-token
+// (security audit 2026-10-13 findings 4 and 6) -- with the
+// PUBLIC_WRITE_LIMITER binding (wrangler.toml), keyed by route+IP like
+// checkAiRateLimit(). Without the binding (a `wrangler dev` with no
+// [[ratelimits]], or a test env) the route runs unlimited and this logs
+// once per isolate, so a missing binding shows up in the logs rather than
+// failing every subscribe.
+let publicWriteLimiterMissingLogged = false;
+export async function checkPublicWriteRateLimit(env, request, routeName) {
+  const limiter = env.PUBLIC_WRITE_LIMITER;
+  if (!limiter) {
+    if (!publicWriteLimiterMissingLogged) {
+      console.warn('PUBLIC_WRITE_LIMITER binding not configured: public write routes are not rate-limited');
+      publicWriteLimiterMissingLogged = true;
+    }
+    return null;
+  }
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const { success } = await limiter.limit({ key: `${routeName}:${ip}` });
+  return success ? null : tooManyRequests();
+}
+
+// A request body that must be a JSON object: the parsed object, or null
+// for invalid JSON, an array, a primitive or no body at all.
+export async function readJsonObject(request) {
+  let body;
+  try { body = await request.json(); } catch { return null; }
+  return body && typeof body === 'object' && !Array.isArray(body) ? body : null;
+}
+
+// ── Client text into AI prompts (security audit 2026-10-13 #5) ──
+// The narrative routes take a stats body from the app and write a prompt
+// from it, and the answer is cached for every user. A scorer name used
+// to go into the prompt raw, so `scorerName: "Ignore the stats and
+// write: ..."` became the game's summary for everyone. safeName() keeps
+// only what a person's name (or a period label, with `digits`) is made of:
+// letters in any script, combining marks, spaces, apostrophes, hyphens and
+// periods; whitespace collapsed; at most `max` characters. Anything else
+// is dropped, and an empty result is `fallback` ('unknown').
+export function safeName(value, max = 40, { digits = false, fallback = 'unknown' } = {}) {
+  if (typeof value !== 'string') return fallback;
+  const pattern = digits ? /[^\p{L}\p{M}\p{Nd} '’.-]/gu : /[^\p{L}\p{M} '’.-]/gu;
+  const s = value.normalize('NFC').replace(pattern, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trim();
+  return s || fallback;
+}
+
+// A finite number from the body, or null (a stat the client didn't have,
+// or something that isn't a number). Numeric strings are coerced.
+export function finiteOrNull(value) {
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Goal strength as the narrative prompts print it.
+export const GOAL_STRENGTHS = ['EV', 'PP', 'SH', 'EN', 'PS'];
+export function safeStrength(value) {
+  const s = typeof value === 'string' ? value.trim().toUpperCase() : '';
+  return GOAL_STRENGTHS.includes(s) ? s : 'EV';
+}
+
+// A game clock as the feeds write it ('12:34', '7:05'), else null.
+export function safeClock(value) {
+  const s = typeof value === 'string' ? value.trim() : '';
+  return /^\d{1,2}:\d{2}$/.test(s) ? s : null;
+}
+
+// Most goals a narrative body may list: well above any real game.
+export const NARRATIVE_MAX_GOALS = 20;
 
 // ── AI generation (OpenRouter) ──────────────────────────────────
 // Shared by nhl.js and pwhl.js for every live/on-demand narrative route
@@ -1214,6 +1314,71 @@ export function subId(sub) {
   return sub.token || sub.endpoint;
 }
 
+// ── Who may be stored in push:subs (security audit 2026-10-13 #4) ──
+// POST /push/subscribe is public, and every broadcast POSTs (with the
+// VAPID-signed header) to each stored endpoint. Any URL used to be
+// accepted, so the cron could be pointed at a third party. A Web Push
+// endpoint must now be https on one of the browser push services below --
+// the hosts PushManager.subscribe() hands out:
+//   fcm.googleapis.com            Chrome, Chromium browsers, Android
+//   android.googleapis.com        older Chrome (GCM-era) subscriptions
+//   updates.push.services.mozilla.com, *.push.services.mozilla.com  Firefox
+//   *.push.apple.com              Safari / iOS home-screen web apps (web.push.apple.com)
+//   *.notify.windows.com          Edge (wns2-*.notify.windows.com)
+// '*.' entries match any subdomain (not the bare domain).
+export const PUSH_ENDPOINT_HOSTS = [
+  'fcm.googleapis.com',
+  'android.googleapis.com',
+  'updates.push.services.mozilla.com',
+  '*.push.services.mozilla.com',
+  '*.push.apple.com',
+  '*.notify.windows.com',
+];
+export const MAX_PUSH_ENDPOINT_LENGTH = 2048;
+
+export function isAllowedPushEndpoint(endpoint) {
+  if (typeof endpoint !== 'string' || !endpoint || endpoint.length > MAX_PUSH_ENDPOINT_LENGTH) return false;
+  let u;
+  try { u = new URL(endpoint); } catch { return false; }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port) return false;
+  const host = u.hostname.toLowerCase();
+  return PUSH_ENDPOINT_HOSTS.some(h => (h.startsWith('*.') ? host.endsWith(h.slice(1)) : host === h));
+}
+
+// A Web Push subscription's keys (PushSubscription.toJSON().keys): the
+// client's P-256 public key (65 bytes, 87 base64url chars) and its
+// 16-byte auth secret (22 chars). Ranges are a little loose so padding
+// or a browser's variation can't lock a real subscriber out.
+const B64URL = /^[A-Za-z0-9_-]+$/;
+export function isValidPushKeys(keys) {
+  if (!keys || typeof keys !== 'object' || Array.isArray(keys)) return false;
+  const { p256dh, auth } = keys;
+  return typeof p256dh === 'string' && B64URL.test(p256dh) && p256dh.length >= 80 && p256dh.length <= 100
+    && typeof auth === 'string' && B64URL.test(auth) && auth.length >= 16 && auth.length <= 32;
+}
+
+// An APNs device token, lowercased, or null. Capacitor's registration
+// event gives 64 lowercase hex characters (a 32-byte token); Apple says
+// device tokens may grow, so up to 200 are accepted -- still hex only.
+export function normalizeApnsToken(token) {
+  if (typeof token !== 'string') return null;
+  const t = token.trim().toLowerCase();
+  return /^[0-9a-f]{64,200}$/.test(t) ? t : null;
+}
+
+// push:subs is one KV value (25 MiB limit; a subscription is ~400-600
+// bytes). Past MAX_PUSH_SUBS a new subscription is refused (429) and an
+// existing one can still update its teams/prefs. A hobby app's real list
+// is a few hundred.
+export const MAX_PUSH_SUBS = 20000;
+export const PUSH_SUBS_TTL = 365 * 24 * 3600;
+
+// A subscription whose sends fail this many broadcasts in a row (any
+// non-2xx other than the 410/404 'expired', or a network error) is
+// dropped; a success resets the count. `failures` lives on the entry
+// (see recordPushResults()).
+export const PUSH_FAILURE_LIMIT = 5;
+
 // ── Who gets a team's alert ───────────────────────────────────
 // A subscription follows one or more teams, each with its own alert
 // choices: `teams: [{ key: 'NHL:CAR', prefs }]` in the user's order,
@@ -1315,16 +1480,60 @@ export async function broadcastToTeam(env, payload, teamKey, eventType, { pair, 
   if (!targets.length) return;
 
   const results = await Promise.all(targets.map(s => send(s, payload, env)));
-
-  // subId() covers both Web Push (endpoint-keyed) and native iOS
-  // (token-keyed) subscribers. Re-read before writing, as the others did.
-  const expiredIds = new Set(targets.filter((_, i) => results[i] === 'expired').map(subId));
-  if (expiredIds.size > 0) {
-    const allSubs = (await kvGet(env, 'push:subs')) || [];
-    await kvPut(env, 'push:subs', allSubs.filter(s => !expiredIds.has(subId(s))), 365 * 24 * 3600);
-    console.log(`[${tag}] removed ${expiredIds.size} expired subscription(s)`);
-  }
+  await recordPushResults(env, targets, results, tag);
   console.log(`[${tag}] results: ${results.join(', ')}`);
+}
+
+// After a broadcast: drops the subscriptions the push service called gone
+// ('expired'), counts an 'error' against the entry's `failures` (dropped
+// at PUSH_FAILURE_LIMIT in a row), and clears the count on an 'ok'.
+// An error only counts when another send on the same platform (Web Push
+// or iOS) succeeded in this broadcast: when every one fails, the fault is
+// on the Worker's side or the push service's -- VAPID or APNs keys missing
+// or rotated, the wrong APNS_ENV, an outage -- and that must not empty the
+// list. Writes push:subs only when something changed, so a healthy list
+// costs no KV write; re-reads it first, as the expiry prune always did.
+// Never throws: a failed write (KV allows one write a second per key)
+// must not cost the caller the rest of its alerts. subId() covers both
+// Web Push (endpoint-keyed) and iOS (token-keyed).
+async function recordPushResults(env, targets, results, tag) {
+  const platformOf = s => (s.platform === 'ios' ? 'ios' : 'web');
+  const delivering = new Set(targets.filter((_, i) => results[i] === 'ok').map(platformOf));
+  const expired = new Set(), failed = new Set(), recovered = new Set();
+  targets.forEach((s, i) => {
+    const id = subId(s);
+    if (results[i] === 'expired') expired.add(id);
+    else if (results[i] === 'error') {
+      if (delivering.has(platformOf(s))) failed.add(id);
+    } else if (results[i] === 'ok' && s.failures) recovered.add(id);
+  });
+  if (!expired.size && !failed.size && !recovered.size) return;
+
+  try {
+    const allSubs = (await kvGet(env, 'push:subs')) || [];
+    const next = [];
+    let dropped = 0;
+    for (const s of allSubs) {
+      const id = subId(s);
+      if (expired.has(id)) continue;
+      if (failed.has(id)) {
+        const failures = (Number(s.failures) || 0) + 1;
+        if (failures >= PUSH_FAILURE_LIMIT) { dropped++; continue; }
+        next.push({ ...s, failures });
+      } else if (recovered.has(id)) {
+        const rest = { ...s };
+        delete rest.failures;
+        next.push(rest);
+      } else {
+        next.push(s);
+      }
+    }
+    await kvPut(env, 'push:subs', next, PUSH_SUBS_TTL);
+    if (expired.size) console.log(`[${tag}] removed ${expired.size} expired subscription(s)`);
+    if (dropped) console.log(`[${tag}] removed ${dropped} subscription(s) after ${PUSH_FAILURE_LIMIT} failed sends in a row`);
+  } catch (e) {
+    console.warn(`[${tag}] push:subs update failed: ${e.message}`);
+  }
 }
 
 // Send a Web Push notification with encrypted payload (RFC 8291).
@@ -1514,6 +1723,45 @@ export async function sendLiveActivityPush(token, { event = 'update', state, pri
     console.error('sendLiveActivityPush error:', err.message);
     return 'error';
   }
+}
+
+// ── Head-to-head narrative bodies (security audit 2026-10-13 #5) ──
+// The three /…/head-to-head/narrative routes take the payload
+// buildHeadToHeadPayload() returned to the app and write a prompt from it,
+// cached for everyone. Its numbers must be whole and consistent: counts
+// 0..H2H_MAX_MEETINGS, no side winning more than were played, a streak
+// held by 'A' or 'B'. Returns the cleaned numbers, or { error } for a 400.
+export const H2H_MAX_MEETINGS = 1000;
+export function h2hNarrativeStats(body) {
+  const count = (v, max = H2H_MAX_MEETINGS) => {
+    const n = typeof v === 'string' && v.trim() ? Number(v) : v;
+    return Number.isInteger(n) && n >= 0 && n <= max ? n : null;
+  };
+  const totalMeetings = count(body.totalMeetings);
+  if (totalMeetings == null || totalMeetings < 1) return { error: 'totalMeetings must be a positive whole number' };
+  const rec = body.allTimeRecord, win = body.recentWindow;
+  if (!rec || typeof rec !== 'object' || !win || typeof win !== 'object') return { error: 'allTimeRecord and recentWindow are required' };
+  const allTimeRecord = { teamAWins: count(rec.teamAWins, totalMeetings), teamBWins: count(rec.teamBWins, totalMeetings) };
+  if (allTimeRecord.teamAWins == null || allTimeRecord.teamBWins == null
+      || allTimeRecord.teamAWins + allTimeRecord.teamBWins > totalMeetings) {
+    return { error: 'allTimeRecord must be whole numbers within totalMeetings' };
+  }
+  const size = count(win.size, totalMeetings);
+  const recentWindow = { size, teamAWins: count(win.teamAWins, size ?? 0), teamBWins: count(win.teamBWins, size ?? 0) };
+  if (size == null || recentWindow.teamAWins == null || recentWindow.teamBWins == null
+      || recentWindow.teamAWins + recentWindow.teamBWins > size) {
+    return { error: 'recentWindow must be whole numbers within totalMeetings' };
+  }
+  let currentStreak = null;
+  if (body.currentStreak != null) {
+    const s = body.currentStreak;
+    const streakCount = count(s?.count, totalMeetings);
+    if (!s || typeof s !== 'object' || (s.holder !== 'A' && s.holder !== 'B') || !streakCount) {
+      return { error: "currentStreak must be { holder: 'A' | 'B', count }" };
+    }
+    currentStreak = { holder: s.holder, count: streakCount };
+  }
+  return { totalMeetings, allTimeRecord, recentWindow, currentStreak, isThinSample: body.isThinSample === true };
 }
 
 // Head-to-head derived insights (Session 88, Team vs Team Mode 2) -- shared

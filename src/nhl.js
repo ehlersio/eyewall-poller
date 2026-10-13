@@ -7,6 +7,7 @@
 
 import { penaltyText, penaltyDescription } from './penaltyText.js';
 import { startLiveActivities as startLeagueLiveActivities, pushLiveActivities, handleLiveActivity } from './liveActivity.js';
+import { checkPublicWriteRateLimit, readJsonObject, h2hNarrativeStats, isAllowedPushEndpoint, isValidPushKeys, normalizeApnsToken, subId, MAX_PUSH_SUBS, PUSH_SUBS_TTL, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, ParamError } from './shared.js';
 import { kvGet, kvPut, json, LIVE_MAX_AGE, nhlSeasonEnd, etDateString, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore, sbParam, sbParamList, sbRowsIfTable, secretMatches, withParamErrors } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
@@ -601,6 +602,68 @@ export function scoreboardBroadcasts(tvBroadcasts) {
     .map(b => ({ network: b.network, market: b.market || null, countryCode: b.countryCode || null }));
 }
 
+// A subscription's alert choices: { goal: true, oppGoal: false, ... }.
+// Only boolean values under short camelCase names are kept, at most
+// MAX_SUB_PREF_KEYS of them, so a stored entry stays small whatever is
+// posted; anything that isn't a plain object is null (every alert on).
+const MAX_SUB_PREF_KEYS = 32;
+const SUB_PREF_KEY = /^[A-Za-z]{1,32}$/;
+export function cleanSubPrefs(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  return Object.fromEntries(Object.entries(raw)
+    .filter(([k, v]) => SUB_PREF_KEY.test(k) && typeof v === 'boolean')
+    .slice(0, MAX_SUB_PREF_KEYS));
+}
+
+// POST /push/subscribe's body as the entry stored in push:subs, or
+// { error } for a 400 (security audit 2026-10-13 #4). iOS: an APNs device
+// token (hex, lowercased). Web Push: an endpoint on a browser push service
+// (shared.js isAllowedPushEndpoint()) and, when sent, well-formed
+// p256dh/auth keys. A subscription without keys is still taken: sendPush()
+// sends those a payloadless push (the service worker shows a generic
+// notification), which is what a browser that withholds keys gets.
+// teamAbbr: 'CAR' or 'PWHL:MTL', league-prefixed to NHL when bare; prefs:
+// an object or null. `teams` goes through parseSubTeams() (garbage there
+// is dropped, not an error, as older app builds never send it).
+export function parsePushSubscribeBody(body) {
+  if (body.teamAbbr != null && typeof body.teamAbbr !== 'string') return { error: 'teamAbbr must be a string' };
+  const rawTeam = (body.teamAbbr || 'CAR').trim().toUpperCase();
+  const teamAbbr = rawTeam.includes(':') ? rawTeam : `NHL:${rawTeam}`;
+  if (!SUB_TEAM_KEY.test(teamAbbr)) return { error: 'teamAbbr must be a team, e.g. CAR or PWHL:MTL' };
+  if (body.prefs != null && (typeof body.prefs !== 'object' || Array.isArray(body.prefs))) {
+    return { error: 'prefs must be an object' };
+  }
+  if (body.prefs != null && JSON.stringify(body.prefs).length > MAX_SUB_PREFS_BYTES) {
+    return { error: 'prefs too large' };
+  }
+
+  // Several teams (the app's followed teams, 2026-09): `teams`, each with
+  // its own alert choices, in the user's order. teamAbbr/prefs stay the
+  // first team's, for anything still reading the one-team shape; older
+  // app versions send only those, and get a one-team subscription.
+  const teams = parseSubTeams(body.teams);
+  const first = teams?.[0];
+  const base = {
+    teamAbbr: first ? first.key : teamAbbr,
+    prefs: first ? first.prefs : cleanSubPrefs(body.prefs),
+    ...(teams ? { teams } : {}),
+  };
+
+  if (body.platform === 'ios') {
+    const token = normalizeApnsToken(body.token);
+    if (!token) return { error: 'token must be an APNs device token (hex)' };
+    return { sub: { platform: 'ios', token, ...base } };
+  }
+  if (body.platform != null && body.platform !== 'web') return { error: 'platform must be ios or web' };
+  if (!isAllowedPushEndpoint(body.endpoint)) {
+    return { error: 'endpoint must be an https URL on a browser push service' };
+  }
+  if (body.keys != null && !isValidPushKeys(body.keys)) return { error: 'keys must be base64url p256dh and auth' };
+  const keys = body.keys ? { p256dh: body.keys.p256dh, auth: body.keys.auth } : undefined;
+  return { sub: { endpoint: body.endpoint, keys, ...base } };
+}
+const MAX_SUB_PREFS_BYTES = 2048;
+
 // A subscribe request's `teams`: [{ key: 'NHL:CAR', prefs }], cleaned up.
 // Keys are LEAGUE:ABBR in one of the four leagues; prefs an object of
 // booleans or null; no repeats; at most MAX_SUB_TEAMS. null when absent
@@ -611,12 +674,9 @@ export function parseSubTeams(raw) {
   if (!Array.isArray(raw)) return null;
   const out = [];
   for (const t of raw) {
-    const key = String(t?.key || '').toUpperCase();
+    const key = typeof t?.key === 'string' ? t.key.trim().toUpperCase() : '';
     if (!SUB_TEAM_KEY.test(key) || out.some(o => o.key === key)) continue;
-    const prefs = t.prefs && typeof t.prefs === 'object'
-      ? Object.fromEntries(Object.entries(t.prefs).filter(([, v]) => typeof v === 'boolean'))
-      : null;
-    out.push({ key, prefs });
+    out.push({ key, prefs: cleanSubPrefs(t.prefs) });
     if (out.length === MAX_SUB_TEAMS) break;
   }
   return out.length ? out : null;
@@ -1069,6 +1129,68 @@ export function periodIsOver(pbp, period, game, homeScore, awayScore) {
   if (period >= 3 && homeScore !== awayScore) return false;
   if (period >= 5 && game?.gameType !== 3) return false;
   return true;
+}
+
+// ── /summary/narrative's server-side checks (security audit 2026-10-13 #5) ──
+// The route's matchup, playoff flag, "is it over yet" and player names come
+// from the game itself, never from the posted stats.
+
+// A team abbreviation from the request: null when absent, else a
+// TEAM_CONFIGS key (anything else is a 400 via ParamError).
+function narrativeTeam(raw, name) {
+  const abbr = sbParam(raw, { type: 'abbr', name })?.toUpperCase() || null;
+  if (abbr && !Object.hasOwn(TEAM_CONFIGS, abbr)) throw new ParamError(`invalid ${name}`);
+  return abbr;
+}
+
+// Is `period` (a number, or 'game') over in this play-by-play? A game is
+// over at a final gameState (OFF/FINAL..., isCompleted()); a period once
+// the feed has its period-end play or play has moved past it.
+export function narrativePeriodOver(pbp, period) {
+  const final = isCompleted(pbp);
+  if (period === 'game') return final;
+  const plays = Array.isArray(pbp?.plays) ? pbp.plays : [];
+  if (plays.some(p => p?.typeDescKey === 'period-end' && p.periodDescriptor?.number === period)) return true;
+  const current = Number(pbp?.periodDescriptor?.number) || 0;
+  return current > period || (final && period <= current);
+}
+
+// The game's play-by-play for a narrative: pbp:<gameId> (poll() writes it
+// every tick for a live game, and for an hour after the final), else -- or
+// when that copy doesn't show the period over yet, since it can be a
+// minute old -- the NHL's own play-by-play, fetched now. null when neither
+// names the game's two teams.
+async function narrativeGame(env, gameId, period) {
+  const usable = pbp => (pbp?.gameState && pbp.homeTeam?.abbrev && pbp.awayTeam?.abbrev ? pbp : null);
+  const cached = usable(await kvGet(env, `pbp:${gameId}`).catch(() => null));
+  if (cached && narrativePeriodOver(cached, period)) return cached;
+  try {
+    return usable(await nhlGet(`${NHL_BASE}/gamecenter/${gameId}/play-by-play`)) || cached;
+  } catch (e) {
+    console.warn(`narrative: play-by-play ${gameId}: ${e.message}`);
+    return cached;
+  }
+}
+
+// name -> the roster's spelling of it, or 'unknown'. The roster is the
+// game's rosterSpots, as "First Last" and as the landing page's "F. Last"
+// (the app sends either). A play-by-play without one (never seen from the
+// NHL) leaves names sanitised only.
+export function narrativeRosterNames(pbp) {
+  const known = new Map();
+  for (const r of Array.isArray(pbp?.rosterSpots) ? pbp.rosterSpots : []) {
+    const first = r?.firstName?.default, last = r?.lastName?.default;
+    if (typeof first !== 'string' || typeof last !== 'string' || !first.trim() || !last.trim()) continue;
+    for (const n of [`${first} ${last}`, `${first.trim()[0]}. ${last}`]) {
+      const clean = safeName(n);
+      known.set(clean.toLowerCase(), clean);
+    }
+  }
+  return raw => {
+    const n = safeName(raw);
+    if (n.toLowerCase() === 'unknown') return 'unknown';
+    return known.size ? (known.get(n.toLowerCase()) || 'unknown') : n;
+  };
 }
 
 // Where tapping an end-of-period or final notification lands: the game
@@ -1926,10 +2048,18 @@ const TEAM_NEWS_SOURCES = {
 // Uses the explicit keywords array from TEAM_CONFIGS — nicknames, city,
 // and key player names — so articles like "Canes edge Capitals" or
 // "Bedard scores twice" match rather than just the full display name.
-function teamFilterKeywords(teamAbbr) {
-  const cfg = TEAM_CONFIGS[teamAbbr];
-  if (!cfg) return teamAbbr.toLowerCase();
-  return (cfg.keywords || cfg.displayName.toLowerCase().split(' ').filter(w => w.length > 3)).join('|');
+// The filter is compiled with `new RegExp()` in parseRSS() & co., so it is
+// only ever built from TEAM_CONFIGS, each keyword regex-escaped: an unknown
+// abbr is null (no filter -- getNewsSources() then leaves the league-wide
+// feeds out), never the input itself. /news/latest used to pass `team=`
+// straight through here, and `(A+)+$` cost 36 s of CPU on one headline
+// (security audit 2026-10-13 #7).
+const escapeRegExp = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export function teamFilterKeywords(teamAbbr) {
+  const cfg = Object.hasOwn(TEAM_CONFIGS, teamAbbr) ? TEAM_CONFIGS[teamAbbr] : null;
+  if (!cfg) return null;
+  const words = cfg.keywords || cfg.displayName.toLowerCase().split(' ').filter(w => w.length > 3);
+  return words.map(escapeRegExp).join('|');
 }
 
 // Build the active news source list for a given team abbr.
@@ -1937,9 +2067,11 @@ function teamFilterKeywords(teamAbbr) {
 // the shared NHL_NEWS_SOURCES constants are never mutated.
 function getNewsSources(teamAbbr) {
   const keywords = teamFilterKeywords(teamAbbr);
-  const leagueSources = NHL_NEWS_SOURCES.map(src =>
-    src.filterKey === 'team' ? { ...src, filter: keywords } : src
-  );
+  // No keywords (not a team): the team-filtered league feeds are skipped
+  // rather than read unfiltered.
+  const leagueSources = NHL_NEWS_SOURCES
+    .filter(src => src.filterKey !== 'team' || keywords)
+    .map(src => (src.filterKey === 'team' ? { ...src, filter: keywords } : src));
   return [
     ...(TEAM_NEWS_SOURCES[teamAbbr] || []),
     ...leagueSources,
@@ -3347,17 +3479,20 @@ async function handleNHLRoutes(request, env, ctx, url) {
   // has already diverged (this file has no "Sticks" persona; pwhl.js does).
   if (url.pathname === '/team-seasons/head-to-head/narrative' && request.method === 'POST') {
 
-    let body;
-    try { body = await request.json(); } catch {
-      return badRequest('Invalid JSON');
-    }
-    const {
-      teamA, teamB, teamADisplay, teamBDisplay,
-      totalMeetings, allTimeRecord, recentWindow, currentStreak, isThinSample,
-    } = body || {};
-    if (!teamA || !teamB || !totalMeetings || !allTimeRecord || !recentWindow) {
+    const body = await readJsonObject(request);
+    if (!body) return badRequest('Invalid JSON');
+    if (!body.teamA || !body.teamB || !body.totalMeetings || !body.allTimeRecord || !body.recentWindow) {
       return json({ narrative: null });
     }
+    // Both teams must be NHL teams (they make the shared cache key), their
+    // names come from TEAM_CONFIGS -- the body's teamADisplay/teamBDisplay
+    // are ignored -- and the numbers are checked (security audit
+    // 2026-10-13 #5).
+    const teamA = narrativeTeam(body.teamA, 'teamA'), teamB = narrativeTeam(body.teamB, 'teamB');
+    if (teamA === teamB) return badRequest('teamA and teamB must differ');
+    const h2h = h2hNarrativeStats(body);
+    if (h2h.error) return badRequest(h2h.error);
+    const { totalMeetings, allTimeRecord, recentWindow, currentStreak, isThinSample } = h2h;
 
     return cachedJson(env, `nhl:h2h-narrative:${[teamA, teamB].slice().sort().join(',')}`, 24 * 3600, async () => {
       // Rate-limited only on a cache miss: a cached answer costs no AI call,
@@ -3366,8 +3501,8 @@ async function handleNHLRoutes(request, env, ctx, url) {
       const limited = await checkAiRateLimit(env, request, 'h2h-narrative');
       if (limited) return limited;
 
-      const aDisplay = teamADisplay || teamA;
-      const bDisplay = teamBDisplay || teamB;
+      const aDisplay = TEAM_CONFIGS[teamA].displayName;
+      const bDisplay = TEAM_CONFIGS[teamB].displayName;
       const streakLine = currentStreak
         ? `Current streak: ${currentStreak.holder === 'A' ? aDisplay : bDisplay} has won ${currentStreak.count} straight.`
         : 'No active streak.';
@@ -3614,7 +3749,11 @@ Only reference the two teams named above and the numbers given -- no player name
   // so the next request gets real data without a frontend change; on a
   // standings miss, fetch them synchronously (refreshStandings()).
   if (url.pathname.startsWith('/cache/')) {
-    const key = decodeURIComponent(url.pathname.slice('/cache/'.length));
+    // A malformed escape (`/cache/%`) throws URIError: a 400, not a 500.
+    let key;
+    try { key = decodeURIComponent(url.pathname.slice('/cache/'.length)); } catch {
+      return badRequest('Invalid key');
+    }
     // Only the handful of entries the app actually reads are served. The
     // namespace also holds every push subscription (`push:subs`, with each
     // subscriber's endpoint and keys), Live Activity push tokens (`la:*`), the
@@ -3667,9 +3806,6 @@ Only reference the two teams named above and the numbers given -- no player name
     return json(val);
   }
 
-  // Push subscribe — Web Push (endpoint+keys) or, as of 2026-09, native iOS
-  // (platform: 'ios' + an APNs device token) share this one route and the
-  // one push:subs KV array; sendPush()/broadcast() branch on sub.platform.
   // POST /live-activity/register and /live-activity/start-token, for
   // every league (liveActivity.js).
   if (url.pathname.startsWith('/live-activity/')) {
@@ -3690,53 +3826,56 @@ Only reference the two teams named above and the numbers given -- no player name
     });
   }
 
+  // Push subscribe -- Web Push (endpoint+keys) or native iOS (platform:
+  // 'ios' + an APNs device token), upserted into the one push:subs array
+  // (deduped by token / endpoint). Public: rate-limited per IP, validated
+  // by parsePushSubscribeBody(), and capped at MAX_PUSH_SUBS entries -- a
+  // new subscription past the cap is a 429, an update to an existing one
+  // still goes through (security audit 2026-10-13 #4).
   if (url.pathname === '/push/subscribe' && request.method === 'POST') {
-    const body = await request.json();
+    const limited = await checkPublicWriteRateLimit(env, request, 'push-subscribe');
+    if (limited) return limited;
+    const body = await readJsonObject(request);
+    if (!body) return badRequest('Invalid JSON');
+    const parsed = parsePushSubscribeBody(body);
+    if (parsed.error) return badRequest(parsed.error);
+    const newSub = parsed.sub;
+    const isIOS = newSub.platform === 'ios';
+
     const subs = (await kvGet(env, 'push:subs')) || [];
-
-    // Prefix league if not already present: 'CAR' → 'NHL:CAR', 'PWHL:MTL' stays
-    const rawTeam = body.teamAbbr || 'CAR';
-    const teamAbbr = rawTeam.includes(':') ? rawTeam : `NHL:${rawTeam}`;
-
-    // Several teams (the app's followed teams, 2026-09): `teams`, each with
-    // its own alert choices, in the user's order. teamAbbr/prefs stay the
-    // first team's, for anything still reading the one-team shape; older
-    // app versions send only those, and get a one-team subscription.
-    const teams = parseSubTeams(body.teams);
-    const first = teams?.[0];
-
-    const isIOS = body.platform === 'ios';
-    const base = {
-      teamAbbr: first ? first.key : teamAbbr,
-      prefs: first ? first.prefs : (body.prefs || null),
-      ...(teams ? { teams } : {}),
-    };
-    const newSub = isIOS
-      ? { platform: 'ios', token: body.token, ...base }
-      : { endpoint: body.endpoint, keys: body.keys, ...base };
-
-    // Update existing or add new (dedupe by token for iOS, endpoint for Web Push)
-    const idx = isIOS
-      ? subs.findIndex(s => s.platform === 'ios' && s.token === body.token)
-      : subs.findIndex(s => s.endpoint === body.endpoint);
+    const idx = subs.findIndex(s => subId(s) === subId(newSub) && (s.platform === 'ios') === isIOS);
     if (idx >= 0) {
-      subs[idx] = newSub; // update team/prefs on re-subscribe
+      subs[idx] = newSub; // update team/prefs on re-subscribe (and clear any failure count)
     } else {
+      if (subs.length >= MAX_PUSH_SUBS) {
+        console.warn(`Subscriber list full (${subs.length}): refusing a new ${isIOS ? 'ios' : 'web'} subscription`);
+        return errorJson(429, { error: 'Subscriber list full' });
+      }
       subs.push(newSub);
     }
-    await kvPut(env, 'push:subs', subs, 365 * 24 * 3600);
+    await kvPut(env, 'push:subs', subs, PUSH_SUBS_TTL);
     console.log(`Subscriber upserted: ${(newSub.teams || [{ key: newSub.teamAbbr }]).map(t => t.key).join(', ')} (${isIOS ? 'ios' : 'web'}). Total: ${subs.length}`);
     return json({ ok: true, total: subs.length });
   }
 
-  // Push unsubscribe
+  // Push unsubscribe -- removes the one entry matching `token` (iOS) or
+  // `endpoint` (Web Push). Either must be a non-empty string: `{}` used to
+  // match every iOS entry (they have no endpoint) and delete them all
+  // (security audit 2026-10-13 #3).
   if (url.pathname === '/push/unsubscribe' && request.method === 'POST') {
-    const { endpoint, token } = await request.json();
+    const limited = await checkPublicWriteRateLimit(env, request, 'push-unsubscribe');
+    if (limited) return limited;
+    const body = await readJsonObject(request);
+    if (!body) return badRequest('Invalid JSON');
+    const token = typeof body.token === 'string' && body.token.trim() ? body.token.trim().toLowerCase() : null;
+    const endpoint = typeof body.endpoint === 'string' && body.endpoint ? body.endpoint : null;
+    if (!token && !endpoint) return badRequest('endpoint or token is required');
+    const matches = token
+      ? s => s.platform === 'ios' && typeof s.token === 'string' && s.token.toLowerCase() === token
+      : s => s.platform !== 'ios' && s.endpoint === endpoint;
     const subs  = (await kvGet(env, 'push:subs')) || [];
-    const after = token
-      ? subs.filter(s => s.token !== token)
-      : subs.filter(s => s.endpoint !== endpoint);
-    await kvPut(env, 'push:subs', after, 365 * 24 * 3600);
+    const after = subs.filter(s => !matches(s));
+    if (after.length !== subs.length) await kvPut(env, 'push:subs', after, PUSH_SUBS_TTL);
     return json({ ok: true, total: after.length });
   }
 
@@ -4249,9 +4388,13 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     const gameId = sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' });
     const period = sbParam(url.searchParams.get('period'), { type: 'id', name: 'period' }); // 'game' or period number
     if (!gameId || !period) return badRequest('gameId and period required');
-    // Key includes carAbbr so each team gets its own cached perspective
-    const carAbbrKey = (url.searchParams.get('carAbbr') || 'UNK').toUpperCase();
-    const kvKey  = `narrative:${period}:${gameId}:${carAbbrKey}`;
+    if (period !== 'game' && !/^([1-9]|1\d)$/.test(period)) return badRequest('period must be game or a period number');
+    // Key includes carAbbr so each team gets its own cached perspective. A
+    // real team only: the raw param used to go into the key, and one past
+    // KV's 512-byte key limit made kvPut throw after the AI call was paid.
+    const carAbbr = narrativeTeam(url.searchParams.get('carAbbr'), 'carAbbr');
+    if (!carAbbr) return badRequest('carAbbr must be an NHL team abbreviation');
+    const kvKey  = `narrative:${period}:${gameId}:${carAbbr}`;
     const cached = await kvGet(env, kvKey);
     if (cached) return json(cached);
 
@@ -4262,13 +4405,31 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     if (limited) return limited;
 
     // Stats payload sent by the client
-    let stats;
-    try { stats = await request.json(); } catch { return badRequest('Invalid body'); }
+    const stats = await readJsonObject(request);
+    if (!stats) return badRequest('Invalid body');
+    // Team abbreviations in the body must at least look like one (400
+    // otherwise). They aren't used: the matchup comes from the game itself,
+    // below -- which also covers a past opponent no longer in TEAM_CONFIGS.
+    sbParam(stats.carAbbr, { type: 'abbr', name: 'carAbbr' });
+    sbParam(stats.oppAbbr, { type: 'abbr', name: 'oppAbbr' });
 
-    const isGame   = period === 'game';
-    const oppAbbr  = stats.oppAbbr || 'OPP';
-    const carAbbr  = stats.carAbbr || 'CAR';
-    const isPlayoff = stats.isPlayoff || false;
+    // The narrative is cached for everyone for 30 days, so it's only
+    // written once the game (or the period) is over by the Worker's own
+    // reading of the game -- never the client's (security audit 2026-10-13
+    // #5). narrativeGame() reads pbp:<gameId>, else the NHL's play-by-play.
+    const isGame = period === 'game';
+    const game = await narrativeGame(env, gameId, isGame ? 'game' : Number(period));
+    if (!game) return errorJson(409, { error: 'Game state unavailable' });
+    const home = game.homeTeam?.abbrev, away = game.awayTeam?.abbrev;
+    if (carAbbr !== home && carAbbr !== away) return badRequest(`carAbbr is not in game ${gameId}`);
+    if (!narrativePeriodOver(game, isGame ? 'game' : Number(period))) {
+      return errorJson(409, { error: isGame ? 'Game not final' : 'Period not complete' });
+    }
+    const oppAbbr  = carAbbr === home ? away : home;
+    const isPlayoff = game.gameType != null ? game.gameType === 3 : stats.isPlayoff === true;
+    // Names the prompt may carry: the game's own roster (pbp rosterSpots),
+    // so a scorer "name" can't smuggle instructions into the prompt.
+    const rosterName = narrativeRosterNames(game);
 
     // Game summaries span all 3+ periods, so a goal's period matters for
     // an accurate narrative -- without it, both Gemma and DeepSeek were
@@ -4287,12 +4448,23 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     // periods, so a regular-season period here is never past OT.
     const periodName = n => {
       const num = Number(n);
-      return Number.isInteger(num) && num > 0 ? pushPeriodLabel(num, undefined, isPlayoff ? 3 : 2) : null;
+      return Number.isInteger(num) && num > 0 && num < 20 ? pushPeriodLabel(num, undefined, isPlayoff ? 3 : 2) : null;
     };
-    const goalsSummary = (stats.goals || []).map(g => {
+    // Every goal field is checked: a known roster name or 'unknown', a
+    // clock, a strength from GOAL_STRENGTHS, a period number.
+    const goals = (Array.isArray(stats.goals) ? stats.goals : []).slice(0, NARRATIVE_MAX_GOALS)
+      .filter(g => g && typeof g === 'object')
+      .map(g => ({
+        isCar: g.isCar === true,
+        scorerName: rosterName(g.scorerName),
+        time: safeClock(g.time),
+        period: periodName(g.period) ? Number(g.period) : null,
+        strength: safeStrength(g.strength),
+      }));
+    const goalsSummary = goals.map(g => {
       const label = isGame ? periodName(g.period) : null;
       const when  = [label, g.time].filter(Boolean).join(' ');
-      return `${g.isCar ? carAbbr : oppAbbr} goal by ${g.scorerName || 'unknown'}${when ? ` at ${when}` : ''} (${(g.strength || 'EV').toUpperCase()})`;
+      return `${g.isCar ? carAbbr : oppAbbr} goal by ${g.scorerName}${when ? ` at ${when}` : ''} (${g.strength})`;
     }).join('; ') || 'no goals';
 
     // A stat the client didn't have (a goals-only feed has no shot
@@ -4300,7 +4472,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     // null. Its line is left out rather than printed as "null%" -- and the
     // best/worst period lines when there was no period to rank, rather
     // than "Pundefined (undefined% CF)".
-    const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const num = finiteOrNull;
     const statLine = (cond, text) => (cond ? [`  - ${text}`] : []);
     const periodLine = (title, p) => {
       const label = periodName(p?.period), cf = num(p?.corsiForPct);
@@ -4311,28 +4483,27 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     const carHDCF = num(stats.carHDCF), oppHDCF = num(stats.oppHDCF);
     const carHits = num(stats.carHits), carFOPct = num(stats.carFOPct);
     const carGoals = num(stats.carGoals), oppGoals = num(stats.oppGoals);
-    const samePeriod = stats.bestPeriod?.period != null && stats.bestPeriod.period === stats.worstPeriod?.period;
+    const samePeriod = stats.bestPeriod?.period != null && Number(stats.bestPeriod.period) === Number(stats.worstPeriod?.period);
     const penaltyCount = num(stats.penaltyCount), carPenaltyCount = num(stats.carPenaltyCount);
     // The period summary names its period from the client's label
-    // ("Period 2", "OT", "2OT"), else from the period number.
-    const periodTitle = (typeof stats.periodLabel === 'string' && stats.periodLabel.trim()) || periodName(period);
+    // ("Period 2", "OT", "2OT"; letters and digits only), else from the
+    // period number.
+    const periodTitle = safeName(stats.periodLabel, 20, { digits: true, fallback: '' }) || periodName(period);
 
     // The team's goalies who actually faced shots, which the client reads off
     // the play-by-play's goalieInNetId. Deliberately not the older
     // primaryGoalieName field: clients still sending it (older iOS builds)
     // took the first goalie in rosterSpots, which isn't ordered by who
     // starts -- the summary credited the backup. No names = no goalie line.
-    const goalieNames = (Array.isArray(stats.carGoalieNames) ? stats.carGoalieNames : [])
-      .filter(n => typeof n === 'string' && n.trim());
+    const goalieNames = [...new Set((Array.isArray(stats.carGoalieNames) ? stats.carGoalieNames : [])
+      .slice(0, 4).map(rosterName).filter(n => n !== 'unknown'))];
     const goalieLine = goalieNames.length
       ? `\n  - ${carAbbr} goalie in net: ${goalieNames.join(', then ')}`
       : '';
 
     // Build explicit allowed-names list from goal scorers and goalies in net
     const confirmedNames = [...new Set([
-      ...(stats.goals || [])
-        .map(g => g.scorerName)
-        .filter(n => n && n !== 'unknown' && n !== 'Unknown'),
+      ...goals.map(g => g.scorerName).filter(n => n !== 'unknown'),
       ...goalieNames,
     ])];
     const allowedNamesNote = confirmedNames.length > 0

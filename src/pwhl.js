@@ -5,6 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
+import { ParamError, readJsonObject, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, h2hNarrativeStats, hockeyTechNarrativeReady } from './shared.js';
 import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { hockeyTechLiveActivityState, startLiveActivities, pushLiveActivities } from './liveActivity.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
@@ -92,6 +93,32 @@ export const PWHL_TEAM_CODES = {
   // the IDs in now means nothing needs manual updating once they do.
   10:'DET', 11:'HAM', 12:'LV', 13:'SJS',
 };
+
+// PWHL team ID -> full name, for the AI narratives' prose: the server's
+// own names, so a client-supplied one never reaches a prompt (security
+// audit 2026-10-13 #5). Copied from eyewall-analytics' pwhlConfig.js
+// displayName -- KEEP IN SYNC with it (and with PWHL_TEAM_CODES).
+export const PWHL_TEAM_NAMES = {
+  1: 'Boston Fleet', 2: 'Minnesota Frost', 3: 'Montréal Victoire', 4: 'New York Sirens',
+  5: 'Ottawa Charge', 6: 'Toronto Sceptres', 8: 'Seattle Torrent', 9: 'Vancouver Goldeneyes',
+  10: 'PWHL Detroit', 11: 'PWHL Hamilton', 12: 'PWHL Las Vegas', 13: 'PWHL San Jose',
+};
+const PWHL_ID_BY_ABBR = Object.fromEntries(Object.entries(PWHL_TEAM_CODES).map(([id, abbr]) => [abbr, Number(id)]));
+
+// A PWHL team abbreviation from a narrative request: null when absent,
+// else one of PWHL_TEAM_CODES (anything else is a 400 via ParamError).
+function pwhlNarrativeTeam(raw, name) {
+  const abbr = sbParam(raw, { type: 'abbr', name })?.toUpperCase() || null;
+  if (abbr && !Object.hasOwn(PWHL_ID_BY_ABBR, abbr)) throw new ParamError(`invalid ${name}`);
+  return abbr;
+}
+// A PWHL team id from a head-to-head narrative body (the h2h routes key
+// teams by id): one of PWHL_TEAM_CODES, else a 400.
+function pwhlNarrativeTeamId(raw, name) {
+  const id = Number(sbParam(raw, { type: 'int', name }));
+  if (!Object.hasOwn(PWHL_TEAM_CODES, id)) throw new ParamError(`invalid ${name}`);
+  return id;
+}
 
 // /pwhl/prediction's league config for hockeytechPrediction.js.
 // "Corsi" here is shot-attempt share -- goals + shots + blocked shots --
@@ -272,6 +299,16 @@ async function liveGameRow(env, gameId) {
     []
   ).catch(() => []);
   return gameRows[0] ? (await withLive(env, gameRows))[0] : null;
+}
+
+// liveGameRow() plus the scorebar's period and intermission, for
+// /pwhl/summary/narrative's "is it over yet" (hockeyTechNarrativeReady()).
+async function narrativeGameRow(env, gameId) {
+  const gameRows = await sbRowsOr(
+    `${SB_URL}/rest/v1/pwhl_game_log?game_id=eq.${gameId}&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1`,
+    []
+  ).catch(() => []);
+  return gameRows[0] ? (await withLive(env, gameRows, { withClock: true }))[0] : null;
 }
 
 // No calendar gate: a Nov-Jun month check used to skip the poll, which
@@ -746,24 +783,24 @@ async function handlePWHLRoutes(request, env, ctx, url) {
   // fast-follow to Session 88's templated record/window/streak) -- PWHL
   // analog of nhl.js's /team-seasons/head-to-head/narrative. Client posts
   // the payload it already fetched from /pwhl/team-seasons/head-to-head
-  // plus display names (this Worker has no PWHL team-name map of its own --
-  // pwhlConfig.js on the frontend does -- same reason /pwhl/summary/narrative
-  // above takes carName/oppName from the client instead of resolving them
-  // server-side). Prompt is hand-rolled here, not shared with nhl.js's
+  // (display names too, which are ignored: the names come from
+  // PWHL_TEAM_NAMES). Prompt is hand-rolled here, not shared with nhl.js's
   // version -- see that route's comment for why.
   if (url.pathname === '/pwhl/team-seasons/head-to-head/narrative' && request.method === 'POST') {
 
-    let body;
-    try { body = await request.json(); } catch {
-      return badRequest('Invalid JSON');
-    }
-    const {
-      teamA, teamB, teamADisplay, teamBDisplay,
-      totalMeetings, allTimeRecord, recentWindow, currentStreak, isThinSample,
-    } = body || {};
-    if (!teamA || !teamB || !totalMeetings || !allTimeRecord || !recentWindow) {
+    const body = await readJsonObject(request);
+    if (!body) return badRequest('Invalid JSON');
+    if (!body.teamA || !body.teamB || !body.totalMeetings || !body.allTimeRecord || !body.recentWindow) {
       return json({ narrative: null });
     }
+    // Both teams must be PWHL team ids (they make the shared cache key),
+    // their names come from PWHL_TEAM_NAMES -- the body's display names are
+    // ignored -- and the numbers are checked (security audit 2026-10-13 #5).
+    const teamA = pwhlNarrativeTeamId(body.teamA, 'teamA'), teamB = pwhlNarrativeTeamId(body.teamB, 'teamB');
+    if (teamA === teamB) return badRequest('teamA and teamB must differ');
+    const h2h = h2hNarrativeStats(body);
+    if (h2h.error) return badRequest(h2h.error);
+    const { totalMeetings, allTimeRecord, recentWindow, currentStreak, isThinSample } = h2h;
 
     const kvKey  = `pwhl:h2h-narrative:${[teamA, teamB].slice().sort((a, b) => a - b).join(',')}`;
     return cachedJson(env, kvKey, 24 * 3600, async () => {
@@ -773,8 +810,8 @@ async function handlePWHLRoutes(request, env, ctx, url) {
       const limited = await checkAiRateLimit(env, request, 'pwhl-h2h-narrative');
       if (limited) return limited;
 
-      const aDisplay = teamADisplay || String(teamA);
-      const bDisplay = teamBDisplay || String(teamB);
+      const aDisplay = PWHL_TEAM_NAMES[teamA] || PWHL_TEAM_CODES[teamA];
+      const bDisplay = PWHL_TEAM_NAMES[teamB] || PWHL_TEAM_CODES[teamB];
       const streakLine = currentStreak
         ? `Current streak: ${currentStreak.holder === 'A' ? aDisplay : bDisplay} has won ${currentStreak.count} straight.`
         : 'No active streak.';
@@ -2313,12 +2350,17 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
   // Caches in KV so subsequent users get the pre-generated text.
   // Public, billed-AI route; rate-limited below (no secret check — called directly from the frontend)
   if (url.pathname === '/pwhl/summary/narrative' && request.method === 'POST') {
-    const gameId    = sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' }) || '';
+    const gameId    = sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' });
     const periodKey = sbParam(url.searchParams.get('period'), { type: 'id', name: 'period' }) || '1';
-    // Include carAbbr in cache key so each team gets its own perspective
-    const carAbbrKey = (url.searchParams.get('carAbbr') || 'UNK').toUpperCase();
+    if (!gameId) return badRequest('gameId required');
+    if (periodKey !== 'game' && !/^([1-9]|1\d)$/.test(periodKey)) return badRequest('period must be game or a period number');
+    // Include carAbbr in cache key so each team gets its own perspective --
+    // a PWHL team only (security audit 2026-10-13 #5: the raw param went
+    // into the key, unbounded).
+    const carAbbr = pwhlNarrativeTeam(url.searchParams.get('carAbbr'), 'carAbbr');
+    if (!carAbbr) return badRequest('carAbbr must be a PWHL team abbreviation');
 
-    const cacheKey = `pwhl:narrative:${periodKey}:${gameId}:${carAbbrKey}`;
+    const cacheKey = `pwhl:narrative:${periodKey}:${gameId}:${carAbbr}`;
     return cachedJson(env, cacheKey, 24 * 3600, async () => {
       // Rate-limited only on a cache miss: a cached answer costs no AI call,
       // and counting it used to 429 a user browsing cached results (audit
@@ -2326,31 +2368,63 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       const limited = await checkAiRateLimit(env, request, 'pwhl-summary-narrative');
       if (limited) return limited;
 
-      let body;
-      try { body = await request.json(); } catch {
-        return badRequest('Invalid JSON');
+      const body = await readJsonObject(request);
+      if (!body) return badRequest('Invalid JSON');
+      // Body abbreviations must look like one (400 otherwise); the matchup
+      // itself comes from the game, below.
+      sbParam(body.carAbbr, { type: 'abbr', name: 'carAbbr' });
+      sbParam(body.oppAbbr, { type: 'abbr', name: 'oppAbbr' });
+
+      // Written for everyone, so only once the game (or period) is over by
+      // the Worker's own reading: pwhl_game_log's row with the scorebar
+      // (`pwhl:scorebar`, 60 s) laid over it -- status, period,
+      // intermission. The matchup comes from that row too, and the team
+      // names from PWHL_TEAM_NAMES; the body's carName/oppName are ignored.
+      const game = await narrativeGameRow(env, gameId);
+      if (!game) return errorJson(409, { error: 'Game state unavailable' });
+      const carId = PWHL_ID_BY_ABBR[carAbbr];
+      const homeId = Number(game.home_team_id), awayId = Number(game.away_team_id);
+      if (carId !== homeId && carId !== awayId) return badRequest(`carAbbr is not in game ${gameId}`);
+      if (!hockeyTechNarrativeReady(game, periodKey === 'game' ? 'game' : Number(periodKey))) {
+        return errorJson(409, { error: periodKey === 'game' ? 'Game not final' : 'Period not complete' });
       }
+      const oppId = carId === homeId ? awayId : homeId;
+      const oppAbbr = PWHL_TEAM_CODES[oppId] || 'OPP';
+      const carDisplay = PWHL_TEAM_NAMES[carId] || carAbbr;
+      const oppDisplay = PWHL_TEAM_NAMES[oppId] || oppAbbr;
 
-      const {
-        carAbbr, oppAbbr, carName, oppName, periodLabel,
-        corsiForPct, carSOG, oppSOG, carGoals, oppGoals,
-        carHits, carFOPct, carHDCF, oppHDCF,
-        penaltyCount, carPenaltyCount,
-        bestPeriod, worstPeriod,
-        goalieNames,
-        goals = [],
-      } = body;
-
-      // Use full team names in prose so the model writes "the Fleet" not "BOS"
-      const carDisplay = carName || carAbbr;
-      const oppDisplay = oppName || oppAbbr;
+      // Every other field is a finite number, a period number, an enum or
+      // a sanitised name (shared.js safeName()).
+      const num = finiteOrNull;
+      const periodOf = p => {
+        const n = Number(p);
+        return Number.isInteger(n) && n >= 1 && n <= 19 ? n : null;
+      };
+      const statPeriod = p => (p && typeof p === 'object'
+        ? { period: periodOf(p.period), corsiForPct: num(p.corsiForPct) } : null);
+      const corsiForPct = num(body.corsiForPct), carSOG = num(body.carSOG), oppSOG = num(body.oppSOG);
+      const carGoals = num(body.carGoals), oppGoals = num(body.oppGoals);
+      const carHits = num(body.carHits), carFOPct = num(body.carFOPct);
+      const carHDCF = num(body.carHDCF), oppHDCF = num(body.oppHDCF);
+      const penaltyCount = num(body.penaltyCount), carPenaltyCount = num(body.carPenaltyCount);
+      const bestPeriod = statPeriod(body.bestPeriod), worstPeriod = statPeriod(body.worstPeriod);
+      const periodLabel = safeName(body.periodLabel, 20, { digits: true, fallback: '' });
+      const goals = (Array.isArray(body.goals) ? body.goals : []).slice(0, NARRATIVE_MAX_GOALS)
+        .filter(g => g && typeof g === 'object')
+        .map(g => ({
+          isCar: g.isCar === true,
+          scorerName: safeName(g.scorerName, 40, { fallback: '' }),
+          time: safeClock(g.time),
+          period: periodOf(g.period),
+          strength: g.strength == null ? null : safeStrength(g.strength).toLowerCase(),
+        }));
 
       // The team's goalies in net, which the client reads off /pwhl/summary's
       // goalieLog. Deliberately not the older primaryGoalieName field:
       // clients still sending it took the first goalie among the three
       // stars, often the other team's.
-      const goalies = (Array.isArray(goalieNames) ? goalieNames : [])
-        .filter(n => typeof n === 'string' && n.trim());
+      const goalies = [...new Set((Array.isArray(body.goalieNames) ? body.goalieNames : [])
+        .slice(0, 4).map(n => safeName(n, 40, { fallback: '' })).filter(Boolean))];
       const goalieLine = goalies.length
         ? `\n${carDisplay} goalie in net: ${goalies.join(', then ')}`
         : '';
@@ -2362,7 +2436,6 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       // null; its piece is left out rather than printed as "null%" or
       // "undefined", and the best/worst period lines when there was no
       // period to rank.
-      const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
       const pair = (a, b) => (num(a) != null && num(b) != null ? `${a}–${b}` : null);
       const joinParts = parts => parts.filter(Boolean).join(' · ');
 

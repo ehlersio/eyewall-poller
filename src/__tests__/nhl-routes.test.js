@@ -1944,7 +1944,10 @@ describe('POST /team-seasons/head-to-head/narrative', () => {
     const env = makeEnv()
     mockFetchWithAI('Too early to say much.')
     await handleNHL(
-      makeRequest('/team-seasons/head-to-head/narrative', { method: 'POST', body: { ...basePayload, totalMeetings: 2, isThinSample: true } }),
+      makeRequest('/team-seasons/head-to-head/narrative', { method: 'POST', body: {
+        ...basePayload, totalMeetings: 2, allTimeRecord: { teamAWins: 1, teamBWins: 1 },
+        recentWindow: { size: 2, teamAWins: 1, teamBWins: 1 }, currentStreak: { holder: 'B', count: 1 }, isThinSample: true,
+      } }),
       env, makeCtx(), new URL('https://example.com/team-seasons/head-to-head/narrative')
     )
     const prompt = aiPrompt(globalThis.fetch)[0].content
@@ -2384,31 +2387,38 @@ describe('GET /milestones?sport=ahl|echl', () => {
   })
 })
 
+// Real-shaped push identities: subscribe only takes a browser push
+// service endpoint, base64url keys and a hex APNs token.
+const EP_1 = 'https://fcm.googleapis.com/fcm/send/ep-1'
+const EP_2 = 'https://web.push.apple.com/ep-2'
+const PUSH_KEYS = { p256dh: 'B' + 'p'.repeat(86), auth: 'a'.repeat(22) }
+const IOS_TOKEN = 'ab'.repeat(32)
+
 describe('POST /push/subscribe', () => {
   it('adds a new subscription and defaults league prefix to NHL', async () => {
     const env = makeEnv()
     const res = await handleNHL(
-      makeRequest('/push/subscribe', { method: 'POST', body: { endpoint: 'ep-1', keys: { p256dh: 'x', auth: 'y' } } }),
+      makeRequest('/push/subscribe', { method: 'POST', body: { endpoint: EP_1, keys: PUSH_KEYS } }),
       env, makeCtx(), new URL('https://example.com/push/subscribe')
     )
 
     expect(res.status).toBe(200)
     expect((await res.json()).total).toBe(1)
     const stored = JSON.parse(await env.CACHE.get('push:subs'))
-    expect(stored).toEqual([{ endpoint: 'ep-1', keys: { p256dh: 'x', auth: 'y' }, teamAbbr: 'NHL:CAR', prefs: null }])
+    expect(stored).toEqual([{ endpoint: EP_1, keys: PUSH_KEYS, teamAbbr: 'NHL:CAR', prefs: null }])
   })
 
   it('updates in place (dedupes by endpoint) on re-subscribe rather than appending a duplicate', async () => {
     const env = makeEnv({
       CACHE: {
         async get() {
-          return JSON.stringify([{ endpoint: 'ep-1', teamAbbr: 'NHL:CAR', prefs: null }])
+          return JSON.stringify([{ endpoint: EP_1, teamAbbr: 'NHL:CAR', prefs: null }])
         },
         async put() {},
       },
     })
     const res = await handleNHL(
-      makeRequest('/push/subscribe', { method: 'POST', body: { endpoint: 'ep-1', teamAbbr: 'BOS' } }),
+      makeRequest('/push/subscribe', { method: 'POST', body: { endpoint: EP_1, teamAbbr: 'BOS' } }),
       env, makeCtx(), new URL('https://example.com/push/subscribe')
     )
 
@@ -2419,7 +2429,7 @@ describe('POST /push/subscribe', () => {
     const env = makeEnv()
     await handleNHL(
       makeRequest('/push/subscribe', { method: 'POST', body: {
-        endpoint: 'ep-2', keys: { p256dh: 'x', auth: 'y' },
+        endpoint: EP_2, keys: PUSH_KEYS,
         teams: [
           { key: 'nhl:car', prefs: { goal: true, periodEnd: false, junk: 'x' } },
           { key: 'PWHL:MIN', prefs: null },
@@ -2443,27 +2453,27 @@ describe('POST /push/subscribe', () => {
   it('accepts a native iOS subscription, storing token instead of endpoint/keys', async () => {
     const env = makeEnv()
     const res = await handleNHL(
-      makeRequest('/push/subscribe', { method: 'POST', body: { platform: 'ios', token: 'device-token-1', teamAbbr: 'CAR' } }),
+      makeRequest('/push/subscribe', { method: 'POST', body: { platform: 'ios', token: IOS_TOKEN, teamAbbr: 'CAR' } }),
       env, makeCtx(), new URL('https://example.com/push/subscribe')
     )
 
     expect(res.status).toBe(200)
     expect((await res.json()).total).toBe(1)
     const stored = JSON.parse(await env.CACHE.get('push:subs'))
-    expect(stored).toEqual([{ platform: 'ios', token: 'device-token-1', teamAbbr: 'NHL:CAR', prefs: null }])
+    expect(stored).toEqual([{ platform: 'ios', token: IOS_TOKEN, teamAbbr: 'NHL:CAR', prefs: null }])
   })
 
   it('dedupes iOS subscriptions by token, not endpoint', async () => {
     const env = makeEnv({
       CACHE: {
         async get() {
-          return JSON.stringify([{ platform: 'ios', token: 'device-token-1', teamAbbr: 'NHL:CAR', prefs: null }])
+          return JSON.stringify([{ platform: 'ios', token: IOS_TOKEN, teamAbbr: 'NHL:CAR', prefs: null }])
         },
         async put() {},
       },
     })
     const res = await handleNHL(
-      makeRequest('/push/subscribe', { method: 'POST', body: { platform: 'ios', token: 'device-token-1', teamAbbr: 'BOS' } }),
+      makeRequest('/push/subscribe', { method: 'POST', body: { platform: 'ios', token: IOS_TOKEN, teamAbbr: 'BOS' } }),
       env, makeCtx(), new URL('https://example.com/push/subscribe')
     )
 
@@ -2494,7 +2504,7 @@ describe('POST /push/unsubscribe', () => {
       CACHE: {
         async get() {
           return JSON.stringify([
-            { platform: 'ios', token: 'device-token-1' },
+            { platform: 'ios', token: IOS_TOKEN },
             { endpoint: 'ep-1' },
           ])
         },
@@ -2502,7 +2512,7 @@ describe('POST /push/unsubscribe', () => {
       },
     })
     const res = await handleNHL(
-      makeRequest('/push/unsubscribe', { method: 'POST', body: { token: 'device-token-1' } }),
+      makeRequest('/push/unsubscribe', { method: 'POST', body: { token: IOS_TOKEN } }),
       env, makeCtx(), new URL('https://example.com/push/unsubscribe')
     )
 
@@ -4036,6 +4046,14 @@ describe('GET /prediction/analyze', () => {
   })
 })
 
+// The Worker's own copy of game 1 (CAR vs BOS, final): /summary/narrative
+// only writes a narrative for a game or period it can see is over.
+const FINAL_PBP_1 = {
+  id: 1, gameState: 'OFF', gameType: 2, periodDescriptor: { number: 3 },
+  homeTeam: { id: 12, abbrev: 'CAR' }, awayTeam: { id: 6, abbrev: 'BOS' }, plays: [],
+}
+const narrativeEnv = (overrides = {}) => makeEnv({ CACHE: makeFakeCache({ 'pbp:1': FINAL_PBP_1 }), ...overrides })
+
 describe('POST /summary/narrative', () => {
   it('returns an error when gameId or period is missing', async () => {
     const env = makeEnv()
@@ -4060,15 +4078,15 @@ describe('POST /summary/narrative', () => {
   })
 
   it('returns an error on invalid JSON body', async () => {
-    const env = makeEnv()
-    const req = new Request('https://example.com/summary/narrative?gameId=1&period=1', { method: 'POST', body: 'not json', headers: { 'Content-Type': 'application/json' } })
-    const res = await handleNHL(req, env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=1'))
+    const env = narrativeEnv()
+    const req = new Request('https://example.com/summary/narrative?gameId=1&period=1&carAbbr=CAR', { method: 'POST', body: 'not json', headers: { 'Content-Type': 'application/json' } })
+    const res = await handleNHL(req, env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=1&carAbbr=CAR'))
     expect(res.status).toBe(400)
     expect((await res.json()).error).toMatch(/invalid body/i)
   })
 
   it('502s without caching when the AI returns nothing', async () => {
-    const env = makeEnv()
+    const env = narrativeEnv()
     mockFetchWithAI('')
     const res = await handleNHL(
       makeRequest('/summary/narrative?gameId=1&period=1&carAbbr=CAR', {
@@ -4083,7 +4101,7 @@ describe('POST /summary/narrative', () => {
   })
 
   it('makes one AI call for a period summary and caches for 30 days', async () => {
-    const env = makeEnv()
+    const env = narrativeEnv()
     mockFetchWithAI('Period summary text.')
     const res = await handleNHL(
       makeRequest('/summary/narrative?gameId=1&period=1&carAbbr=CAR', {
@@ -4102,7 +4120,7 @@ describe('POST /summary/narrative', () => {
   })
 
   it('makes two AI calls (narrative + card caption) for a full game summary', async () => {
-    const env = makeEnv()
+    const env = narrativeEnv()
     mockFetchWithAI('Game summary text.')
     const res = await handleNHL(
       makeRequest('/summary/narrative?gameId=1&period=game&carAbbr=CAR', {
@@ -4123,7 +4141,7 @@ describe('POST /summary/narrative', () => {
     // know -- see the 2026-09 shared.js model evaluation. The client already
     // sends g.period (PeriodSummary.jsx's statsPayload); this route was
     // simply not reading it.
-    const env = makeEnv()
+    const env = narrativeEnv()
     mockFetchWithAI('Game summary text.')
     await handleNHL(
       makeRequest('/summary/narrative?gameId=1&period=game&carAbbr=CAR', {
@@ -4140,7 +4158,7 @@ describe('POST /summary/narrative', () => {
   })
 
   it('omits the period in a single-period prompt, where every goal is already understood to be from that period', async () => {
-    const env = makeEnv()
+    const env = narrativeEnv()
     mockFetchWithAI('Period summary text.')
     await handleNHL(
       makeRequest('/summary/narrative?gameId=1&period=2&carAbbr=CAR', {
@@ -4159,7 +4177,7 @@ describe('POST /summary/narrative', () => {
   })
 
   it('names the goalie in net from carGoalieNames, labelled as the goalie', async () => {
-    const env = makeEnv()
+    const env = narrativeEnv()
     mockFetchWithAI('Period summary text.')
     await handleNHL(
       makeRequest('/summary/narrative?gameId=1&period=2&carAbbr=CAR', {
@@ -4177,7 +4195,7 @@ describe('POST /summary/narrative', () => {
   })
 
   it('ignores the legacy primaryGoalieName, which older clients took from roster order (often the backup)', async () => {
-    const env = makeEnv()
+    const env = narrativeEnv()
     mockFetchWithAI('Period summary text.')
     await handleNHL(
       makeRequest('/summary/narrative?gameId=1&period=2&carAbbr=CAR', {
@@ -4235,8 +4253,9 @@ function finalNarrativeBody(pbp, teamId) {
 }
 
 describe('POST /summary/narrative -- period names and missing stats', () => {
+  const fixtures = { [fla_ana_ot.id]: fla_ana_ot, [car_vgk_2ot.id]: car_vgk_2ot }
   const gamePrompt = async (gameId, body, period = 'game') => {
-    const env = makeEnv()
+    const env = makeEnv({ CACHE: makeFakeCache({ [`pbp:${gameId}`]: fixtures[gameId] }) })
     mockFetchWithAI('Game summary text.')
     const path = `/summary/narrative?gameId=${gameId}&period=${period}&carAbbr=${body.carAbbr}`
     await handleNHL(makeRequest(path, { method: 'POST', body }), env, makeCtx(), new URL(`https://example.com${path}`))

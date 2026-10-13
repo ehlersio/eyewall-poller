@@ -5314,16 +5314,10 @@ exports[`summary/narrative (game) > HockeyTech and AI unavailable 1`] = `
 exports[`summary/narrative (game) > Supabase unavailable 1`] = `
 {
   "body": {
-    "cardNarrative": null,
-    "narrative": "Fixture PWHL narrative.",
+    "error": "Game state unavailable",
   },
-  "kvWrites": [
-    {
-      "key": "pwhl:narrative:game:210:BOS",
-      "ttl": 86400,
-    },
-  ],
-  "status": 200,
+  "kvWrites": [],
+  "status": 409,
 }
 `;
 
@@ -5341,6 +5335,9 @@ exports[`summary/narrative (game) > response, upstream requests and KV writes; r
   ],
   "status": 200,
   "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.210&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1",
+    },
     {
       "aiPrompt": "You are Sticks, EyeWall Analytics' PWHL game analyst. Write a punchy 2-3 sentence final game summary. Use the full team names (e.g. "Boston Fleet", "Minnesota Frost") when referring to teams — never use abbreviations in the narrative.
 Game: Boston Fleet (BOS) vs Minnesota Frost (MIN)
@@ -5376,16 +5373,10 @@ exports[`summary/narrative (period) > HockeyTech and AI unavailable 1`] = `
 exports[`summary/narrative (period) > Supabase unavailable 1`] = `
 {
   "body": {
-    "cardNarrative": null,
-    "narrative": "Fixture PWHL narrative.",
+    "error": "Game state unavailable",
   },
-  "kvWrites": [
-    {
-      "key": "pwhl:narrative:1:210:BOS",
-      "ttl": 86400,
-    },
-  ],
-  "status": 200,
+  "kvWrites": [],
+  "status": 409,
 }
 `;
 
@@ -5403,6 +5394,9 @@ exports[`summary/narrative (period) > response, upstream requests and KV writes;
   ],
   "status": 200,
   "upstream": [
+    {
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/pwhl_game_log?game_id=eq.210&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1",
+    },
     {
       "aiPrompt": "You are Sticks, EyeWall Analytics' PWHL analyst. Write a punchy 1-2 sentence period summary. Use the full team names (e.g. "Boston Fleet", "Minnesota Frost") — never abbreviations in the narrative.
 Period: 1st Period — Boston Fleet (BOS) vs Minnesota Frost (MIN)

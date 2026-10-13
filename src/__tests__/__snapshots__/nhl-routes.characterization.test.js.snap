@@ -5738,10 +5738,10 @@ exports[`push subscriptions > subscribe upserts Web Push and iOS subscribers; un
 {
   "afterSubscribe": [
     {
-      "endpoint": "https://push.example/old",
+      "endpoint": "https://fcm.googleapis.com/fcm/send/old",
       "keys": {
-        "auth": "y",
-        "p256dh": "x",
+        "auth": "aaaaaaaaaaaaaaaaaaaaaa",
+        "p256dh": "Bpppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
       },
       "prefs": {
         "goal": false,
@@ -5752,7 +5752,7 @@ exports[`push subscriptions > subscribe upserts Web Push and iOS subscribers; un
       "platform": "ios",
       "prefs": null,
       "teamAbbr": "PWHL:MTL",
-      "token": "tok-1",
+      "token": "abababababababababababababababababababababababababababababababab",
     },
   ],
   "ios": {
