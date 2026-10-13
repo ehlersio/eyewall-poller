@@ -325,14 +325,19 @@ describe('Live Activity routes', () => {
     expect([...env.CACHE._store.keys()].some(k => k.includes('198.51.100'))).toBe(false)
   })
 
-  it(`register: a game keeps at most LA_MAX_TOKENS (${LA_MAX_TOKENS}), oldest dropped`, async () => {
+  it(`register: a game at LA_MAX_TOKENS (${LA_MAX_TOKENS}) refuses a new token and never evicts one`, async () => {
     const existing = Array.from({ length: LA_MAX_TOKENS }, (_, i) => hex(i + 1000))
     const env = makeEnv({ CACHE: makeFakeCache({ 'la:tokens:9': existing }) })
-    await la(env, '/live-activity/register', { gameId: 9, token: TOKEN_A })
-    const tokens = JSON.parse(await env.CACHE.get('la:tokens:9'))
-    expect(tokens).toHaveLength(LA_MAX_TOKENS)
-    expect(tokens[0]).toBe(hex(1001))
-    expect(tokens.at(-1)).toBe(TOKEN_A)
+    const res = await la(env, '/live-activity/register', { gameId: 9, token: TOKEN_A })
+    expect(res.status).toBe(429)
+    expect(await res.json()).toEqual({ error: 'Live Activity token list full' })
+    expect(JSON.parse(await env.CACHE.get('la:tokens:9'))).toEqual(existing)
+    // The refusal doesn't use up the IP's allowance.
+    expect([...env.CACHE._store.keys()].some(k => k.startsWith('la:ipcount:'))).toBe(false)
+    // A device already on the list re-sending its token still succeeds.
+    const again = await la(env, '/live-activity/register', { gameId: 9, token: hex(1000) })
+    expect(await again.json()).toEqual({ ok: true, count: LA_MAX_TOKENS })
+    expect(JSON.parse(await env.CACHE.get('la:tokens:9'))).toEqual(existing)
   })
 
   it('register and start-token are rate-limited per IP by PUBLIC_WRITE_LIMITER', async () => {
@@ -353,8 +358,43 @@ describe('Live Activity routes', () => {
     }
     // A token already known (changing its teams) isn't new.
     expect((await la(env, '/live-activity/start-token', { token: hex(0), teams: ['nhl:BOS'] })).status).toBe(200)
-    expect((await la(env, '/live-activity/start-token', { token: hex(50), teams: ['nhl:CAR'] })).status).toBe(429)
+    const over = await la(env, '/live-activity/start-token', { token: hex(999), teams: ['nhl:CAR'] })
+    expect(over.status).toBe(429)
+    expect(await over.json()).toEqual({ error: 'Too many Live Activity tokens from this network' })
     expect(JSON.parse(await env.CACHE.get('la:start:CAR'))).toHaveLength(LA_MAX_TOKENS_PER_IP - 1)
+  })
+
+  it(`start-token: a team list at LA_MAX_TOKENS (${LA_MAX_TOKENS}) refuses a new token; one already on it, removals and disabling still work`, async () => {
+    const full = Array.from({ length: LA_MAX_TOKENS }, (_, i) => ({ token: hex(i + 1000), locale: 'en' }))
+    const member = hex(1000)
+    const env = makeEnv({ CACHE: makeFakeCache({
+      'la:start:CAR': full,
+      [`la:startteams:${member}`]: ['nhl:CAR'],
+      [`la:startteams:${TOKEN_B}`]: ['nhl:BOS'],
+      'la:start:BOS': [{ token: TOKEN_B, locale: 'en' }],
+    }) })
+
+    // A new token joining the full list: 429, and nothing written anywhere.
+    const res = await la(env, '/live-activity/start-token', { token: TOKEN_A, teams: ['nhl:BOS', 'nhl:CAR'] })
+    expect(res.status).toBe(429)
+    expect(await res.json()).toEqual({ error: 'Live Activity token list full' })
+    expect(JSON.parse(await env.CACHE.get('la:start:CAR'))).toEqual(full)
+    expect(JSON.parse(await env.CACHE.get('la:start:BOS'))).toEqual([{ token: TOKEN_B, locale: 'en' }])
+    expect(await env.CACHE.get(`la:startteams:${TOKEN_A}`)).toBeNull()
+    // A known token moving onto the full list is refused too, and keeps its old team.
+    expect((await la(env, '/live-activity/start-token', { token: TOKEN_B, teams: ['nhl:CAR'] })).status).toBe(429)
+    expect(JSON.parse(await env.CACHE.get('la:start:BOS'))).toEqual([{ token: TOKEN_B, locale: 'en' }])
+
+    // A token already on the full list re-registering (new locale): fine, still 200 long.
+    expect((await la(env, '/live-activity/start-token', { token: member, teams: ['nhl:CAR'], locale: 'fr' })).status).toBe(200)
+    const after = JSON.parse(await env.CACHE.get('la:start:CAR'))
+    expect(after).toHaveLength(LA_MAX_TOKENS)
+    expect(after.at(-1)).toEqual({ token: member, locale: 'fr' })
+    // Moving it off the full team, and disabling, still work.
+    expect((await la(env, '/live-activity/start-token', { token: member, teams: ['nhl:BOS'] })).status).toBe(200)
+    expect(JSON.parse(await env.CACHE.get('la:start:CAR'))).toHaveLength(LA_MAX_TOKENS - 1)
+    expect((await la(env, '/live-activity/start-token', { token: member, teams: ['nhl:BOS'], enabled: false })).status).toBe(200)
+    expect(JSON.parse(await env.CACHE.get('la:start:BOS'))).toEqual([{ token: TOKEN_B, locale: 'en' }])
   })
 })
 

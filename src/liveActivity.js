@@ -24,18 +24,26 @@ import { kvGet, kvPut, json, badRequest, errorJson, sendLiveActivityPush, checkP
 
 export const LA_LEAGUES = ['nhl', 'pwhl', 'ahl', 'echl'];
 export const LA_TOKEN_TTL = 8 * 3600;
-// Most activity tokens kept for one game, and most start tokens kept on one
-// team's list (oldest dropped). This is a hobby app: a game has a handful
-// of activities, so 200 is far above real use while keeping a flood of
-// junk registrations (security audit 2026-10-13 #6) to 200 APNs requests a
-// tick, not 1,000.
+// Most activity tokens one game's list (`la:tokens:*`), and most start
+// tokens one team's list (`la:start:*`), may hold. This is a hobby app: a
+// game has a handful of activities, so 200 is far above real use while
+// keeping a flood of junk registrations (security audit 2026-10-13 #6) to
+// 200 APNs requests a tick, not 1,000. A full list refuses a NEW token
+// (429 'Live Activity token list full') rather than dropping the oldest:
+// a flood may block new registrations for that game or team, but it never
+// evicts a device that registered earlier -- the same posture as
+// /push/subscribe's MAX_PUSH_SUBS. A token already on the list (re-sent on
+// a later launch) and removals still go through.
 export const LA_MAX_TOKENS = 200;
 // New tokens one IP may register: activity tokens per game, start tokens
-// per day. One device registers one of each (a token is re-sent as-is on
-// later launches, which doesn't count again); a few phones on one
-// network fit well under it. Counted in `la:ipcount:*` under a hash of the
-// IP, never the IP itself.
-export const LA_MAX_TOKENS_PER_IP = 10;
+// per day. One device registers one of each (a token re-sent as-is on a
+// later launch doesn't count again). 50, not a handful: fans on venue
+// Wi-Fi, and iPhones behind carrier CGNAT, share one IPv4 address across
+// hundreds of devices, and every phone past the cap that opens a Live
+// Activity for the game would get a 429 and never receive updates. It
+// still stops one address filling a game's list on its own. Counted in
+// `la:ipcount:*` under a hash of the IP, never the IP itself.
+export const LA_MAX_TOKENS_PER_IP = 50;
 const LA_IPCOUNT_START_TTL = 24 * 3600;
 const LA_START_TTL = 90 * 24 * 3600; // re-registered on every app launch
 // Most teams one start token is put on; the app follows at most 20
@@ -64,6 +72,7 @@ async function ipAtTokenCap(env, request, scope, ttl) {
   return false;
 }
 const tooManyTokens = () => errorJson(429, { error: 'Too many Live Activity tokens from this network' });
+const listFull = () => errorJson(429, { error: 'Live Activity token list full' });
 
 async function readBody(request) {
   try {
@@ -302,8 +311,9 @@ export async function handleLiveActivity(request, env, url) {
 
   // POST /live-activity/register { gameId, token, league? } -- one
   // activity's update token. league defaults to 'nhl' (older app builds).
-  // Public: rate-limited per IP, and at most LA_MAX_TOKENS_PER_IP new
-  // tokens per IP per game.
+  // Public: rate-limited per IP, at most LA_MAX_TOKENS_PER_IP new tokens
+  // per IP per game, and a new token is refused once the game has
+  // LA_MAX_TOKENS.
   if (url.pathname === '/live-activity/register') {
     const limited = await checkPublicWriteRateLimit(env, request, 'la-register');
     if (limited) return limited;
@@ -318,8 +328,9 @@ export async function handleLiveActivity(request, env, url) {
     const key = laKeys.tokens(league, gameId);
     let tokens = (await kvGet(env, key)) || [];
     if (!tokens.includes(token)) {
+      if (tokens.length >= LA_MAX_TOKENS) return listFull();
       if (await ipAtTokenCap(env, request, `${league}:${gameId}`, LA_TOKEN_TTL)) return tooManyTokens();
-      tokens = [...tokens, token].slice(-LA_MAX_TOKENS);
+      tokens = [...tokens, token];
       await kvPut(env, key, tokens, LA_TOKEN_TTL);
     }
     return json({ ok: true, count: tokens.length });
@@ -332,7 +343,10 @@ export async function handleLiveActivity(request, env, url) {
   // teams are kept in `la:startteams:{token}`, so a team that's no longer
   // listed loses it; enabled:false takes it off every team.
   // Public: rate-limited per IP, and at most LA_MAX_TOKENS_PER_IP tokens
-  // per IP per day that the Worker hasn't seen before.
+  // per IP per day that the Worker hasn't seen before. A team list at
+  // LA_MAX_TOKENS refuses the whole request (nothing is changed) when it
+  // would ADD this token; one already on it, a removal, or enabled:false
+  // always go through.
   if (url.pathname === '/live-activity/start-token') {
     const limited = await checkPublicWriteRateLimit(env, request, 'la-start-token');
     if (limited) return limited;
@@ -350,8 +364,6 @@ export async function handleLiveActivity(request, env, url) {
     const teamsKey = `la:startteams:${token}`;
     const legacyKey = `la:startteam:${token}`; // pre-2026-10 single NHL team
     const [previous, legacy] = await Promise.all([kvGet(env, teamsKey), kvGet(env, legacyKey)]);
-    if (enabled && previous == null && legacy == null
-        && await ipAtTokenCap(env, request, 'start', LA_IPCOUNT_START_TTL)) return tooManyTokens();
     const before = new Set(Array.isArray(previous) ? previous : []);
     if (typeof legacy === 'string' && legacy) before.add(`nhl:${legacy}`);
     const keep = new Set(enabled ? teams : []);
@@ -360,6 +372,16 @@ export async function handleLiveActivity(request, env, url) {
       const [league, abbr] = teamKey.split(':');
       return laKeys.start(league, abbr);
     };
+    // Every list this token joins, read up front: if one is full the
+    // request is refused before anything is written.
+    const keepLists = new Map();
+    for (const t of keep) {
+      const entries = (await kvGet(env, listKeyOf(t))) || [];
+      if (!entries.some(e => e.token === token) && entries.length >= LA_MAX_TOKENS) return listFull();
+      keepLists.set(t, entries);
+    }
+    if (enabled && previous == null && legacy == null
+        && await ipAtTokenCap(env, request, 'start', LA_IPCOUNT_START_TTL)) return tooManyTokens();
     for (const t of before) {
       if (keep.has(t)) continue;
       const listKey = listKeyOf(t);
@@ -368,11 +390,10 @@ export async function handleLiveActivity(request, env, url) {
         await kvPut(env, listKey, entries.filter(e => e.token !== token), LA_START_TTL);
       }
     }
-    for (const t of keep) {
-      const listKey = listKeyOf(t);
-      const entries = ((await kvGet(env, listKey)) || []).filter(e => e.token !== token);
+    for (const [t, list] of keepLists) {
+      const entries = list.filter(e => e.token !== token);
       entries.push({ token, locale });
-      await kvPut(env, listKey, entries.slice(-LA_MAX_TOKENS), LA_START_TTL);
+      await kvPut(env, listKeyOf(t), entries, LA_START_TTL);
     }
     if (enabled) await kvPut(env, teamsKey, teams, LA_START_TTL);
     else if (previous) await kvPut(env, teamsKey, null, 60);
