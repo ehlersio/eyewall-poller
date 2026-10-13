@@ -5,6 +5,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# The default GITHUB_TOKEN is read-only at the repository level too; this
+# block makes that explicit per workflow (CodeQL actions/missing-workflow-permissions).
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
