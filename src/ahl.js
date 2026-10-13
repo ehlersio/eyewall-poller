@@ -63,6 +63,23 @@ export const AHL_TEAM_CODES = {
   // the same entry.
   317: 'BRI',
 };
+// AHL team ID -> full name, for the AI narratives' prose: the server's
+// own names, so a client-supplied one never reaches a prompt (security
+// audit 2026-10-13 #5). Copied from eyewall-analytics' ahlConfig.js displayName
+// -- KEEP IN SYNC with it (and with AHL_TEAM_CODES).
+export const AHL_TEAM_NAMES = {
+  307: 'Hartford Wolf Pack', 309: 'Providence Bruins', 313: 'Lehigh Valley Phantoms',
+  316: 'Wilkes-Barre/Scranton Penguins', 319: 'Hershey Bears', 384: 'Charlotte Checkers',
+  411: 'Springfield Thunderbirds', 323: 'Rochester Americans', 324: 'Syracuse Crunch',
+  335: 'Toronto Marlies', 373: 'Cleveland Monsters', 390: 'Utica Comets',
+  413: 'Belleville Senators', 415: 'Laval Rocket', 457: 'Hamilton Hammers', 321: 'Manitoba Moose',
+  327: 'Milwaukee Admirals', 328: 'Grand Rapids Griffins', 330: 'Chicago Wolves',
+  372: 'Rockford IceHogs', 380: 'Texas Stars', 389: 'Iowa Wild', 402: 'Bakersfield Condors',
+  403: 'Ontario Reign', 404: 'San Diego Gulls', 405: 'San Jose Barracuda',
+  412: 'Tucson Roadrunners', 419: 'Colorado Eagles', 437: 'Henderson Silver Knights',
+  440: 'Abbotsford Canucks', 444: 'Calgary Wranglers', 445: 'Coachella Valley Firebirds',
+  317: 'Bridgeport Islanders',
+};
 // Ids in AHL_TEAM_CODES that aren't current teams -- labels only, left out
 // of worker.js's activeTeamCount.
 export const AHL_HISTORICAL_TEAM_IDS = [317];
@@ -71,6 +88,7 @@ const ahl = createHockeyTechLeague({
   key:          'ahl',
   label:        'AHL',
   teamCodes:    AHL_TEAM_CODES,
+  teamNames:    AHL_TEAM_NAMES,
   newsSources:  AHL_NEWS_SOURCES,
   headshotSize: '240x240',
   // seasons.js values are read at call time, not here -- touching one at

@@ -37,6 +37,7 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
+import { ParamError, readJsonObject, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, h2hNarrativeStats, hockeyTechNarrativeReady, scorebarPeriodNumber } from './shared.js';
 import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRowsIfTable, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, withParamErrors } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
 import { hockeyTechLiveActivityState, startLiveActivities, pushLiveActivities } from './liveActivity.js';
@@ -77,6 +78,7 @@ export function narrativePeriodKey(raw) {
  * @param {string} cfg.label        'AHL' | 'ECHL' -- push topic prefix and
  *                                  user-facing text
  * @param {object} cfg.teamCodes    { [teamId]: abbr }
+ * @param {object} [cfg.teamNames]  { [teamId]: full name } (the AI narratives' team names)
  * @param {Array}  cfg.newsSources  RSS sources for fetchNews()
  * @param {string} cfg.headshotSize LeagueStat headshot path segment
  * @param {Function} cfg.resolveSeason     (env) => { seasonId, seasonType }
@@ -92,6 +94,7 @@ export function narrativePeriodKey(raw) {
  */
 export function createHockeyTechLeague(cfg) {
   const { key, label, teamCodes, newsSources, headshotSize } = cfg;
+  const teamNames = cfg.teamNames || {};
   const P = `/${key}`;
   const table = (name) => `${SB_URL}/rest/v1/${key}_${name}`;
   const headshot = (playerId) => `https://assets.leaguestat.com/${key}/${headshotSize}/${playerId}.jpg`;
@@ -118,6 +121,26 @@ export function createHockeyTechLeague(cfg) {
     ).catch(() => []);
     if (gameRows[0]) return (await live(env, gameRows))[0];
     return (await upcomingFromScorebar(env, etDateString())).find(g => g.game_id === gameId) || null;
+  }
+
+  // liveGameRow() plus the scorebar's period and intermission, for the
+  // summary narrative's "is it over yet" (shared.js
+  // hockeyTechNarrativeReady()).
+  async function narrativeGameRow(env, gameId) {
+    const gameRows = await sbRowsOr(
+      `${table('game_log')}?game_id=eq.${gameId}&select=game_id,home_team_id,away_team_id,home_score,away_score,game_state,game_status_code&limit=1`,
+      []
+    ).catch(() => []);
+    const row = gameRows[0] || (await upcomingFromScorebar(env, etDateString())).find(g => g.game_id === gameId);
+    return row ? (await live(env, [row], { withClock: true }))[0] : null;
+  }
+
+  // A team id from a narrative request: one of this league's teamCodes,
+  // else a 400 (ParamError).
+  function narrativeTeamId(raw, name) {
+    const id = Number(sbParam(raw, { type: 'int', name }));
+    if (!Object.hasOwn(teamCodes, id)) throw new ParamError(`invalid ${name}`);
+    return id;
   }
 
   // ?season= param, live-resolving the current season when omitted.
@@ -683,40 +706,59 @@ export function createHockeyTechLeague(cfg) {
 
   // The /summary/narrative prompt (contract C8). Mirrors /pwhl/summary/
   // narrative's, minus Corsi: the best/worst period is ranked by shots on
-  // goal here, the only shot count these leagues have. `teamId` names the
-  // team when the client sent no abbreviation or name.
-  function summaryNarrativePrompt(body, { periodKey, teamId }) {
-    const {
-      oppAbbr, carName, oppName, periodLabel,
-      carSOG, oppSOG, carGoals, oppGoals,
-      carHits, carFOPct, carHDCF, oppHDCF,
-      penaltyCount, carPenaltyCount,
-      bestPeriod, worstPeriod,
-      goalieNames,
-    } = body;
-    const carAbbr = body.carAbbr || teamCodes[teamId] || String(teamId);
-    const goals = Array.isArray(body.goals) ? body.goals : [];
+  // goal here, the only shot count these leagues have. The teams are the
+  // game's own (`teamId`, `oppId`, from game_log), named from teamCodes /
+  // cfg.teamNames: the body's carAbbr/oppAbbr/carName/oppName are not used.
+  // Everything else from the body is a finite number, a period number, a
+  // strength from shared.js GOAL_STRENGTHS or a safeName()-cleaned name
+  // (security audit 2026-10-13 #5).
+  function summaryNarrativePrompt(body, { periodKey, teamId, oppId }) {
+    const num = finiteOrNull;
+    const periodOf = p => {
+      const n = Number(p);
+      return Number.isInteger(n) && n >= 1 && n <= 19 ? n : null;
+    };
+    const statPeriod = p => (p && typeof p === 'object'
+      ? { period: periodOf(p.period), carSOG: num(p.carSOG), oppSOG: num(p.oppSOG) } : null);
+    const carSOG = num(body.carSOG), oppSOG = num(body.oppSOG);
+    const carGoals = num(body.carGoals), oppGoals = num(body.oppGoals);
+    const carHits = num(body.carHits), carFOPct = num(body.carFOPct);
+    const carHDCF = num(body.carHDCF), oppHDCF = num(body.oppHDCF);
+    const penaltyCount = num(body.penaltyCount), carPenaltyCount = num(body.carPenaltyCount);
+    const bestPeriod = statPeriod(body.bestPeriod), worstPeriod = statPeriod(body.worstPeriod);
+    const periodLabel = safeName(body.periodLabel, 20, { digits: true, fallback: '' });
+
+    const carAbbr = teamCodes[teamId] || String(teamId);
+    const oppAbbr = oppId != null ? teamCodes[oppId] || null : null;
+    const goals = (Array.isArray(body.goals) ? body.goals : []).slice(0, NARRATIVE_MAX_GOALS)
+      .filter(g => g && typeof g === 'object')
+      .map(g => ({
+        isCar: g.isCar === true,
+        scorerName: safeName(g.scorerName, 40, { fallback: '' }),
+        time: safeClock(g.time),
+        period: periodOf(g.period),
+        strength: g.strength == null ? null : safeStrength(g.strength).toLowerCase(),
+      }));
     const isGame = periodKey === 'game';
 
     // Full team names in prose, so the model writes "the Wolves", not "CHI".
-    const carDisplay = carName || carAbbr;
-    const oppDisplay = oppName || oppAbbr || 'their opponent';
+    const carDisplay = teamNames[teamId] || carAbbr;
+    const oppDisplay = (oppId != null && teamNames[oppId]) || oppAbbr || 'their opponent';
     const matchup = oppAbbr ? `${carDisplay} (${carAbbr}) vs ${oppDisplay} (${oppAbbr})` : `${carDisplay} (${carAbbr}) vs ${oppDisplay}`;
 
-    const goalies = (Array.isArray(goalieNames) ? goalieNames : [])
-      .filter(n => typeof n === 'string' && n.trim());
+    const goalies = [...new Set((Array.isArray(body.goalieNames) ? body.goalieNames : [])
+      .slice(0, 4).map(n => safeName(n, 40, { fallback: '' })).filter(Boolean))];
     const goalieLine = goalies.length ? `\n${carDisplay} goalie in net: ${goalies.join(', then ')}` : '';
 
-    const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
     const pair = (a, b) => (num(a) != null && num(b) != null ? `${a}–${b}` : null);
     const joinParts = parts => parts.filter(Boolean).join(' · ');
     const lines = parts => parts.filter(Boolean).join('\n');
 
     const goalLines = goals.map(g => {
-      const who = g?.scorerName || (g?.isCar ? carDisplay : oppDisplay);
-      const str = g?.strength && g.strength !== 'ev' ? ` (${String(g.strength).toUpperCase()})` : '';
-      const when = [g?.time ? `at ${g.time}` : null, isGame ? hockeytechPeriodLabel(g?.period) : null].filter(Boolean).join(' ');
-      return `${g?.isCar ? carDisplay : oppDisplay}: ${who}${when ? ` ${when}` : ''}${str}`;
+      const who = g.scorerName || (g.isCar ? carDisplay : oppDisplay);
+      const str = g.strength && g.strength !== 'ev' ? ` (${g.strength.toUpperCase()})` : '';
+      const when = [g.time ? `at ${g.time}` : null, isGame ? hockeytechPeriodLabel(g.period) : null].filter(Boolean).join(' ');
+      return `${g.isCar ? carDisplay : oppDisplay}: ${who}${when ? ` ${when}` : ''}${str}`;
     }).join('\n');
 
     const sog = pair(carSOG, oppSOG), hd = pair(carHDCF, oppHDCF);
@@ -1684,21 +1726,24 @@ ${tone} Write in plain text, no markdown. 1-2 sentences max.`;
 
     // POST /{league}/team-seasons/head-to-head/narrative
     // AI narrative on top of the head-to-head stats above. The client posts
-    // the payload it already fetched plus display names -- the Worker has
-    // no team-name map (the frontend's {league}Config.js does).
+    // the payload it already fetched (plus display names, which are
+    // ignored: the names come from cfg.teamNames).
     if (url.pathname === `${P}/team-seasons/head-to-head/narrative` && request.method === 'POST') {
 
-      let body;
-      try { body = await request.json(); } catch {
-        return badRequest('Invalid JSON');
-      }
-      const {
-        teamA, teamB, teamADisplay, teamBDisplay,
-        totalMeetings, allTimeRecord, recentWindow, currentStreak, isThinSample,
-      } = body || {};
-      if (!teamA || !teamB || !totalMeetings || !allTimeRecord || !recentWindow) {
+      const body = await readJsonObject(request);
+      if (!body) return badRequest('Invalid JSON');
+      if (!body.teamA || !body.teamB || !body.totalMeetings || !body.allTimeRecord || !body.recentWindow) {
         return json({ narrative: null });
       }
+      // Both teams must be the league's team ids (they make the shared
+      // cache key), their names come from cfg.teamNames -- the body's
+      // display names are ignored -- and the numbers are checked (security
+      // audit 2026-10-13 #5).
+      const teamA = narrativeTeamId(body.teamA, 'teamA'), teamB = narrativeTeamId(body.teamB, 'teamB');
+      if (teamA === teamB) return badRequest('teamA and teamB must differ');
+      const h2h = h2hNarrativeStats(body);
+      if (h2h.error) return badRequest(h2h.error);
+      const { totalMeetings, allTimeRecord, recentWindow, currentStreak, isThinSample } = h2h;
 
       const kvKey = `${key}:h2h-narrative:${[teamA, teamB].slice().sort((a, b) => a - b).join(',')}`;
       return cachedJson(env, kvKey, 24 * 3600, async () => {
@@ -1708,8 +1753,8 @@ ${tone} Write in plain text, no markdown. 1-2 sentences max.`;
         const limited = await checkAiRateLimit(env, request, `${key}-h2h-narrative`);
         if (limited) return limited;
 
-        const aDisplay = teamADisplay || String(teamA);
-        const bDisplay = teamBDisplay || String(teamB);
+        const aDisplay = teamNames[teamA] || teamCodes[teamA];
+        const bDisplay = teamNames[teamB] || teamCodes[teamB];
         const streakLine = currentStreak
           ? `Current streak: ${currentStreak.holder === 'A' ? aDisplay : bDisplay} has won ${currentStreak.count} straight.`
           : 'No active streak.';
@@ -1764,6 +1809,8 @@ Only reference the two teams named above and the numbers given -- no player name
       const teamId = sbParam(url.searchParams.get('teamId'), { type: 'int', name: 'teamId' });
       const periodKey = narrativePeriodKey(url.searchParams.get('period'));
       if (!gameId || !teamId || !periodKey) return badRequest('gameId, teamId and period (1-3, OT, 2OT.., game) required');
+      // A team of this league only: teamId keys the shared cache entry.
+      narrativeTeamId(teamId, 'teamId');
       const locale = requestLocale(url);
       const cacheKey = `${key}:narrative:${periodKey}:${gameId}:${teamId}${localeKeySuffix(locale)}`;
 
@@ -1771,14 +1818,26 @@ Only reference the two teams named above and the numbers given -- no player name
         const limited = await checkAiRateLimit(env, request, `${key}-summary-narrative`);
         if (limited) return limited;
 
-        let body;
-        try { body = await request.json(); } catch {
-          return badRequest('Invalid JSON');
-        }
-        if (!body || typeof body !== 'object') return badRequest('Invalid JSON');
+        const body = await readJsonObject(request);
+        if (!body) return badRequest('Invalid JSON');
 
-        const prompt = localizePrompt(summaryNarrativePrompt(body, { periodKey, teamId }), locale);
+        // Written for everyone, so only once the game (or period) is over
+        // by the Worker's own reading of it: narrativeGameRow() --
+        // {league}_game_log's row (or the scorebar's, for a game not in it)
+        // with the `{league}:scorebar` status, period and intermission laid
+        // over it. The opponent comes from that row too.
         const isGame = periodKey === 'game';
+        const game = await narrativeGameRow(env, Number(gameId));
+        if (!game) return errorJson(409, { error: 'Game state unavailable' });
+        const homeId = Number(game.home_team_id), awayId = Number(game.away_team_id);
+        const carId = Number(teamId);
+        if (carId !== homeId && carId !== awayId) return badRequest(`teamId is not in game ${gameId}`);
+        if (!hockeyTechNarrativeReady(game, isGame ? 'game' : scorebarPeriodNumber(periodKey))) {
+          return errorJson(409, { error: isGame ? 'Game not final' : 'Period not complete' });
+        }
+        const oppId = carId === homeId ? awayId : homeId;
+
+        const prompt = localizePrompt(summaryNarrativePrompt(body, { periodKey, teamId: carId, oppId }), locale);
         try {
           const aiResponse = await generateText(env, {
             messages:   [{ role: 'user', content: prompt }],

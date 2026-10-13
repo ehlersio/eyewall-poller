@@ -5,7 +5,7 @@
 // 2026-04-22; HockeyTech gameSummary: shots 15-2, 13-8, 10-9 by period).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { makeEnv, makeCtx, makeRequest, makeFakeCache, makeFakeRateLimiter, mockFetchWithAI, mockFetchWithFailingAI, aiCalls, aiPrompt } from './route-harness.js'
+import { makeEnv, makeCtx, makeRequest, makeFakeCache, makeFakeRateLimiter, mockFetchWithAI as mockAI, mockFetchWithFailingAI as mockFailingAI, aiCalls, aiPrompt } from './route-harness.js'
 import { handleRequest } from '../worker.js'
 import { handleAHL } from '../ahl.js'
 import { handleECHL } from '../echl.js'
@@ -18,6 +18,23 @@ afterEach(() => { globalThis.fetch = realFetch })
 
 const GAME_ID = 1028986
 const CLT = 384
+
+// The Worker only writes a narrative for a game or period it can see is
+// over (security audit 2026-10-13 #5): game_log says so. CLT 8-1 SPR in
+// the AHL; FLA (8) vs GVL (52) stands in for the ECHL.
+const gameRow = (home, away, extra = {}) => ({
+  game_id: GAME_ID, home_team_id: home, away_team_id: away, home_score: 8, away_score: 1,
+  game_state: 'Final', game_status_code: 4, ...extra,
+})
+let gameRows = {}
+const resetGameRows = () => { gameRows = { ahl: gameRow(CLT, 411), echl: gameRow(8, 52) } }
+const finalGames = url => {
+  const league = /\/(ahl|echl)_game_log/.exec(String(url))?.[1]
+  return Promise.resolve({ ok: true, json: async () => (league ? [gameRows[league]] : {}) })
+}
+const mockFetchWithAI = (text, other) => mockAI(text, other || finalGames)
+const mockFetchWithFailingAI = other => mockFailingAI(other || finalGames)
+beforeEach(resetGameRows)
 
 // What the app's useHockeyTechPeriodSummary builds for CLT's final.
 const finalBody = {
@@ -43,8 +60,8 @@ const p1Body = {
 }
 
 const LEAGUES = [
-  { key: 'ahl', label: 'AHL', handle: handleAHL, teamId: CLT, abbr: 'CLT' },
-  { key: 'echl', label: 'ECHL', handle: handleECHL, teamId: 8, abbr: 'FLA' },
+  { key: 'ahl', label: 'AHL', handle: handleAHL, teamId: CLT, abbr: 'CLT', name: 'Charlotte Checkers' },
+  { key: 'echl', label: 'ECHL', handle: handleECHL, teamId: 8, abbr: 'FLA', name: 'Florida Everblades' },
 ]
 
 function post(handle, env, query, body) {
@@ -172,13 +189,13 @@ for (const lg of LEAGUES) {
       expect(await env.CACHE.get(`${lg.key}:narrative:1:${GAME_ID}:${lg.teamId}`)).toBeNull()
     })
 
-    it('names the league and falls back to the team code from teamId when the body has no abbreviation', async () => {
+    it('names the league and the teams from the Worker\'s own maps when the body has no abbreviation', async () => {
       const env = makeEnv()
       mockFetchWithAI('text')
       await post(lg.handle, env, q(1), { carGoals: 1, oppGoals: 0, goals: [] })
       const prompt = aiPrompt(globalThis.fetch)[0].content
       expect(prompt).toContain(`EyeWall Analytics' ${lg.label} analyst`)
-      expect(prompt).toContain(`${lg.abbr} (${lg.abbr})`)
+      expect(prompt).toContain(`${lg.name} (${lg.abbr})`)
       expect(prompt).not.toMatch(/undefined|null|NaN/)
     })
 

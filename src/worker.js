@@ -459,8 +459,11 @@ async function routeRequest(request, env, ctx) {
       return json({ latestId: latest?.link || latest?.title || null, publishedAt: latest?.publishedAt || null });
     }
 
-    const team = url.searchParams.get('team')?.toUpperCase();
+    const team = url.searchParams.get('team')?.trim().toUpperCase();
     if (!team) return badRequest('team is required for sport=nhl');
+    // Only a real team: `team` keys a KV entry and picks the news filter,
+    // and an unknown one used to become a regex (security audit 2026-10-13 #7).
+    if (!Object.hasOwn(TEAM_CONFIGS, team)) return badRequest('team must be an NHL team abbreviation, e.g. CAR');
     const cached = await kvGet(env, `news:${team}`);
     if (!cached) {
       ctx.waitUntil(fetchNews(env, team).catch(e => console.warn(`News bg fetch ${team}:`, e.message)));

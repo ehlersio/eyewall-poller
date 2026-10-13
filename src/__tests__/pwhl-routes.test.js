@@ -10,7 +10,7 @@
 // Session 48 scope — see SESSION_48_DECISIONS.md.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { makeEnv, makeCtx, makeRequest, makeFakeCache, makeFakeRateLimiter, mockFetchWithAI, mockFetchWithFailingAI, aiCalls, aiPrompt } from './route-harness.js'
+import { makeEnv, makeCtx, makeRequest, makeFakeCache, makeFakeRateLimiter, mockFetchWithAI as mockAI, mockFetchWithFailingAI as mockFailingAI, aiCalls, aiPrompt } from './route-harness.js'
 
 vi.mock('../seasons.js', () => ({
   resolvePWHLSeason: vi.fn().mockResolvedValue({ seasonId: 8, seasonType: 'regular', startYear: 2025 }),
@@ -36,6 +36,22 @@ import { FRENCH_INSTRUCTION } from '../shared.js'
 import { hockeytechPeriodLabel, hockeytechPeriodNumber } from '../hockeytechGame.js'
 import { events as bosOtt2ot } from './fixtures/pwhl-344-pbp.js'
 import { events as seaMtlShootout, gameLogRow as seaMtlRow, penaltyShot277 } from './fixtures/pwhl-326-shootout-pbp.js'
+
+// /pwhl/summary/narrative only writes a narrative for a game it can see is
+// final (security audit 2026-10-13 #5): pwhl_game_log's row says so. Final
+// rows for the games the narrative tests post about; every other request
+// gets the harness's default {}.
+const PWHL_FINAL_GAMES = {
+  344: { game_id: 344, home_team_id: 1, away_team_id: 5, home_score: 3, away_score: 4, game_state: 'Final', game_status_code: 4 }, // BOS-OTT
+  210: { game_id: 210, home_team_id: 2, away_team_id: 6, home_score: 2, away_score: 1, game_state: 'Final', game_status_code: 4 }, // MIN-TOR
+  211: { game_id: 211, home_team_id: 1, away_team_id: 3, home_score: 1, away_score: 0, game_state: 'Final', game_status_code: 4 }, // BOS-MTL
+}
+const pwhlFinalGames = url => {
+  const id = /pwhl_game_log\?game_id=eq\.(\d+)&select=game_id,home_team_id/.exec(String(url))?.[1]
+  return Promise.resolve({ ok: true, json: async () => (id ? (PWHL_FINAL_GAMES[id] ? [PWHL_FINAL_GAMES[id]] : []) : {}) })
+}
+const mockFetchWithAI = (text, other) => mockAI(text, other || pwhlFinalGames)
+const mockFetchWithFailingAI = other => mockFailingAI(other || pwhlFinalGames)
 
 beforeEach(() => {
   globalThis.fetch = vi.fn()
@@ -1121,8 +1137,8 @@ describe('POST /pwhl/summary/narrative -- period names and missing stats (PWHL 3
     const prompt = await gamePrompt(body)
     expect(prompt).toContain('Best period: 2OT (100% CF)')
     expect(prompt).toContain('Worst period: P2 (34% CF)')
-    expect(prompt).toContain('OTT: Michela Cava at 1:12 2OT')
-    expect(prompt).toContain('Score: OTT 4–3 BOS')
+    expect(prompt).toContain('Ottawa Charge: Michela Cava at 1:12 2OT')
+    expect(prompt).toContain('Score: Ottawa Charge 4–3 Boston Fleet')
     expect(prompt).not.toMatch(/\bP5\b/)
   })
 
@@ -1137,7 +1153,7 @@ describe('POST /pwhl/summary/narrative -- period names and missing stats (PWHL 3
       corsiForPct: null, carSOG: null, carFOPct: null, carHits: null, bestPeriod: null, worstPeriod: undefined,
     })
     expect(prompt).not.toMatch(/null|undefined|NaN|Corsi|SOG|HD Chances|Faceoff|Hits|Penalties|Best period|Worst period/)
-    expect(prompt).toContain('OTT: Michela Cava at 1:12 2OT')
+    expect(prompt).toContain('Ottawa Charge: Michela Cava at 1:12 2OT')
   })
 
   it('names a period summary by its number when the app sends no label', async () => {
@@ -1147,7 +1163,7 @@ describe('POST /pwhl/summary/narrative -- period names and missing stats (PWHL 3
     await handlePWHL(makeRequest(path, { method: 'POST', body: { carAbbr: 'OTT', oppAbbr: 'BOS', carGoals: 1, oppGoals: 0, goals: [] } }),
       env, makeCtx(), new URL(`https://example.com${path}`))
     const prompt = aiPrompt(globalThis.fetch)[0].content
-    expect(prompt).toContain('Period: 2OT — OTT (OTT) vs BOS (BOS)')
+    expect(prompt).toContain('Period: 2OT — Ottawa Charge (OTT) vs Boston Fleet (BOS)')
     expect(prompt).not.toMatch(/null|undefined|NaN/)
   })
 })
@@ -1155,11 +1171,11 @@ describe('POST /pwhl/summary/narrative -- period names and missing stats (PWHL 3
 describe('POST /pwhl/summary/narrative', () => {
   it('serves from cache without calling the AI model', async () => {
     const cached = { narrative: 'cached', cardNarrative: null }
-    const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:narrative:1:210:CAR': cached }) })
+    const env = makeEnv({ CACHE: makeFakeCache({ 'pwhl:narrative:1:210:MIN': cached }) })
     mockFetchWithAI('should not be called')
     const res = await handlePWHL(
-      makeRequest('/pwhl/summary/narrative?gameId=210&period=1&carAbbr=CAR', { method: 'POST', body: {} }),
-      env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=1&carAbbr=CAR')
+      makeRequest('/pwhl/summary/narrative?gameId=210&period=1&carAbbr=MIN', { method: 'POST', body: {} }),
+      env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=1&carAbbr=MIN')
     )
     expect(await res.json()).toEqual(cached)
     expect(aiCalls(globalThis.fetch)).toHaveLength(0)
@@ -1167,8 +1183,8 @@ describe('POST /pwhl/summary/narrative', () => {
 
   it('400s on invalid JSON body', async () => {
     const env = makeEnv()
-    const req = new Request('https://example.com/pwhl/summary/narrative?gameId=210&period=1', { method: 'POST', body: 'not json', headers: { 'Content-Type': 'application/json' } })
-    const res = await handlePWHL(req, env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=1'))
+    const req = new Request('https://example.com/pwhl/summary/narrative?gameId=210&period=1&carAbbr=MIN', { method: 'POST', body: 'not json', headers: { 'Content-Type': 'application/json' } })
+    const res = await handlePWHL(req, env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=1&carAbbr=MIN'))
     expect(res.status).toBe(400)
   })
 
@@ -1176,28 +1192,28 @@ describe('POST /pwhl/summary/narrative', () => {
     const env = makeEnv()
     mockFetchWithAI('A tight period for both sides.')
     const res = await handlePWHL(
-      makeRequest('/pwhl/summary/narrative?gameId=210&period=1&carAbbr=BOS', {
+      makeRequest('/pwhl/summary/narrative?gameId=211&period=1&carAbbr=BOS', {
         method: 'POST',
         body: { carAbbr: 'BOS', oppAbbr: 'MTL', periodLabel: '1st', corsiForPct: 55, carSOG: 10, oppSOG: 8, carGoals: 1, oppGoals: 0, carHits: 5, carFOPct: 50, penaltyCount: 2, carPenaltyCount: 1, goals: [] },
       }),
-      env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=1&carAbbr=BOS')
+      env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=211&period=1&carAbbr=BOS')
     )
 
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.narrative).toBe('A tight period for both sides.')
-    expect(JSON.parse(await env.CACHE.get('pwhl:narrative:1:210:BOS')).narrative).toBe('A tight period for both sides.')
+    expect(JSON.parse(await env.CACHE.get('pwhl:narrative:1:211:BOS')).narrative).toBe('A tight period for both sides.')
   })
 
   it('502s when the AI call throws', async () => {
     const env = makeEnv()
     mockFetchWithFailingAI()
     const res = await handlePWHL(
-      makeRequest('/pwhl/summary/narrative?gameId=210&period=1&carAbbr=BOS', {
+      makeRequest('/pwhl/summary/narrative?gameId=211&period=1&carAbbr=BOS', {
         method: 'POST',
         body: { carAbbr: 'BOS', oppAbbr: 'MTL', goals: [] },
       }),
-      env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=1&carAbbr=BOS')
+      env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=211&period=1&carAbbr=BOS')
     )
     expect(res.status).toBe(502)
   })
@@ -1206,15 +1222,15 @@ describe('POST /pwhl/summary/narrative', () => {
     const env = makeEnv()
     mockFetchWithAI('')
     const res = await handlePWHL(
-      makeRequest('/pwhl/summary/narrative?gameId=210&period=1&carAbbr=BOS', {
+      makeRequest('/pwhl/summary/narrative?gameId=211&period=1&carAbbr=BOS', {
         method: 'POST',
         body: { carAbbr: 'BOS', oppAbbr: 'MTL', goals: [] },
       }),
-      env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=210&period=1&carAbbr=BOS')
+      env, makeCtx(), new URL('https://example.com/pwhl/summary/narrative?gameId=211&period=1&carAbbr=BOS')
     )
     expect(res.status).toBe(502)
     expect((await res.json()).error).toMatch(/empty/i)
-    expect(await env.CACHE.get('pwhl:narrative:1:210:BOS')).toBeNull()
+    expect(await env.CACHE.get('pwhl:narrative:1:211:BOS')).toBeNull()
   })
 
   it('names the goalie in net from goalieNames, labelled with the team', async () => {

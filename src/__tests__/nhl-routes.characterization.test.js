@@ -314,6 +314,13 @@ const NARRATIVE_BODY = {
   ],
 }
 
+// The Worker's own copy of the game, final (CAR home, BOS away):
+// /summary/narrative only writes a narrative for a game it sees is over.
+const FINAL_PBP = {
+  id: GAME_ID, gameState: 'OFF', gameType: 2, periodDescriptor: { number: 3 },
+  homeTeam: { id: 12, abbrev: 'CAR' }, awayTeam: { id: 6, abbrev: 'BOS' }, plays: [],
+}
+
 const ROUTES = [
   { name: 'news/refresh (no secret)',        path: '/news/refresh' },
   { name: 'schedule (historical season)',    path: `/schedule?team=BOS&season=${PRIOR}` },
@@ -378,8 +385,8 @@ const ROUTES = [
   { name: 'prediction/analyze (in season, French)', path: `/prediction/analyze?gameId=${GAME_ID}&team=CAR&locale=fr`, kv: { standings: STANDINGS_NOW } },
   { name: 'prediction/analyze (preseason fallback, French)', path: `/prediction/analyze?gameId=${GAME_ID}&team=CAR&locale=fr`, kv: { standings: STANDINGS_LAST_SEASON } },
   { name: 'push/test (no secret)',           path: '/push/test' },
-  { name: 'summary/narrative (game)', method: 'POST', path: `/summary/narrative?gameId=${GAME_ID}&period=game&carAbbr=car`, body: NARRATIVE_BODY },
-  { name: 'summary/narrative (period)', method: 'POST', path: `/summary/narrative?gameId=${GAME_ID}&period=2&carAbbr=CAR`, body: NARRATIVE_BODY },
+  { name: 'summary/narrative (game)', method: 'POST', path: `/summary/narrative?gameId=${GAME_ID}&period=game&carAbbr=car`, body: NARRATIVE_BODY, kv: { [`pbp:${GAME_ID}`]: FINAL_PBP } },
+  { name: 'summary/narrative (period)', method: 'POST', path: `/summary/narrative?gameId=${GAME_ID}&period=2&carAbbr=CAR`, body: NARRATIVE_BODY, kv: { [`pbp:${GAME_ID}`]: FINAL_PBP } },
   { name: 'summary/narrative (no period)', method: 'POST', path: `/summary/narrative?gameId=${GAME_ID}`, body: NARRATIVE_BODY },
   { name: 'draft/rankings (all)',            path: '/draft/rankings' },
   { name: 'draft/rankings (category)',       path: '/draft/rankings?category=1' },
@@ -556,12 +563,15 @@ describe('background fetches', () => {
 
 describe('push subscriptions', () => {
   it('subscribe upserts Web Push and iOS subscribers; unsubscribe removes them', async () => {
-    const { env, kvWrites } = makeRecordingEnv({ 'push:subs': [{ endpoint: 'https://push.example/old', keys: {}, teamAbbr: 'NHL:CAR', prefs: null }] })
-    const web = await callRoute(env, '/push/subscribe', { method: 'POST', body: { endpoint: 'https://push.example/old', keys: { p256dh: 'x', auth: 'y' }, teamAbbr: 'BOS', prefs: { goal: false } } })
-    const ios = await callRoute(env, '/push/subscribe', { method: 'POST', body: { platform: 'ios', token: 'tok-1', teamAbbr: 'PWHL:MTL' } })
+    const endpoint = 'https://fcm.googleapis.com/fcm/send/old'
+    const keys = { p256dh: 'B' + 'p'.repeat(86), auth: 'a'.repeat(22) }
+    const token = 'ab'.repeat(32)
+    const { env, kvWrites } = makeRecordingEnv({ 'push:subs': [{ endpoint, keys: {}, teamAbbr: 'NHL:CAR', prefs: null }] })
+    const web = await callRoute(env, '/push/subscribe', { method: 'POST', body: { endpoint, keys, teamAbbr: 'BOS', prefs: { goal: false } } })
+    const ios = await callRoute(env, '/push/subscribe', { method: 'POST', body: { platform: 'ios', token, teamAbbr: 'PWHL:MTL' } })
     const afterSubscribe = JSON.parse(await env.CACHE.get('push:subs'))
-    const unsubIos = await callRoute(env, '/push/unsubscribe', { method: 'POST', body: { token: 'tok-1' } })
-    const unsubWeb = await callRoute(env, '/push/unsubscribe', { method: 'POST', body: { endpoint: 'https://push.example/old' } })
+    const unsubIos = await callRoute(env, '/push/unsubscribe', { method: 'POST', body: { token } })
+    const unsubWeb = await callRoute(env, '/push/unsubscribe', { method: 'POST', body: { endpoint } })
     expect({ web, ios, afterSubscribe, unsubIos, unsubWeb, kvWrites }).toMatchSnapshot()
   })
 })

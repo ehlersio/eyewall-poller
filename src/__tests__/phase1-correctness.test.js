@@ -135,20 +135,23 @@ describe('AI routes: cached answers are not rate-limited', () => {
   }
 
   it('the AHL/ECHL and PWHL head-to-head narratives also check the cache first', async () => {
-    for (const [handler, prefix] of [[handlePWHL, '/pwhl'], [handleAHL, '/ahl'], [handleECHL, '/echl']]) {
+    // These leagues' head-to-heads name teams by HockeyTech id, and only
+    // the league's own (security audit 2026-10-13).
+    for (const [handler, prefix, teamA, teamB] of [[handlePWHL, '/pwhl', 1, 6], [handleAHL, '/ahl', 384, 411], [handleECHL, '/echl', 8, 52]]) {
       const env = refusingEnv()
       const path = `${prefix}/team-seasons/head-to-head/narrative`
-      const miss = await call(handler, path, env, { method: 'POST', body: h2hBody })
+      const body = { ...h2hBody, teamA, teamB }
+      const miss = await call(handler, path, env, { method: 'POST', body })
       expect(miss.status).toBe(429)
       // Whatever key the route caches under, a warm one answers without the limiter.
       const limiter = env.AI_ROUTE_LIMITER.limit
       limiter.mockClear()
       globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: 'Narrative.' } }] }) }))
       limiter.mockResolvedValueOnce({ success: true })
-      const filled = await call(handler, path, env, { method: 'POST', body: h2hBody })
+      const filled = await call(handler, path, env, { method: 'POST', body })
       expect(filled.status).toBe(200)
       limiter.mockClear()
-      const hit = await call(handler, path, env, { method: 'POST', body: h2hBody })
+      const hit = await call(handler, path, env, { method: 'POST', body })
       expect(hit.status).toBe(200)
       expect(limiter).not.toHaveBeenCalled()
     }

@@ -58,6 +58,22 @@ export const ECHL_TEAM_CODES = {
   98: 'IA',  // Iowa Heartlanders
   23: 'UTA', // Utah Grizzlies
 };
+// ECHL team ID -> full name, for the AI narratives' prose: the server's
+// own names, so a client-supplied one never reaches a prompt (security
+// audit 2026-10-13 #5). Copied from eyewall-analytics' echlConfig.js displayName
+// -- KEEP IN SYNC with it (and with ECHL_TEAM_CODES).
+export const ECHL_TEAM_NAMES = {
+  74: 'Adirondack Thunder', 108: 'Greensboro Gargoyles', 82: 'Maine Mariners',
+  76: 'Norfolk Admirals', 17: 'Reading Royals', 113: 'Trenton Ironhawks',
+  99: 'Trois-Rivières Lions', 77: 'Worcester Railers', 10: 'Atlanta Gladiators',
+  8: 'Florida Everblades', 52: 'Greenville Swamp Rabbits', 79: 'Jacksonville Icemen',
+  61: 'Orlando Solar Bears', 102: 'Savannah Ghost Pirates', 18: 'South Carolina Stingrays',
+  107: 'Bloomington Bison', 5: 'Cincinnati Cyclones', 60: 'Fort Wayne Komets', 65: 'Indy Fuel',
+  50: 'Kalamazoo Wings', 21: 'Toledo Walleye', 25: 'Wheeling Nailers', 66: 'Allen Americans',
+  11: 'Idaho Steelheads', 68: 'Kansas City Mavericks', 114: 'New Mexico Goatheads',
+  70: 'Rapid City Rush', 106: 'Tahoe Knight Monsters', 71: 'Tulsa Oilers', 72: 'Wichita Thunder',
+  98: 'Iowa Heartlanders', 23: 'Utah Grizzlies',
+};
 // Ids in ECHL_TEAM_CODES that aren't current teams -- labels only, left out
 // of worker.js's activeTeamCount.
 export const ECHL_HISTORICAL_TEAM_IDS = [98, 23];
@@ -66,6 +82,7 @@ const echl = createHockeyTechLeague({
   key:          'echl',
   label:        'ECHL',
   teamCodes:    ECHL_TEAM_CODES,
+  teamNames:    ECHL_TEAM_NAMES,
   newsSources:  ECHL_NEWS_SOURCES,
   headshotSize: '120x160',
   // Read at call time, not here -- see ahl.js.
