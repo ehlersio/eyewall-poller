@@ -15,7 +15,7 @@ import { handleAHL, AHL_TEAM_CODES, AHL_TEAM_NAMES } from '../ahl.js'
 import { ECHL_TEAM_CODES, ECHL_TEAM_NAMES } from '../echl.js'
 import { handleLiveActivity, LA_MAX_TOKENS, LA_MAX_TOKENS_PER_IP, normalizeLiveActivityToken } from '../liveActivity.js'
 import {
-  isAllowedPushEndpoint, isValidPushKeys, normalizeApnsToken, MAX_PUSH_SUBS, PUSH_FAILURE_LIMIT,
+  isAllowedPushEndpoint, isValidPushKeys, normalizeApnsToken, normalizePushSubs, MAX_PUSH_SUBS, PUSH_FAILURE_LIMIT,
   MAX_PUSH_ENDPOINT_LENGTH, broadcastToTeam, safeName, h2hNarrativeStats, hockeyTechNarrativeReady,
   scorebarPeriodNumber, checkPublicWriteRateLimit,
 } from '../shared.js'
@@ -124,6 +124,38 @@ describe('push key and token checks', () => {
     expect(normalizeApnsToken('a'.repeat(63))).toBeNull()
     expect(normalizeApnsToken('g'.repeat(64))).toBeNull()
     expect(normalizeApnsToken(null)).toBeNull()
+  })
+})
+
+describe('normalizePushSubs()', () => {
+  const UP = TOKEN_A.toUpperCase()
+  it('lowercases iOS tokens and merges case-duplicates, the later entry winning', () => {
+    const web = { endpoint: 'https://fcm.googleapis.com/fcm/send/x', teamAbbr: 'NHL:CAR', prefs: null }
+    const out = normalizePushSubs([
+      { platform: 'ios', token: UP, teamAbbr: 'NHL:CAR', prefs: null, failures: 3 },
+      web,
+      { platform: 'ios', token: TOKEN_A, teamAbbr: 'NHL:BOS', prefs: null },
+    ])
+    expect(out).toEqual([
+      { platform: 'ios', token: TOKEN_A, teamAbbr: 'NHL:BOS', prefs: null },
+      web,
+    ])
+  })
+
+  it('returns the same array when every iOS token is already lowercase and unique', () => {
+    const subs = [
+      { platform: 'ios', token: TOKEN_A, teamAbbr: 'NHL:CAR', prefs: null },
+      { endpoint: 'https://fcm.googleapis.com/fcm/send/x' },
+    ]
+    expect(normalizePushSubs(subs)).toBe(subs)
+  })
+
+  it('leaves Web Push endpoints alone even when they differ only by case', () => {
+    const subs = [
+      { endpoint: 'https://fcm.googleapis.com/fcm/send/ABC' },
+      { endpoint: 'https://fcm.googleapis.com/fcm/send/abc' },
+    ]
+    expect(normalizePushSubs(subs)).toBe(subs)
   })
 })
 
@@ -248,6 +280,20 @@ describe('broadcastToTeam(): failing subscriptions are pruned', () => {
   it('a success clears the count', async () => {
     const env = pushEnv([web(1, { failures: PUSH_FAILURE_LIMIT - 1 })])
     await broadcast(env, vi.fn(async () => 'ok'))
+    expect(await subsOf(env)).toEqual([web(1)])
+  })
+
+  // After a subscribe write lowercased a legacy uppercase entry, the
+  // broadcast reads the same (lowercase) list, so recordPushResults()'s
+  // exact subId() match still finds the entry to prune or count against.
+  it('prunes an entry a subscribe write normalized from uppercase', async () => {
+    const env = pushEnv([ios(TOKEN_A.toUpperCase()), web(1)])
+    await handleNHL(
+      makeRequest('/push/subscribe', { method: 'POST', body: { platform: 'ios', token: TOKEN_A, teamAbbr: 'CAR' } }),
+      env, makeCtx(), new URL('https://example.com/push/subscribe')
+    )
+    expect(await subsOf(env)).toEqual([ios(TOKEN_A), web(1)])
+    await broadcast(env, vi.fn(async s => (s.platform === 'ios' ? 'expired' : 'ok')))
     expect(await subsOf(env)).toEqual([web(1)])
   })
 

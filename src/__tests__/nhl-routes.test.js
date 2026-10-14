@@ -2521,6 +2521,64 @@ describe('POST /push/subscribe', () => {
 
     expect((await res.json()).total).toBe(1)
   })
+
+  // Capacitor reports the APNs token in UPPERCASE hex; #212 (2026-10-13)
+  // started storing it lowercase, and the exact-match upsert then
+  // appended a second entry for every device subscribed before it.
+  it('replaces a legacy uppercase iOS entry on re-subscribe instead of duplicating it', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({
+      'push:subs': [
+        { platform: 'ios', token: IOS_TOKEN.toUpperCase(), teamAbbr: 'NHL:CAR', prefs: null, failures: 2 },
+        { endpoint: EP_1, teamAbbr: 'NHL:CAR', prefs: null },
+      ],
+    }) })
+    const res = await handleNHL(
+      makeRequest('/push/subscribe', { method: 'POST', body: { platform: 'ios', token: IOS_TOKEN, teamAbbr: 'BOS' } }),
+      env, makeCtx(), new URL('https://example.com/push/subscribe')
+    )
+
+    expect((await res.json()).total).toBe(2)
+    const stored = JSON.parse(await env.CACHE.get('push:subs'))
+    expect(stored).toEqual([
+      { platform: 'ios', token: IOS_TOKEN, teamAbbr: 'NHL:BOS', prefs: null },
+      { endpoint: EP_1, teamAbbr: 'NHL:CAR', prefs: null },
+    ])
+  })
+
+  it('merges pre-existing case-duplicate iOS entries on any subscribe write, keeping the later one', async () => {
+    const OTHER = 'cd'.repeat(32)
+    const env = makeEnv({ CACHE: makeFakeCache({
+      'push:subs': [
+        { platform: 'ios', token: IOS_TOKEN.toUpperCase(), teamAbbr: 'NHL:CAR', prefs: null }, // frozen pre-#212 entry
+        { platform: 'ios', token: OTHER.toUpperCase(), teamAbbr: 'NHL:TOR', prefs: null },     // someone else's, no duplicate yet
+        { platform: 'ios', token: IOS_TOKEN, teamAbbr: 'NHL:BOS', prefs: { goal: true } },      // appended by a post-#212 re-subscribe
+      ],
+    }) })
+    // An unrelated Web Push subscribe is enough to trigger the cleanup.
+    const res = await handleNHL(
+      makeRequest('/push/subscribe', { method: 'POST', body: { endpoint: EP_2, keys: PUSH_KEYS } }),
+      env, makeCtx(), new URL('https://example.com/push/subscribe')
+    )
+
+    expect((await res.json()).total).toBe(3)
+    const stored = JSON.parse(await env.CACHE.get('push:subs'))
+    expect(stored).toEqual([
+      { platform: 'ios', token: IOS_TOKEN, teamAbbr: 'NHL:BOS', prefs: { goal: true } },
+      { platform: 'ios', token: OTHER, teamAbbr: 'NHL:TOR', prefs: null },
+      { endpoint: EP_2, keys: PUSH_KEYS, teamAbbr: 'NHL:CAR', prefs: null },
+    ])
+  })
+
+  it('still matches a Web Push endpoint exactly (case matters there)', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({
+      'push:subs': [{ endpoint: EP_1, teamAbbr: 'NHL:CAR', prefs: null }],
+    }) })
+    const res = await handleNHL(
+      makeRequest('/push/subscribe', { method: 'POST', body: { endpoint: EP_1.replace('ep-1', 'EP-1'), teamAbbr: 'BOS' } }),
+      env, makeCtx(), new URL('https://example.com/push/subscribe')
+    )
+    expect((await res.json()).total).toBe(2)
+  })
 })
 
 describe('POST /push/unsubscribe', () => {
