@@ -253,6 +253,8 @@ describe('startLiveActivities() for a HockeyTech league', () => {
       'la:start:ahl:CLE': [{ token: a, locale: 'en' }],
       'la:start:ahl:GR': [{ token: a, locale: 'en' }, { token: b, locale: 'fr' }],
       'la:start:GR': [{ token: 'cc'.repeat(32), locale: 'en' }], // not an NHL team; never read
+      [`la:startteams:${a}`]: ['ahl:CLE', 'ahl:GR'],
+      [`la:startteams:${b}`]: ['ahl:GR'],
     }) })
     const state = { homeScore: 0, awayScore: 0 }
     await startLiveActivities(env, 'ahl', { gameId: 1029093, homeAbbr: 'CLE', awayAbbr: 'GR' }, state)
@@ -268,6 +270,66 @@ describe('startLiveActivities() for a HockeyTech league', () => {
 
     await startLiveActivities(env, 'ahl', { gameId: 1029093, homeAbbr: 'CLE', awayAbbr: 'GR' }, state)
     expect(sendLiveActivityPushMock).toHaveBeenCalledTimes(2)
+  })
+
+  // 2026-10-13: the owner's token sat on `la:start:PIT` while its record
+  // said ["nhl:CAR", "pwhl:MTL"], and a PIT @ CHI activity was started on
+  // their phone. The list is an index; the record decides.
+  describe('a token whose record no longer follows the team', () => {
+    const a = 'aa'.repeat(32), b = 'bb'.repeat(32), c = 'cc'.repeat(32)
+    const game = { gameId: 2026020123, homeAbbr: 'PIT', awayAbbr: 'CHI' }
+    const state = { homeScore: 0, awayScore: 0 }
+    const list = async (env, key) => JSON.parse(await env.CACHE.get(key) || '[]')
+
+    it('is skipped and taken off the list when its record names other teams', async () => {
+      const env = makeEnv({ CACHE: makeFakeCache({
+        'la:start:PIT': [{ token: a, locale: 'en' }, { token: b, locale: 'en' }],
+        [`la:startteams:${a}`]: ['nhl:CAR', 'pwhl:MTL'],
+        [`la:startteams:${b}`]: ['nhl:PIT'],
+      }) })
+      await startLiveActivities(env, 'nhl', game, state)
+      expect(sendLiveActivityPushMock).toHaveBeenCalledTimes(1)
+      expect(sendLiveActivityPushMock.mock.calls[0][0]).toBe(b)
+      expect(await list(env, 'la:start:PIT')).toEqual([{ token: b, locale: 'en' }])
+      expect(await list(env, laKeys.started('nhl', game.gameId))).toEqual([b])
+    })
+
+    it('is pruned when it has no record at all, and a league-scoped record must name the league', async () => {
+      const env = makeEnv({ CACHE: makeFakeCache({
+        'la:start:pwhl:MIN': [{ token: a, locale: 'fr' }, { token: b, locale: 'en' }, { token: c, locale: 'en' }],
+        [`la:startteams:${b}`]: ['nhl:MIN'], // the NHL's Wild, not the PWHL's Frost
+        [`la:startteams:${c}`]: ['pwhl:MIN'],
+      }) })
+      await startLiveActivities(env, 'pwhl', { gameId: 300, homeAbbr: 'MIN', awayAbbr: 'TOR' }, state)
+      expect(sendLiveActivityPushMock).toHaveBeenCalledTimes(1)
+      expect(sendLiveActivityPushMock.mock.calls[0][0]).toBe(c)
+      expect(await list(env, 'la:start:pwhl:MIN')).toEqual([{ token: c, locale: 'en' }])
+    })
+
+    it('leaves a list alone, and starts nobody, when every token on it is stale', async () => {
+      const env = makeEnv({ CACHE: makeFakeCache({
+        'la:start:PIT': [{ token: a, locale: 'en' }],
+        [`la:startteams:${a}`]: ['nhl:CAR'],
+      }) })
+      await startLiveActivities(env, 'nhl', game, state)
+      expect(sendLiveActivityPushMock).not.toHaveBeenCalled()
+      expect(await list(env, 'la:start:PIT')).toEqual([])
+      expect(await env.CACHE.get(laKeys.started('nhl', game.gameId))).toBeNull()
+    })
+
+    it('still honours a pre-2026-10 single-team record, and prunes a stale token next to a dead one', async () => {
+      const env = makeEnv({ CACHE: makeFakeCache({
+        'la:start:PIT': [{ token: a, locale: 'en' }, { token: b, locale: 'en' }, { token: c, locale: 'en' }],
+        [`la:startteam:${a}`]: 'PIT', // legacy record, never re-registered
+        [`la:startteams:${b}`]: ['nhl:CHI'],
+        [`la:startteams:${c}`]: ['nhl:PIT'],
+      }) })
+      sendLiveActivityPushMock.mockResolvedValueOnce('ok').mockResolvedValueOnce('expired')
+      await startLiveActivities(env, 'nhl', game, state)
+      expect(sendLiveActivityPushMock.mock.calls.map(c => c[0])).toEqual([a, c])
+      // b (stale record) and c (Apple says expired) are both gone; a stays.
+      expect(await list(env, 'la:start:PIT')).toEqual([{ token: a, locale: 'en' }])
+    })
   })
 })
 
@@ -295,7 +357,7 @@ describe('pollAHL: a game\'s Live Activities start, update and end', () => {
 
   it('AHL 1029093 replayed: started for CLE\'s follower, updated, then ended once with the final', async () => {
     const start = 'aa'.repeat(32), update = 'bb'.repeat(32)
-    const env = makeEnv({ VAPID_PRIVATE_KEY: 'k', CACHE: makeFakeCache({ 'la:start:ahl:CLE': [{ token: start, locale: 'en' }] }) })
+    const env = makeEnv({ VAPID_PRIVATE_KEY: 'k', CACHE: makeFakeCache({ 'la:start:ahl:CLE': [{ token: start, locale: 'en' }], [`la:startteams:${start}`]: ['ahl:CLE'] }) })
     const tick = async (sb, gameRow, n) => {
       await env.CACHE.delete('ahl:scorebar') // the scorebar's 60 s cache, between minutes
       installFetch({ table: 'ahl_game_log', gameRow, scorebar: [sb], pbp: pbp1029093.slice(0, n) })
@@ -369,7 +431,7 @@ describe('pollPWHL: Live Activities', () => {
 
   it('starts for a follower of either team, pushes updates, and ends once at the final', async () => {
     const start = 'aa'.repeat(32), update = 'bb'.repeat(32)
-    const env = makeEnv({ VAPID_PRIVATE_KEY: 'k', CACHE: makeFakeCache({ 'la:start:pwhl:TOR': [{ token: start, locale: 'fr' }] }) })
+    const env = makeEnv({ VAPID_PRIVATE_KEY: 'k', CACHE: makeFakeCache({ 'la:start:pwhl:TOR': [{ token: start, locale: 'fr' }], [`la:startteams:${start}`]: ['pwhl:TOR'] }) })
     const gameRow = { game_id: 300, home_team_id: 1, away_team_id: 6, home_score: 0, away_score: 0, game_state: 'In Progress', game_status_code: 2 }
     const sb = (over) => ({ ID: '300', HomeGoals: '0', VisitorGoals: '1', GameStatus: '2', GameStatusString: 'In Progress', PeriodNameShort: '2', GameClock: '11:20', Intermission: '0', ...over })
     const pbp = [
