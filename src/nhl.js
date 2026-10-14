@@ -7,7 +7,7 @@
 
 import { penaltyText, penaltyDescription } from './penaltyText.js';
 import { startLiveActivities as startLeagueLiveActivities, pushLiveActivities, handleLiveActivity } from './liveActivity.js';
-import { checkPublicWriteRateLimit, readJsonObject, h2hNarrativeStats, isAllowedPushEndpoint, isValidPushKeys, normalizeApnsToken, subId, MAX_PUSH_SUBS, PUSH_SUBS_TTL, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, ParamError } from './shared.js';
+import { checkPublicWriteRateLimit, readJsonObject, h2hNarrativeStats, isAllowedPushEndpoint, isValidPushKeys, normalizeApnsToken, normalizePushSubs, subId, MAX_PUSH_SUBS, PUSH_SUBS_TTL, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, ParamError } from './shared.js';
 import { kvGet, kvPut, json, LIVE_MAX_AGE, nhlSeasonEnd, etDateString, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore, sbParam, sbParamList, sbRowsIfTable, secretMatches, readPollSecret, withParamErrors } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
@@ -3831,7 +3831,11 @@ Only reference the two teams named above and the numbers given -- no player name
   // (deduped by token / endpoint). Public: rate-limited per IP, validated
   // by parsePushSubscribeBody(), and capped at MAX_PUSH_SUBS entries -- a
   // new subscription past the cap is a 429, an update to an existing one
-  // still goes through (security audit 2026-10-13 #4).
+  // still goes through (security audit 2026-10-13 #4). iOS tokens match
+  // case-insensitively: the stored token is lowercase since #212 while
+  // entries from before carry Capacitor's uppercase hex, and the list is
+  // put through normalizePushSubs() first so those legacy entries (and
+  // the duplicates they caused) collapse on the next write.
   if (url.pathname === '/push/subscribe' && request.method === 'POST') {
     const limited = await checkPublicWriteRateLimit(env, request, 'push-subscribe');
     if (limited) return limited;
@@ -3842,8 +3846,10 @@ Only reference the two teams named above and the numbers given -- no player name
     const newSub = parsed.sub;
     const isIOS = newSub.platform === 'ios';
 
-    const subs = (await kvGet(env, 'push:subs')) || [];
-    const idx = subs.findIndex(s => subId(s) === subId(newSub) && (s.platform === 'ios') === isIOS);
+    const subs = normalizePushSubs((await kvGet(env, 'push:subs')) || []);
+    const newId = isIOS ? newSub.token : newSub.endpoint;
+    const idx = subs.findIndex(s => (s.platform === 'ios') === isIOS
+      && (isIOS ? typeof s.token === 'string' && s.token.toLowerCase() === newId : subId(s) === newId));
     if (idx >= 0) {
       subs[idx] = newSub; // update team/prefs on re-subscribe (and clear any failure count)
     } else {

@@ -1390,6 +1390,39 @@ export function normalizeApnsToken(token) {
   return /^[0-9a-f]{64,200}$/.test(t) ? t : null;
 }
 
+// push:subs with every iOS token lowercased and case-duplicates merged.
+// normalizeApnsToken() (#212, 2026-10-13) started storing iOS tokens
+// lowercase, but Capacitor's push plugin hands the app its token in
+// UPPERCASE hex, so every iOS device subscribed before #212 has an
+// uppercase entry. The subscribe upsert matched subId() exactly, so a
+// re-subscribe appended a second, lowercase entry instead of replacing
+// the old one: the device got each alert twice, the frozen uppercase
+// entry still carrying the teams it followed back then. Run on the list
+// before an upsert (POST /push/subscribe): the later entry wins a
+// duplicate, as upserts replace in place and appends go last, so it is
+// the most recently written. Web Push entries pass through untouched.
+// Returns the same array when nothing needed changing.
+export function normalizePushSubs(subs) {
+  let changed = false;
+  const byToken = new Map(); // lowercased token -> index into `out`
+  const out = [];
+  for (const s of subs) {
+    if (s?.platform !== 'ios' || typeof s.token !== 'string') { out.push(s); continue; }
+    const token = s.token.toLowerCase();
+    const entry = token === s.token ? s : { ...s, token };
+    if (entry !== s) changed = true;
+    const at = byToken.get(token);
+    if (at === undefined) {
+      byToken.set(token, out.length);
+      out.push(entry);
+    } else {
+      out[at] = entry; // later wins
+      changed = true;
+    }
+  }
+  return changed ? out : subs;
+}
+
 // push:subs is one KV value (25 MiB limit; a subscription is ~400-600
 // bytes). Past MAX_PUSH_SUBS a new subscription is refused (429) and an
 // existing one can still update its teams/prefs. A hobby app's real list
