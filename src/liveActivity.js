@@ -126,6 +126,18 @@ export function liveActivityTeamKey(raw) {
 // ── Push-to-start ─────────────────────────────────────────────────────
 // One `event: start` push per start token per game, to every token
 // following either team. `game` is { gameId, homeAbbr, awayAbbr }.
+//
+// A team's list (`la:start:*`) is only a lookup index; the token's own
+// record (`la:startteams:{token}`, or the pre-2026-10 `la:startteam`) is
+// what says which teams it follows. The two can disagree: /start-token
+// removes a token only from the lists of the teams its previous record
+// named, so a list entry written while a record was missing, or by two
+// launches racing each other (see the handler), outlives the follow. On
+// 2026-10-13 the owner's token was still on `la:start:PIT` with a record
+// of ["nhl:CAR", "pwhl:MTL"], and a PIT @ CHI activity landed on their
+// phone. So before a start push the record is checked, and a token whose
+// record is missing or doesn't name this team is skipped and taken off
+// the list -- the lists heal themselves at the next game.
 export async function startLiveActivities(env, league, { gameId, homeAbbr, awayAbbr }, state) {
   const sentKey = laKeys.started(league, gameId);
   const sent = new Set((await kvGet(env, sentKey)) || []);
@@ -134,7 +146,15 @@ export async function startLiveActivities(env, league, { gameId, homeAbbr, awayA
     if (!isLiveActivityTeam(league, team)) continue;
     const listKey = laKeys.start(league, team);
     const entries = (await kvGet(env, listKey)) || [];
-    const due = entries.filter(e => !sent.has(e.token));
+    const candidates = entries.filter(e => !sent.has(e.token));
+    if (!candidates.length) continue;
+    const follows = await Promise.all(candidates.map(e => tokenFollows(env, e.token, league, team)));
+    const stale = new Set(candidates.filter((_, i) => !follows[i]).map(e => e.token));
+    if (stale.size) {
+      console.log(`[la] ${league} ${team}: dropping ${stale.size} start token(s) whose record no longer follows the team`);
+      await kvPut(env, listKey, entries.filter(e => !stale.has(e.token)), LA_START_TTL);
+    }
+    const due = candidates.filter(e => !stale.has(e.token));
     if (!due.length) continue;
     const now = Math.floor(Date.now() / 1000);
     const colors = LA_TEAM_COLORS[league];
@@ -158,9 +178,23 @@ export async function startLiveActivities(env, league, { gameId, homeAbbr, awayA
     due.forEach(e => sent.add(e.token));
     changed = true;
     const dead = new Set(due.filter((_, i) => results[i] === 'expired').map(e => e.token));
-    if (dead.size) await kvPut(env, listKey, entries.filter(e => !dead.has(e.token)), LA_START_TTL);
+    if (dead.size) await kvPut(env, listKey, entries.filter(e => !stale.has(e.token) && !dead.has(e.token)), LA_START_TTL);
   }
   if (changed) await kvPut(env, sentKey, [...sent], LA_TOKEN_TTL);
+}
+
+// Whether a start token's own record says it follows `team` in `league`:
+// `la:startteams:{token}` lists "{league}:{ABBR}" keys; a token from a
+// build before 2026-10 that hasn't launched since has only the single-NHL-
+// team `la:startteam:{token}` instead. No record at all means the token
+// was never registered through /start-token in its current form (rotated
+// by iOS, or a list entry from before the record existed), so it isn't
+// started: a device that still follows the team re-registers at its next
+// launch and is back on the list within the day.
+async function tokenFollows(env, token, league, team) {
+  const [teams, legacy] = await Promise.all([kvGet(env, `la:startteams:${token}`), kvGet(env, `la:startteam:${token}`)]);
+  if (Array.isArray(teams) && teams.includes(`${league}:${team}`)) return true;
+  return league === 'nhl' && typeof legacy === 'string' && legacy === team;
 }
 
 // ── Updates ───────────────────────────────────────────────────────────
@@ -390,6 +424,15 @@ export async function handleLiveActivity(request, env, url) {
         await kvPut(env, listKey, entries.filter(e => e.token !== token), LA_START_TTL);
       }
     }
+    // Read-modify-write without a compare-and-set: KV has none. The JS
+    // app and the native LiveActivityRegistrar both POST the same token at
+    // launch, so two of these can interleave. Same token, same teams: both
+    // write the same list, harmless. Two tokens joining one team at once:
+    // one write can drop the other's entry, and that device isn't started
+    // until its next launch re-registers it (one list write per team, so
+    // the window is one KV round trip). A record and a list can also end
+    // up disagreeing; startLiveActivities() checks the record before every
+    // start push and prunes the list, so that heals at the next game.
     for (const [t, list] of keepLists) {
       const entries = list.filter(e => e.token !== token);
       entries.push({ token, locale });

@@ -4517,6 +4517,7 @@ describe('startLiveActivities()', () => {
     const env = makeEnv({ CACHE: makeFakeCache({
       'la:start:CAR': [{ token: a, locale: 'en' }, { token: b, locale: 'fr' }],
       'la:start:NSH': [{ token: c, locale: 'en' }],
+      [`la:startteams:${a}`]: ['nhl:CAR'], [`la:startteams:${b}`]: ['nhl:CAR'], [`la:startteams:${c}`]: ['nhl:NSH'],
     }) })
     sendLiveActivityPushMock.mockClear()
     await startLiveActivities(env, game, state)
@@ -4536,7 +4537,10 @@ describe('startLiveActivities()', () => {
   })
 
   it('drops a start token Apple says is dead', async () => {
-    const env = makeEnv({ CACHE: makeFakeCache({ 'la:start:CAR': [{ token: a, locale: 'en' }, { token: b, locale: 'en' }] }) })
+    const env = makeEnv({ CACHE: makeFakeCache({
+      'la:start:CAR': [{ token: a, locale: 'en' }, { token: b, locale: 'en' }],
+      [`la:startteams:${a}`]: ['nhl:CAR'], [`la:startteams:${b}`]: ['nhl:CAR'],
+    }) })
     sendLiveActivityPushMock.mockClear()
     sendLiveActivityPushMock.mockResolvedValueOnce('expired').mockResolvedValueOnce('ok')
     await startLiveActivities(env, game, state)
