@@ -15,7 +15,7 @@ src/
 ├── echl.js      # ECHL config for hockeytech.js (added 2026-08)
 ├── liveActivity.js # iOS Live Activities for all four leagues: push-to-start, updates, the HockeyTech ContentState, /live-activity/* (2026-10)
 ├── ops.js       # Owner ops alerts: /ops/notify, /ops/subscribe, per-league cron health + self-alert (2026-10)
-├── dispatch.js  # Starts the pipeline's daily GitHub workflows on time (workflow_dispatch, 2026-10)
+├── dispatch.js  # Starts the pipeline's daily GitHub workflows and social posts on time (workflow_dispatch, 2026-10)
 ├── milestones.js # Which `milestones` rows belong to nhl/pwhl/ahl/echl, for /milestones and /milestones/latest (2026-10)
 ├── callupWatch.js       # /nhl/callup-watch ranking (pure; nhl.js gathers inputs) (2026-10)
 ├── edge.js              # /nhl/edge/{skater,goalie,team,leaders} — NHL EDGE tracking stats (2026-10)
@@ -234,7 +234,7 @@ Set via `wrangler secret put <NAME>`. Never commit values.
 | `OPENROUTER_API_KEY` | AI generation for every narrative/scouting/prediction route (`shared.js`'s `generateText()`) — see [Model provider](#model-provider-openrouter) below |
 | `POLL_SECRET` | Protects `POST /poll` manual trigger and the other secret-gated routes, including `POST /ops/notify` (the pipeline's failure reports). Send it as an `X-Poll-Secret` header; `?secret=` is deprecated — see [Sending `POLL_SECRET`](#sending-poll_secret) |
 | `ADMIN_EMAILS` | Comma-separated allowlist for `GET /admin/health` (news-feed source health). Optional — falls back to a single hardcoded default (`matt@ehlers.io`) if unset. See `shared.js`'s `verifyAdminUser()`. |
-| `GITHUB_DISPATCH_TOKEN` | Fine-grained GitHub PAT with **Actions: write** on `ehlersio/eyewall-pipeline`, used by `dispatch.js` to start the pipeline's daily workflows (2026-10). Optional: without it the Worker logs once a day and the workflows run on GitHub's own (late) schedule. See [Pipeline scheduling](#pipeline-scheduling) |
+| `GITHUB_DISPATCH_TOKEN` | Fine-grained GitHub PAT with **Actions: write** on `ehlersio/eyewall-pipeline`, used by `dispatch.js` to start the pipeline's daily workflows and social posts (2026-10). Optional: without it the Worker logs once a day and the workflows run on GitHub's own (late) schedule. See [Pipeline scheduling](#pipeline-scheduling) |
 | `SUPABASE_SERVICE_KEY` | Supabase service-role key (the pipeline's `SUPABASE_SERVICE_KEY`), used only by `shared.js`'s `patchGameLog()` to write puck drop and finals into `pwhl_game_log`/`ahl_game_log`/`echl_game_log` (2026-10). Every read still uses the public anon key. Optional: without it the pollers log once per game and skip the write |
 | `VAPID_PRIVATE_KEY` | Web Push VAPID private key |
 | `VAPID_PUBLIC_KEY` | Web Push VAPID public key |
@@ -323,9 +323,12 @@ Key patterns:
 | `ops:subs` | 1yr | Devices that get ops alerts — same entry shape as `push:subs` (`{endpoint, keys}` or `{platform: 'ios', token}`), owner-only via `/ops/subscribe` |
 | `ops:notified:{source}` | 30min | Debounce: at most one ops push per source per 30 min |
 | `ops:dispatched:{workflow}:{YYYY-MM-DD}` | 36h | Marker: the Worker dispatched that pipeline workflow on that UTC day (`dispatch.js`) |
-| `ops:dispatch:retry:{workflow}:{YYYY-MM-DD}` | 10min | Back-off after a failed dispatch, so a bad token isn't retried every minute |
+| `ops:dispatched:social-posts.yml:{kind}:{HH:MM}:{YYYY-MM-DD}` | 36h | Marker: the Worker dispatched that social post's slot on that UTC day (one per slot, so the backup an hour later has its own) |
+| `ops:dispatch:retry:{workflow}:{YYYY-MM-DD}` | 10min | Back-off after a failed dispatch, so a bad token isn't retried every minute (`…:social-posts.yml:{kind}:{HH:MM}:{YYYY-MM-DD}` for a post slot) |
+| `ops:dispatch:spacing:social-posts.yml` | 5min | A social post was just dispatched; the next one waits, so the workflow's concurrency group never cancels a pending run |
 | `ops:dispatch:no-token:{YYYY-MM-DD}` | 36h | `GITHUB_DISPATCH_TOKEN` is unset; already logged today |
 | `health:ops:dispatch-{workflow}` | none | The latest dispatch attempt for that workflow: `{status: 'ok'\|'failure', title, body, url, at}` (same shape as `/ops/notify`'s records) |
+| `health:ops:dispatch-social-posts.yml:{kind}` | none | The same for one social post kind (its first slot or backup, whichever ran last) |
 | `gamelog:patch:no-key:{table}:{gameId}` | 24h | `SUPABASE_SERVICE_KEY` is unset and this game's game_log write was skipped; already logged |
 | `alerts:recent:{LEAGUE}` | 96h | Every alert the pollers sent for that league (NHL/PWHL/AHL/ECHL) in the last 72h, at most 400: `{team, vs, type, title, body, url, at}`. Collected during a cron run and written once per league at its end (`shared.js`'s `recordAlert`/`flushAlertLog`), for the app's notifications bell |
 | `push:subs` | 1yr | Push subscriptions — Web Push (`endpoint`+`keys`) and, as of 2026-09, native iOS (`platform: 'ios'` + APNs device `token`) share this one array; `sendPush()`/`broadcast()` branch on `sub.platform`. A sub follows one or more teams: `teams: [{key: 'NHL:CAR', prefs}]` (2026-09, the app's followed teams; `teamAbbr`/`prefs` = the first), matched by `shared.js`'s `pushTargets()` — someone following both teams in a game gets each alert once, from the team higher in their list. At most `MAX_PUSH_SUBS` (20,000) entries; an entry may carry `failures` (consecutive failed sends, dropped at 5) |
@@ -639,6 +642,18 @@ GitHub's `on: schedule` starts the pipeline's workflows 3-7 hours late, and the 
 - The workflows keep `on: schedule` as a fallback. A scheduled run skips itself if a run of that workflow already succeeded that UTC day, and a dispatched run never skips.
 - Needs the `GITHUB_DISPATCH_TOKEN` secret. Without it nothing is dispatched (logged once a day) and the GitHub schedule carries on as before. The first day the token is set, every slot already past that day is dispatched on the next tick.
 
+### Social posts
+
+Since 2026-10-15 the Instagram + Facebook posts (`social-posts.yml`) are dispatched the same way, and its GitHub cron list stays as the late fallback. GitHub had been starting them 4-5 hours late (the 15:30 UTC winners card went out near 19:30 UTC on 2026-10-14).
+
+- **One entry per post kind per slot.** `SOCIAL_SLOTS` in `dispatch.js` mirrors the schedule comment at the top of `social-posts.yml`: 18 kinds, each with a first slot and a backup an hour later, some only on certain UTC weekdays (`days`, 0 = Sunday, as cron). Keep the two in sync when a post is added or moved.
+- **Inputs.** Each dispatch sends `{ref: 'main', inputs: {kind, dry_run: 'false'}}`. The workflow's `dry_run` defaults to true on a dispatch, so leaving it out would render without posting.
+- **Per-slot markers.** Each slot has its own marker, `ops:dispatched:social-posts.yml:<kind>:<HH:MM>:<date>`, so the backup is dispatched even though the first slot was. That keeps the workflow's design: a backup run retries a first run that exited 1 on stale data, and does nothing if the post is already in `social_posts`.
+- **Window.** A slot is only dispatched within 45 minutes of its time. A slot missed for longer, after a Worker outage or around a deploy, is left to its backup and to the GitHub fallback rather than posted hours late.
+- **Spacing.** After a post is dispatched, the next waits 5 minutes (`ops:dispatch:spacing:social-posts.yml`). The workflow's concurrency group keeps one run pending and cancels it when another queues, so slots that come due together go out a few minutes apart, earliest first. Runs take under 3 minutes and scheduled slots are at least 15 minutes apart.
+- **Health.** Each kind's latest attempt is in `health:ops:dispatch-social-posts.yml:<kind>`, so one post's status never overwrites another's on `/admin/health`.
+- **Fallback.** A scheduled run of `social-posts.yml` hours later finds the post already published and exits ("Already published everywhere -- nothing to do"). It needs no skip step of its own.
+
 ## Finals written by the Worker
 
 Since 2026-10 the HockeyTech pollers (`pollPWHL`, `pollAHL`, `pollECHL`) write a game's live state into `{league}_game_log` themselves, instead of waiting for the pipeline's `live-score-refresh.yml`, which GitHub ran 3-4 times a day rather than every 5 minutes. Two writes per game, never one per tick, each from the same gate that sends that push:
@@ -664,7 +679,7 @@ So `/standings`' L10/streak, `/lastgame` and every other `game_state=eq.Final` r
 ## Related Repos
 
 - [eyewallanalytics](https://github.com/ehlersio/eyewallanalytics) — React/Vite web app (Cloudflare Pages) and the Capacitor iOS app (`ios/`: native push, the Live Activity widget's `GameActivityAttributes.swift`)
-- [eyewall-pipeline](https://github.com/ehlersio/eyewall-pipeline) — Python data pipeline (GitHub Actions; its daily workflows are dispatched on time by this Worker — see [Pipeline scheduling](#pipeline-scheduling))
+- [eyewall-pipeline](https://github.com/ehlersio/eyewall-pipeline) — Python data pipeline (GitHub Actions; its daily workflows and social posts are dispatched on time by this Worker — see [Pipeline scheduling](#pipeline-scheduling))
 - [react-hockey-rink](https://github.com/ehlersio/react-hockey-rink) — the rink/shot-map library (its `SHOT_AREAS`/`shotArea` define the NHL shot areas the app bins `/pwhl/league-goalie-shots` into, and name the areas `/nhl/edge/goalie` returns)
 
 ---

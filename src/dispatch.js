@@ -1,19 +1,36 @@
 /**
- * dispatch.js — the Worker starts the pipeline's daily runs (2026-10)
+ * dispatch.js — the Worker starts the pipeline's runs on time (2026-10)
  *
  * GitHub's `on: schedule` starts these workflows 3-7 hours late, and the
  * AI pipeline's morning predictions landed after afternoon puck drops
  * (audit 2026-10-06 §4). The Worker's own cron runs every minute on time,
- * so it triggers each workflow with a `workflow_dispatch` once a day at
- * its slot. The workflows keep `on: schedule` as a fallback, and a
- * scheduled run skips itself when a run already succeeded that day.
+ * so it triggers each workflow with a `workflow_dispatch` at its slot. The
+ * workflows keep `on: schedule` as a fallback.
  *
- * Per workflow per UTC day: once the clock passes `atUTC`, the first tick
- * whose `ops:dispatched:<workflow>:<date>` marker is absent POSTs the
- * dispatch, and a 204 writes the marker (36h). A failed dispatch is
- * retried after DISPATCH_RETRY_SECONDS rather than every minute. Each
- * attempt is recorded in `health:ops:dispatch-<workflow>`, same shape as
- * the /ops/notify records.
+ * Daily data workflows (one slot each): once the clock passes `atUTC`,
+ * the first tick whose `ops:dispatched:<workflow>:<date>` marker is absent
+ * POSTs the dispatch, and a 204 writes the marker (36h). A scheduled
+ * fallback run skips itself when a run already succeeded that day.
+ *
+ * Social posts (social-posts.yml, 2026-10-15): one entry per post kind per
+ * slot, sent with `inputs` ({kind, dry_run: 'false'}; the workflow's
+ * dry_run defaults to true on a dispatch). Each kind has a first slot and
+ * a backup an hour later, and each slot has its own marker
+ * (`ops:dispatched:social-posts.yml:<kind>:<HH:MM>:<date>`), so the backup
+ * dispatches even though the first did. `days` limits a slot to those UTC
+ * weekdays (0 = Sunday, as cron). `windowMinutes` stops a slot from being
+ * dispatched long after its time (after a Worker outage, or on deploy):
+ * past it, the next slot or the GitHub fallback covers the post.
+ * `spacingSeconds` holds the workflow's next dispatch back that long after
+ * one is accepted, because its concurrency group keeps one run pending
+ * and cancels it when another queues: slots that come due together go out
+ * a few minutes apart instead. A fallback run finds the post already in
+ * social_posts and exits.
+ *
+ * A failed dispatch is retried after DISPATCH_RETRY_SECONDS rather than
+ * every minute. Each attempt is recorded in `health:ops:dispatch-<workflow>`
+ * (`dispatch-social-posts.yml:<kind>` for posts), same shape as the
+ * /ops/notify records.
  *
  * Needs GITHUB_DISPATCH_TOKEN (a fine-grained PAT with Actions: write on
  * eyewall-pipeline). Without it this logs once a day and does nothing.
@@ -22,7 +39,7 @@
 import { kvPut } from './shared.js';
 
 export const DISPATCH_REPO = 'ehlersio/eyewall-pipeline';
-export const DISPATCH_SCHEDULE = [
+export const DAILY_SCHEDULE = [
   { workflow: 'nightly.yml',          atUTC: '07:00' },
   { workflow: 'pwhl-nightly.yml',     atUTC: '07:20' },
   { workflow: 'ahl-nightly.yml',      atUTC: '07:40' },
@@ -30,31 +47,90 @@ export const DISPATCH_SCHEDULE = [
   { workflow: 'moneypuck-ingest.yml', atUTC: '10:00' },
   { workflow: 'ai_pipeline.yml',      atUTC: '14:00' },
 ];
+
+// social-posts.yml, from the schedule comment at the top of that workflow
+// (KEEP IN SYNC: a slot here with no matching cron there still posts; a
+// cron there with no slot here posts late). `days` are UTC weekdays,
+// 0 = Sunday; omitted = daily.
+export const SOCIAL_WORKFLOW = 'social-posts.yml';
+const SOCIAL_WINDOW_MINUTES = 45;  // the backup slot is 60 min after the first
+const SOCIAL_SPACING_SECONDS = 5 * 60; // runs take under 3 min
+const SUN = 0, MON = 1, TUE = 2, WED = 3, THU = 4, FRI = 5;
+const SOCIAL_SLOTS = [
+  // kind              first    backup   UTC weekdays
+  ['rankings',       '15:00', '16:00', [MON]],
+  ['winners',        '15:30', '16:30'],
+  ['recap',          '18:00', '19:00', [MON]],
+  ['leaders',        '17:00', '18:00', [TUE]],
+  ['pwhl-winners',   '15:45', '16:45'],
+  ['pwhl-recap',     '20:00', '21:00', [TUE]],
+  ['minor-winners',  '16:15', '17:15'],
+  ['minor-recap',    '17:00', '18:00', [WED]],
+  ['pwhl-leaders',   '17:00', '18:00', [THU]],
+  ['minor-leaders',  '21:00', '22:00', [THU]],
+  ['minor-rankings', '17:30', '18:30', [MON]],
+  ['pwhl-rankings',  '19:30', '20:30', [MON]],
+  ['milk-carton',    '21:00', '22:00', [MON]],
+  ['goal-of-week',   '17:00', '18:00', [FRI]],
+  ['trends',         '15:00', '16:00', [FRI]],
+  ['pwhl-trends',    '20:00', '21:00', [FRI]],
+  ['minor-trends',   '22:00', '23:00', [FRI]],
+  ['cherry-picked',  '15:00', '16:00', [SUN]],
+];
+const socialEntries = SOCIAL_SLOTS.flatMap(([kind, ...rest]) => {
+  const days = Array.isArray(rest[rest.length - 1]) ? rest.pop() : undefined;
+  return rest.map(atUTC => ({
+    workflow: SOCIAL_WORKFLOW,
+    atUTC,
+    kind,
+    inputs: { kind, dry_run: 'false' },
+    ...(days && { days }),
+    windowMinutes: SOCIAL_WINDOW_MINUTES,
+    spacingSeconds: SOCIAL_SPACING_SECONDS,
+  }));
+}).sort((a, b) => a.atUTC.localeCompare(b.atUTC)); // catch-up goes earliest slot first
+
+export const DISPATCH_SCHEDULE = [...DAILY_SCHEDULE, ...socialEntries];
+
 const MARKER_TTL = 36 * 3600;
 export const DISPATCH_RETRY_SECONDS = 10 * 60;
 
-const markerKey = (workflow, date) => `ops:dispatched:${workflow}:${date}`;
-const retryKey = (workflow, date) => `ops:dispatch:retry:${workflow}:${date}`;
+// The six daily workflows keep their original keys (`<workflow>:<date>`);
+// a post's keys add its kind and slot.
+const slotId = e => (e.kind ? `${e.workflow}:${e.kind}:${e.atUTC}` : e.workflow);
+const markerKey = (e, date) => `ops:dispatched:${slotId(e)}:${date}`;
+const retryKey = (e, date) => `ops:dispatch:retry:${slotId(e)}:${date}`;
+const spacingKey = workflow => `ops:dispatch:spacing:${workflow}`;
+const healthSource = e => `dispatch-${e.kind ? `${e.workflow}:${e.kind}` : e.workflow}`;
+const label = e => (e.kind ? `${e.workflow} (${e.kind} ${e.atUTC})` : e.workflow);
 const workflowUrl = workflow => `https://github.com/${DISPATCH_REPO}/actions/workflows/${workflow}`;
 
-async function record(env, workflow, status, title, body) {
-  const rec = { status, title, body, url: workflowUrl(workflow), at: new Date().toISOString() };
-  await env.CACHE.put(`health:ops:dispatch-${workflow}`, JSON.stringify(rec)); // no TTL, as /ops/notify
+const minutesOf = hhmm => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+const isDue = (e, hhmm, weekday) => {
+  if (e.days && !e.days.includes(weekday)) return false;
+  if (hhmm < e.atUTC) return false;
+  return e.windowMinutes == null || minutesOf(hhmm) - minutesOf(e.atUTC) < e.windowMinutes;
+};
+
+async function record(env, e, status, title, body) {
+  const rec = { status, title, body, url: workflowUrl(e.workflow), at: new Date().toISOString() };
+  await env.CACHE.put(`health:ops:${healthSource(e)}`, JSON.stringify(rec)); // no TTL, as /ops/notify
 }
 
-// Called from scheduled() every tick. Returns the workflows dispatched
-// this tick (for tests and logs).
+// Called from scheduled() every tick. Returns what was dispatched this tick
+// (for tests and logs): the workflow file, or `<workflow>:<kind>` for a post.
 export async function maybeDispatchWorkflows(env, now = new Date()) {
   const iso = now.toISOString();
   const date = iso.slice(0, 10);
   const hhmm = iso.slice(11, 16);
-  const due = DISPATCH_SCHEDULE.filter(e => hhmm >= e.atUTC);
+  const weekday = now.getUTCDay();
+  const due = DISPATCH_SCHEDULE.filter(e => isDue(e, hhmm, weekday));
   if (!due.length) return [];
 
   const pending = [];
   for (const e of due) {
-    if (await env.CACHE.get(markerKey(e.workflow, date))) continue;
-    if (await env.CACHE.get(retryKey(e.workflow, date))) continue;
+    if (await env.CACHE.get(markerKey(e, date))) continue;
+    if (await env.CACHE.get(retryKey(e, date))) continue;
     pending.push(e);
   }
   if (!pending.length) return [];
@@ -62,14 +138,20 @@ export async function maybeDispatchWorkflows(env, now = new Date()) {
   if (!env.GITHUB_DISPATCH_TOKEN) {
     const noTokenKey = `ops:dispatch:no-token:${date}`;
     if (!(await env.CACHE.get(noTokenKey))) {
-      console.warn(`[dispatch] GITHUB_DISPATCH_TOKEN not set: not dispatching ${pending.map(e => e.workflow).join(', ')} (logged once a day)`);
+      console.warn(`[dispatch] GITHUB_DISPATCH_TOKEN not set: not dispatching ${pending.map(label).join(', ')} (logged once a day)`);
       await kvPut(env, noTokenKey, true, MARKER_TTL);
     }
     return [];
   }
 
   const dispatched = [];
-  for (const { workflow } of pending) {
+  const spaced = new Set(); // workflows held back by spacingSeconds this tick
+  for (const e of pending) {
+    const { workflow } = e;
+    if (e.spacingSeconds) {
+      if (spaced.has(workflow)) continue;
+      if (await env.CACHE.get(spacingKey(workflow))) { spaced.add(workflow); continue; }
+    }
     let status = 0;
     let detail = '';
     try {
@@ -82,24 +164,28 @@ export async function maybeDispatchWorkflows(env, now = new Date()) {
           'User-Agent': 'eyewall-poller',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ ref: 'main' }),
+        body: JSON.stringify(e.inputs ? { ref: 'main', inputs: e.inputs } : { ref: 'main' }),
       });
       status = res.status;
       if (status !== 204) detail = (await res.text().catch(() => '')).slice(0, 300);
-    } catch (e) {
-      detail = e.message;
+    } catch (err) {
+      detail = err.message;
     }
 
     if (status === 204) {
-      await kvPut(env, markerKey(workflow, date), iso, MARKER_TTL);
-      await record(env, workflow, 'ok', `Dispatched ${workflow}`, `Workflow dispatch accepted at ${iso}`);
-      console.log(`[dispatch] ${workflow} dispatched`);
-      dispatched.push(workflow);
+      await kvPut(env, markerKey(e, date), iso, MARKER_TTL);
+      if (e.spacingSeconds) {
+        await kvPut(env, spacingKey(workflow), iso, e.spacingSeconds);
+        spaced.add(workflow);
+      }
+      await record(env, e, 'ok', `Dispatched ${label(e)}`, `Workflow dispatch accepted at ${iso}`);
+      console.log(`[dispatch] ${label(e)} dispatched`);
+      dispatched.push(e.kind ? `${workflow}:${e.kind}` : workflow);
     } else {
-      await kvPut(env, retryKey(workflow, date), iso, DISPATCH_RETRY_SECONDS);
-      await record(env, workflow, 'failure', `Dispatch of ${workflow} failed`,
+      await kvPut(env, retryKey(e, date), iso, DISPATCH_RETRY_SECONDS);
+      await record(env, e, 'failure', `Dispatch of ${label(e)} failed`,
         `${status ? `GitHub ${status}` : 'Request failed'}${detail ? `: ${detail}` : ''}`);
-      console.error(`[dispatch] ${workflow} failed: ${status || ''} ${detail}`);
+      console.error(`[dispatch] ${label(e)} failed: ${status || ''} ${detail}`);
     }
   }
   return dispatched;
