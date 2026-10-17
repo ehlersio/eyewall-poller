@@ -127,13 +127,49 @@ export function scorebarPeriodNumber(raw) {
   return ot ? 3 + Number(ot[1] || 1) : null;
 }
 
+// ── HockeyTech: is the game between periods? (2026-10-17) ──
+// Whether a PWHL/AHL/ECHL game is in an intermission right now, from its
+// game_log row with the scorebar laid over it (withLiveScorebar(..., {
+// withClock: true })). The Live Activity's inIntermission and the
+// narratives' "is the period over" both read this, so they agree.
+//
+// The scorebar's Intermission flag alone wasn't enough: through an
+// intermission of ECHL game 25487 (Greensboro vs Reading, 2026-10-16) the
+// Lock Screen kept the previous period at 0:00 and never showed INT, so
+// the flag never read '1' on any minute the poller saw. No in-intermission
+// scorebar row has been captured yet, so how the feed says it is unknown;
+// the answer is layered, any one of these is enough:
+//   1. Intermission is '1' (the flag, when the feed does set it);
+//   2. GameStatusString says so ("1st Intermission" and the like --
+//      deriveGameStatus() already reads such a string as live);
+//   3. the game is live (not final, not pre) and its clock has run out
+//      (GameClock 0:00 / 00:00 / 00:00:00) in a regulation or overtime
+//      period. The clock counts down, so a live period at zero is over;
+//      a shootout has no clock to run out, so 'SO' is never one.
+// A final row is never in an intermission. The catch in 3: after the
+// final horn and before the scorebar's GameStatus flips to 4, the last
+// period reads as its intermission -- up to a minute (the scorebar's
+// cache), which is acceptable: the final follows on the next tick.
+const ZERO_CLOCK = /^0{1,2}(:00){1,2}$/;
+export function scorebarIntermission(row) {
+  if (!row) return false;
+  const status = deriveGameStatus(row);
+  if (status === 'final') return false;
+  if (row.intermission === true) return true;
+  if (/intermission/i.test(String(row.game_state || ''))) return true;
+  if (status !== 'live') return false;
+  const period = scorebarPeriodNumber(row.period_name_short);
+  return period != null && period !== 99 && ZERO_CLOCK.test(String(row.game_clock ?? '').trim());
+}
+
 // Whether a PWHL/AHL/ECHL narrative may be written for `period` (a period
 // number, or 'game'), from the Worker's reading of the game: `row` is the
 // game's {league}_game_log row with the 60 s-cached scorebar laid over it
 // (withLiveScorebar(..., { withClock: true }): game_status_code /
-// game_state, period_name_short, intermission). A game is over when final;
-// a period once play has moved past it, or the scorebar shows the
-// intermission after it. No row, or no period from the scorebar for a
+// game_state, period_name_short, game_clock, intermission). A game is
+// over when final; a period once play has moved past it, or the game is
+// in the intermission after it (scorebarIntermission(), the same signal
+// the Live Activity shows). No row, or no period from the scorebar for a
 // game that isn't final, is "not over".
 export function hockeyTechNarrativeReady(row, period) {
   if (!row) return false;
@@ -141,7 +177,7 @@ export function hockeyTechNarrativeReady(row, period) {
   if (period === 'game') return false;
   const current = scorebarPeriodNumber(row.period_name_short);
   if (current == null) return false;
-  return current > period || (current === period && row.intermission === true);
+  return current > period || (current === period && scorebarIntermission(row));
 }
 
 // ── HockeyTech live scorebar ──────────────────────────────────
@@ -189,7 +225,9 @@ export async function fetchScorebar(env, ht) {
         ended_in:         code === 4 ? endedInFromStatus(g.GameStatusStringLong) : null,
         // PeriodNameShort: '1'-'3', then 'OT'/'2OT'.. (AHL) or 'OT1'/
         // 'OT2'.. (ECHL, PWHL), and 'SO'. GameClock is the time left in
-        // the period ('07:58'). Intermission is '1' between periods.
+        // the period ('07:58'). Intermission is '1' between periods -- or
+        // should be: it didn't show one in ECHL 25487 (2026-10-16), so
+        // read "between periods" through scorebarIntermission().
         period_name_short: typeof g.PeriodNameShort === 'string' && g.PeriodNameShort ? g.PeriodNameShort : null,
         game_clock:        typeof g.GameClock === 'string' && g.GameClock ? g.GameClock : null,
         intermission:      g.Intermission == null ? null : String(g.Intermission) === '1',

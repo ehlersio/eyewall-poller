@@ -20,7 +20,7 @@
 // working; every other league adds its own segment (`la:start:ahl:CHI`,
 // `la:tokens:pwhl:341`).
 
-import { kvGet, kvPut, json, badRequest, errorJson, sendLiveActivityPush, checkPublicWriteRateLimit } from './shared.js';
+import { kvGet, kvPut, json, badRequest, errorJson, sendLiveActivityPush, checkPublicWriteRateLimit, scorebarIntermission } from './shared.js';
 
 export const LA_LEAGUES = ['nhl', 'pwhl', 'ahl', 'echl'];
 export const LA_TOKEN_TTL = 8 * 3600;
@@ -258,7 +258,8 @@ const periodOf = ev => {
 //   game:   the poller's game_log row with the scorebar overlay
 //           (withLiveScorebar(..., { withClock: true })): home_score,
 //           away_score, home_team_id, away_team_id, period_name_short,
-//           game_clock, intermission, ended_in
+//           game_clock, intermission, game_state / game_status_code,
+//           ended_in
 //   events: the game's gameCenterPlayByPlay events, or null
 // Strength is always null: HockeyTech has no reliable power-play state to
 // read it from, and it isn't inferred from penalties.
@@ -266,7 +267,9 @@ export function hockeyTechLiveActivityState(game, events, { teamCodes = {}, fina
   const homeId = Number(game.home_team_id), awayId = Number(game.away_team_id);
   const abbrOf = (id, fallback) => teamCodes[Number(id)] || fallback || null;
   const plays = Array.isArray(events) ? events : null;
-  const inIntermission = !final && game.intermission === true;
+  // Not just the scorebar's Intermission flag: it never read '1' through
+  // an intermission of ECHL 25487 (2026-10-16). See scorebarIntermission().
+  const inIntermission = !final && scorebarIntermission(game);
   const periodLabel = hockeyTechPeriodName(game.period_name_short);
 
   let lastEvent = null;

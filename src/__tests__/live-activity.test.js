@@ -29,9 +29,9 @@ vi.mock('../seasons.js', async (importOriginal) => {
 })
 
 import {
-  LA_TEAM_COLORS, hockeyTechPeriodName, hockeyTechLiveActivityState, handleLiveActivity, startLiveActivities, laKeys,
+  LA_TEAM_COLORS, hockeyTechPeriodName, hockeyTechLiveActivityState, handleLiveActivity, startLiveActivities, pushLiveActivities, laKeys,
 } from '../liveActivity.js'
-import { fetchScorebar, withLiveScorebar } from '../shared.js'
+import { fetchScorebar, withLiveScorebar, scorebarIntermission, hockeyTechNarrativeReady } from '../shared.js'
 import { handleNHL, TEAM_CONFIGS } from '../nhl.js'
 import { pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_IDS } from '../ahl.js'
 import { ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS } from '../echl.js'
@@ -154,6 +154,76 @@ describe('hockeyTechLiveActivityState()', () => {
       homeScore: 0, awayScore: 0, periodLabel: '', clock: '', inIntermission: false, status: 'live',
       lastEvent: null, strength: null, homeSog: null, awaySog: null,
     })
+  })
+})
+
+// ── Intermission (2026-10-17) ─────────────────────────────────────────
+// ECHL 25487 (Greensboro vs Reading, 2026-10-16) sat on the previous
+// period at 0:00 through an intermission without INT: the scorebar's
+// Intermission flag was never '1'. scorebarIntermission() layers the flag,
+// GameStatusString and a run-out clock in a live period.
+describe('scorebarIntermission(): the Live Activity\'s INT and the narratives\' period end', () => {
+  const opts = { teamCodes: AHL_TEAM_CODES }
+  const liveSb = (over) => ({ ...realScorebar.ahl1029093, GameStatus: '2', GameStatusString: 'In Progress', GameStatusStringLong: 'In Progress', Intermission: '0', ...over })
+  const la = async (over, laOpts = {}) => hockeyTechLiveActivityState(await overlaid(liveSb(over), row1029093), null, { ...opts, ...laOpts })
+
+  it('the Intermission flag still works on its own', async () => {
+    const st = await la({ PeriodNameShort: '2', GameClock: '07:58', Intermission: '1' })
+    expect(st).toMatchObject({ inIntermission: true, periodLabel: '2nd', status: 'live' })
+  })
+
+  it('a live game whose period clock has run out is in the intermission, flag or not', async () => {
+    const st = await la({ PeriodNameShort: '1', GameClock: '00:00' })
+    expect(st).toMatchObject({ inIntermission: true, periodLabel: '1st', clock: '00:00', status: 'live' })
+    expect((await la({ PeriodNameShort: '3', GameClock: '0:00' })).inIntermission).toBe(true)
+    expect((await la({ PeriodNameShort: 'OT1', GameClock: '00:00:00' })).inIntermission).toBe(true) // before a shootout
+  })
+
+  it('a running clock is not', async () => {
+    expect((await la({ PeriodNameShort: '1', GameClock: '07:58' })).inIntermission).toBe(false)
+    expect((await la({ PeriodNameShort: '1', GameClock: '00:01' })).inIntermission).toBe(false)
+    expect((await la({ PeriodNameShort: '1', GameClock: '20:00' })).inIntermission).toBe(false)
+  })
+
+  it('a shootout has no clock to run out', async () => {
+    expect((await la({ PeriodNameShort: 'SO', GameClock: '00:00' })).inIntermission).toBe(false)
+  })
+
+  it('GameStatusString saying intermission is enough, whatever the clock', async () => {
+    expect((await la({ GameStatusString: '1st Intermission', PeriodNameShort: '1', GameClock: '12:41' })).inIntermission).toBe(true)
+  })
+
+  it('never on a final, by GameStatus or by the poller\'s final flag', async () => {
+    // The real AHL 1029093 final reads Intermission '0', GameClock '00:13';
+    // a regulation final reads 00:00.
+    expect((await la({ GameStatus: '4', GameStatusString: 'Final', PeriodNameShort: '3', GameClock: '00:00' })).inIntermission).toBe(false)
+    expect((await la({ PeriodNameShort: '3', GameClock: '00:00' }, { final: true })).inIntermission).toBe(false)
+    expect(scorebarIntermission({ game_status_code: 4, intermission: true, period_name_short: '3', game_clock: '00:00' })).toBe(false)
+  })
+
+  it('not before puck drop, nor without a period or clock', () => {
+    expect(scorebarIntermission(null)).toBe(false)
+    expect(scorebarIntermission({ game_status_code: 1, period_name_short: '1', game_clock: '00:00' })).toBe(false)
+    expect(scorebarIntermission({ game_status_code: 2, game_clock: '00:00' })).toBe(false)
+    expect(scorebarIntermission({ game_status_code: 2, period_name_short: '1' })).toBe(false)
+    // a row written before game_status_code existed: game_state alone
+    expect(scorebarIntermission({ game_state: 'In Progress', period_name_short: '2', game_clock: '00:00' })).toBe(true)
+  })
+
+  it('a narrative for period 1 unlocks on the run-out clock, not on a running one', async () => {
+    expect(hockeyTechNarrativeReady(await overlaid(liveSb({ PeriodNameShort: '1', GameClock: '00:00' }), row1029093), 1)).toBe(true)
+    expect(hockeyTechNarrativeReady(await overlaid(liveSb({ PeriodNameShort: '1', GameClock: '07:58' }), row1029093), 1)).toBe(false)
+    expect(hockeyTechNarrativeReady(await overlaid(liveSb({ PeriodNameShort: '1', GameClock: '00:00' }), row1029093), 2)).toBe(false)
+  })
+
+  it('an intermission starting is a priority-10 update, not a clock-only one', async () => {
+    const update = 'bb'.repeat(32)
+    const playing = await la({ PeriodNameShort: '1', GameClock: '00:01' })
+    const env = makeEnv({ CACHE: makeFakeCache({ [laKeys.tokens('echl', 25487)]: [update], [laKeys.last('echl', 25487)]: playing }) })
+    const inter = await la({ PeriodNameShort: '1', GameClock: '00:00' })
+    await pushLiveActivities(env, 'echl', 25487, inter)
+    expect(sendLiveActivityPushMock).toHaveBeenCalledTimes(1)
+    expect(sendLiveActivityPushMock.mock.calls[0][1]).toMatchObject({ event: 'update', priority: 10, state: { inIntermission: true, clock: '00:00' } })
   })
 })
 
