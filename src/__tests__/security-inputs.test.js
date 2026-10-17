@@ -763,6 +763,9 @@ describe('AHL/ECHL narratives', () => {
     expect((await ahl(scorebar('2'), q(2), {})).status).toBe(409)
     expect((await ahl(scorebar('2'), q(1), {})).status).toBe(200)
     expect((await ahl(scorebar('2OT'), q('OT'), {})).status).toBe(200)
+    // the period's clock run out, with no Intermission flag: period 2 is over
+    const runOut = makeEnv({ CACHE: makeFakeCache({ 'ahl:scorebar': { [GAME_ID]: { game_status_code: 2, game_state: 'In Progress', period_name_short: '2', game_clock: '00:00', intermission: false } } }) })
+    expect((await ahl(runOut, q(2), {})).status).toBe(200)
   })
 
   it('names teams from AHL_TEAM_NAMES, ignoring the body\'s, and cleans goal fields', async () => {
@@ -791,6 +794,10 @@ describe('hockeyTechNarrativeReady()', () => {
     expect(hockeyTechNarrativeReady({ game_status_code: 2, period_name_short: '3' }, 'game')).toBe(false)
     expect(hockeyTechNarrativeReady({ game_status_code: 2, period_name_short: '1', intermission: true }, 1)).toBe(true)
     expect(hockeyTechNarrativeReady({ game_status_code: 2, period_name_short: '1', intermission: false }, 1)).toBe(false)
+    // no Intermission flag, but the period's clock has run out (ECHL 25487, 2026-10-16)
+    expect(hockeyTechNarrativeReady({ game_status_code: 2, game_state: 'In Progress', period_name_short: '1', game_clock: '00:00', intermission: false }, 1)).toBe(true)
+    expect(hockeyTechNarrativeReady({ game_status_code: 2, game_state: 'In Progress', period_name_short: '1', game_clock: '07:58', intermission: false }, 1)).toBe(false)
+    expect(hockeyTechNarrativeReady({ game_status_code: 2, game_state: '1st Intermission', period_name_short: '1' }, 1)).toBe(true)
     expect(hockeyTechNarrativeReady({ game_status_code: 2, period_name_short: 'OT1' }, 3)).toBe(true)
     expect(hockeyTechNarrativeReady({ game_status_code: 2 }, 1)).toBe(false)
   })
