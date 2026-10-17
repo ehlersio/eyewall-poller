@@ -20,7 +20,7 @@
 // working; every other league adds its own segment (`la:start:ahl:CHI`,
 // `la:tokens:pwhl:341`).
 
-import { kvGet, kvPut, json, badRequest, errorJson, sendLiveActivityPush, checkPublicWriteRateLimit, scorebarIntermission } from './shared.js';
+import { kvGet, kvPut, json, badRequest, errorJson, sendLiveActivityPush, checkPublicWriteRateLimit, scorebarIntermission, hockeyTechPeriodName } from './shared.js';
 
 export const LA_LEAGUES = ['nhl', 'pwhl', 'ahl', 'echl'];
 export const LA_TOKEN_TTL = 8 * 3600;
@@ -229,22 +229,9 @@ export async function pushLiveActivities(env, league, gameId, stateOrFn, { end =
 }
 
 // ── HockeyTech (PWHL/AHL/ECHL) ContentState ─────────────────────────
-// A HockeyTech period name as the Live Activity labels periods (the NHL's
-// '1st'..'3rd', 'OT', '2OT'.., 'SO'), or '' when there isn't one. The
-// feeds name overtimes differently: the AHL's scorebar and PBP say 'OT',
-// '2OT', '3OT'; the ECHL's and PWHL's 'OT1', 'OT2'.. (all three checked
-// against every final in their scorebars, 2026-10-09). Takes the
-// scorebar's PeriodNameShort or a PBP event's period.shortName / .id.
-export function hockeyTechPeriodName(raw) {
-  const s = String(raw ?? '').trim().toUpperCase();
-  const reg = { 1: '1st', 2: '2nd', 3: '3rd' }[s];
-  if (reg) return reg;
-  if (s === 'SO') return 'SO';
-  const ot = s.match(/^OT(\d*)$/) || s.match(/^(\d+)OT$/);
-  if (!ot) return '';
-  const n = Number(ot[1] || 1);
-  return n <= 1 ? 'OT' : `${n}OT`;
-}
+// hockeyTechPeriodName() moved to shared.js (the /today routes use it too);
+// re-exported here for its existing importers.
+export { hockeyTechPeriodName };
 
 const lastNameOf = p => (typeof p?.lastName === 'string' && p.lastName.trim()) || null;
 const periodOf = ev => {

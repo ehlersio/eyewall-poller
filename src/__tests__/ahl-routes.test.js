@@ -27,6 +27,7 @@ vi.mock('../seasons.js', () => ({
 }))
 
 import { handleAHL, AHL_TEAM_CODES } from '../ahl.js'
+import { scorebar as realScorebar } from './fixtures/ahl-1029093-pbp.js'
 
 beforeEach(() => {
   globalThis.fetch = vi.fn()
@@ -439,6 +440,64 @@ describe('GET /ahl/today', () => {
       ] }))
     const body = await (await today()).json()
     expect(body[0]).toMatchObject({ status: 'live', homeScore: 1, awayScore: 0 })
+    // No scorebar: no period or clock, never a placeholder.
+    expect(body[0]).toMatchObject({ period: null, periodType: null, periodLabel: null, clock: null, inIntermission: false })
+  })
+
+  // Period, clock and intermission from the scorebar (2026-10-17): the
+  // app's score card and Topbar chip could only show the last PBP event's
+  // time. Real scorebar field names (AHL 1029093, CLE v GR), set live.
+  const LOG_ROW = { game_id: 1029093, game_date: '2026-01-15', home_team_id: 373, away_team_id: 328, home_score: 0, away_score: 0, game_state: 'In Progress', game_status_code: 2 }
+  const liveSb = (over) => ({ ...realScorebar.ahl1029093, Date: '2026-01-15', GameStatus: '2', GameStatusString: 'In Progress', GameStatusStringLong: 'In Progress', HomeGoals: '2', VisitorGoals: '1', ...over })
+  const todayWith = async (sb, row = LOG_ROW) => {
+    globalThis.fetch = withScorebar([sb], row)
+    return (await (await today()).json())[0]
+  }
+
+  it('a live game: period, type, label, clock and no intermission', async () => {
+    const g = await todayWith(liveSb({ PeriodNameShort: '2', GameClock: '07:58', Intermission: '0' }))
+    expect(g).toMatchObject({ status: 'live', homeScore: 2, awayScore: 1, period: 2, periodType: 'REG', periodLabel: '2nd', clock: '07:58', inIntermission: false })
+  })
+
+  it.each([
+    ['the Intermission flag', { PeriodNameShort: '2', GameClock: '12:00', Intermission: '1' }, '12:00'],
+    ['GameStatusString', { PeriodNameShort: '2', GameClock: '12:00', Intermission: '0', GameStatusString: '2nd Intermission' }, '12:00'],
+    ['a run-out clock', { PeriodNameShort: '2', GameClock: '00:00', Intermission: '0' }, '00:00'],
+  ])('intermission from %s, still with period and clock', async (_, over, clock) => {
+    const g = await todayWith(liveSb(over))
+    expect(g).toMatchObject({ status: 'live', period: 2, periodType: 'REG', periodLabel: '2nd', clock, inIntermission: true })
+  })
+
+  it.each([
+    ['AHL 2OT', '2OT', { period: 5, periodType: 'OT', periodLabel: '2OT' }],
+    ['ECHL OT2', 'OT2', { period: 5, periodType: 'OT', periodLabel: '2OT' }],
+    ['first OT', 'OT', { period: 4, periodType: 'OT', periodLabel: 'OT' }],
+    ['shootout', 'SO', { period: null, periodType: 'SO', periodLabel: 'SO' }],
+  ])('%s', async (_, name, want) => {
+    const g = await todayWith(liveSb({ PeriodNameShort: name, GameClock: name === 'SO' ? '00:00' : '03:21', Intermission: '0' }))
+    expect(g).toMatchObject({ status: 'live', ...want, clock: name === 'SO' ? '00:00' : '03:21', inIntermission: false })
+  })
+
+  it('a final and a pre-game row: nulls and no intermission', async () => {
+    globalThis.fetch = withScorebar(
+      [{ ...realScorebar.ahl1029093, Date: '2026-01-15' }, { ...realScorebar.ahl2OT, ID: '6', Date: '2026-01-15', GameStatus: '1', GameStatusString: '7:00 pm EST', PeriodNameShort: '1', GameClock: '20:00' }],
+      { ...LOG_ROW, game_status_code: 4, game_state: 'Final' },
+      { ...LOG_ROW, game_id: 6, game_status_code: 1, game_state: '7:00 pm EST' },
+    )
+    const body = await (await today()).json()
+    expect(body.map(g => g.status)).toEqual(['final', 'pre'])
+    for (const g of body) {
+      expect(g).toMatchObject({ period: null, periodType: null, periodLabel: null, clock: null, inIntermission: false })
+    }
+  })
+
+  it('a live game only the scorebar has (no game_log row today) carries the fields too', async () => {
+    globalThis.fetch = withScorebar([liveSb({ PeriodNameShort: '3', GameClock: '01:02', Intermission: '0' })])
+    const body = await (await today()).json()
+    const scorebarUrls = globalThis.fetch.mock.calls.map(c => String(c[0])).filter(u => u.includes('view=scorebar'))
+    expect(scorebarUrls.some(u => u.includes('numberofdaysahead=6'))).toBe(true)   // upcomingFromScorebar()
+    expect(body).toHaveLength(1)
+    expect(body[0]).toMatchObject({ gameId: 1029093, status: 'live', period: 3, periodType: 'REG', periodLabel: '3rd', clock: '01:02', inIntermission: false })
   })
 })
 

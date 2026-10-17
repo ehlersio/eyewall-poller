@@ -932,6 +932,35 @@ describe('GET /pwhl/today', () => {
     expect(body[2]).toMatchObject({ status: 'final', endedIn: 'SO' })
   })
 
+  // The scorebar's period/clock (2026-10-17): its period is the live truth
+  // and wins over game_log's, which lags; game_log's is the fallback.
+  const withScorebar = (scorebar, ...r) => vi.fn((url) => {
+    const u = String(url)
+    if (u.includes('pwhl_game_log')) return Promise.resolve({ ok: true, json: async () => r })
+    if (u.includes('view=scorebar')) return Promise.resolve({ ok: true, json: async () => ({ SiteKit: { Scorebar: scorebar } }) })
+    return Promise.resolve({ ok: true, json: async () => [] })
+  })
+  const sbRow = (over) => ({ ID: '1', Date: '2026-01-15', HomeID: '1', VisitorID: '2', HomeGoals: '1', VisitorGoals: '1', GameStatus: '2', GameStatusString: 'In Progress', Intermission: '0', ...over })
+  const logRow = { game_id: 1, game_date: '2026-01-15', home_team_id: 1, away_team_id: 2, home_score: 1, away_score: 1, game_state: 'In Progress', game_status_code: 2, period: 2 }
+
+  it("lays on the scorebar's period, label and clock; its period wins over game_log's", async () => {
+    globalThis.fetch = withScorebar([sbRow({ PeriodNameShort: '3', GameClock: '07:58' })], logRow)
+    const [g] = await (await today()).json()
+    expect(g).toMatchObject({ status: 'live', period: 3, periodType: 'REG', periodLabel: '3rd', clock: '07:58', inIntermission: false })
+  })
+
+  it("PWHL overtime ('OT1'), and an intermission from the flag", async () => {
+    globalThis.fetch = withScorebar([sbRow({ PeriodNameShort: 'OT1', GameClock: '04:12', Intermission: '1' })], { ...logRow, period: 3 })
+    const [g] = await (await today()).json()
+    expect(g).toMatchObject({ period: 4, periodType: 'OT', periodLabel: 'OT', clock: '04:12', inIntermission: true })
+  })
+
+  it("keeps game_log's period when the scorebar gives none", async () => {
+    globalThis.fetch = withScorebar([sbRow({})], logRow)
+    const [g] = await (await today()).json()
+    expect(g).toMatchObject({ status: 'live', period: 2, periodType: 'REG', periodLabel: '2nd', clock: null, inIntermission: false })
+  })
+
   it('reads every season with games around now for the current season', async () => {
     globalThis.fetch = rows(
       { game_id: 353, season_id: 10, game_date: '2026-11-22', home_team_id: 12, away_team_id: 2, home_score: 0, away_score: 0, game_state: '9:50 pm EST' },

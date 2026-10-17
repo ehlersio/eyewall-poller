@@ -37,7 +37,7 @@
  *     for AHL/ECHL (docs/hockeytech_elo_backtest_results.md).
  */
 
-import { ParamError, readJsonObject, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, h2hNarrativeStats, hockeyTechNarrativeReady, scorebarPeriodNumber } from './shared.js';
+import { ParamError, readJsonObject, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, h2hNarrativeStats, hockeyTechNarrativeReady, scorebarPeriodNumber, scorebarClockFields, scorebarLiveFields } from './shared.js';
 import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRowsIfTable, sbRosterRows, sbError, errorJson, badRequest, unauthorized, SB_URL, unwrapJsonp, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, checkAiRateLimit, generateText, buildHeadToHeadPayload, parseRSS, sendPush, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, readPollSecret, withParamErrors } from './shared.js';
 import { buildHockeyTechPrediction, gameResult } from './hockeytechPrediction.js';
 import { hockeyTechLiveActivityState, startLiveActivities, pushLiveActivities } from './liveActivity.js';
@@ -599,8 +599,9 @@ export function createHockeyTechLeague(cfg) {
 
   // Games from today through the next 6 days straight from HockeyTech's
   // scorebar (feed=modulekit&view=scorebar), as game_log-shaped rows in
-  // date order -- for days game_log doesn't have yet. [] when the feed is
-  // unreachable or has none.
+  // date order -- for days game_log doesn't have yet, with the period/
+  // clock columns fetchScorebar() keeps (scorebarClockFields()). [] when
+  // the feed is unreachable or has none.
   async function upcomingFromScorebar(env, todayStr) {
     const kvKey = `${key}:scorebar:upcoming:${todayStr}`;
     const cached = await kvGet(env, kvKey);
@@ -627,6 +628,7 @@ export function createHockeyTechLeague(cfg) {
             game_status_code: Number.isFinite(code) ? code : null,
             game_state:       g.GameStatusString || '',
             ended_in:         code === 4 ? endedInFromStatus(g.GameStatusStringLong) : null,
+            ...scorebarClockFields(g),
           };
         })
         .sort((a, b) => a.game_date.localeCompare(b.game_date) || a.game_id - b.game_id);
@@ -1944,7 +1946,7 @@ Only reference the two teams named above and the numbers given -- no player name
             dayRows = upcoming.filter(g => g.game_date === sbDate);
           }
         }
-        dayRows = dayRows || await live(env, rows.filter(g => g.game_date === gameDate), { withEndedIn: true });
+        dayRows = dayRows || await live(env, rows.filter(g => g.game_date === gameDate), { withEndedIn: true, withClock: true });
         const games = dayRows.map(g => {
           const status = deriveGameStatus(g);
           return {
@@ -1958,12 +1960,15 @@ Only reference the two teams named above and the numbers given -- no player name
             awayScore:    g.away_score,
             status,
             // HockeyTech's own status text: a start time before puck drop
-            // ("7:00 pm EST"), its live wording once under way. This feed
-            // has no period/clock columns, unlike NHL's.
+            // ("7:00 pm EST"), its live wording once under way.
             statusDetail: g.game_state || null,
             // 'OT' | 'SO' once final past regulation (the scoreboard's
             // FINAL/OT), from the scorebar or game_log's ended_in.
             endedIn:      status === 'final' ? (g.ended_in ?? null) : null,
+            // period, periodType, periodLabel, clock, inIntermission while
+            // live, from the 60 s-cached scorebar (game_log has no period
+            // or clock columns): a snapshot, not a ticking clock.
+            ...scorebarLiveFields(g, status),
           };
         });
 
