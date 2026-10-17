@@ -5,7 +5,7 @@
  * roster, last game, PBP, news, salaries, league players, scouting, and live game.
  */
 
-import { ParamError, readJsonObject, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, h2hNarrativeStats, hockeyTechNarrativeReady } from './shared.js';
+import { ParamError, readJsonObject, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, h2hNarrativeStats, hockeyTechNarrativeReady, scorebarLiveFields } from './shared.js';
 import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, readPollSecret, withParamErrors } from './shared.js';
 import { hockeyTechLiveActivityState, startLiveActivities, pushLiveActivities } from './liveActivity.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
@@ -1935,7 +1935,7 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
       if (rows instanceof Response) return rows;
 
       const gameDate = rows[0]?.game_date || null;
-      const dayRows = await withLive(env, rows.filter(g => g.game_date === gameDate), { withEndedIn: true });
+      const dayRows = await withLive(env, rows.filter(g => g.game_date === gameDate), { withEndedIn: true, withClock: true });
       const games = dayRows.map(g => {
         const status = deriveGameStatus(g);
 
@@ -1951,11 +1951,14 @@ Write a 2-3 sentence scouting report highlighting their strengths, style of play
           awayScore:    g.away_score,
           status,
           // HockeyTech's status text (a start time before puck drop, its
-          // live wording once under way) plus the period it stores; there
-          // is no clock in this feed.
+          // live wording once under way).
           statusDetail: g.game_state || null,
-          period:       status === 'live' ? (g.period ?? null) : null,
           endedIn:      status === 'final' ? (g.ended_in ?? (g.shootout ? 'SO' : g.ot ? 'OT' : null)) : null,
+          // period, periodType, periodLabel, clock, inIntermission while
+          // live, from the 60 s-cached scorebar (a snapshot, not a ticking
+          // clock). The scorebar's period wins; game_log's `period`, which
+          // lags it, is the fallback when the scorebar gives none.
+          ...scorebarLiveFields(g, status, { fallbackPeriod: g.period ?? null }),
         };
       });
 

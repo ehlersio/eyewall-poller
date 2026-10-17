@@ -31,7 +31,7 @@ vi.mock('../seasons.js', async (importOriginal) => {
 import {
   LA_TEAM_COLORS, hockeyTechPeriodName, hockeyTechLiveActivityState, handleLiveActivity, startLiveActivities, pushLiveActivities, laKeys,
 } from '../liveActivity.js'
-import { fetchScorebar, withLiveScorebar, scorebarIntermission, hockeyTechNarrativeReady } from '../shared.js'
+import { fetchScorebar, withLiveScorebar, scorebarIntermission, hockeyTechNarrativeReady, scorebarLiveFields, hockeyTechPeriodName as sharedPeriodName } from '../shared.js'
 import { handleNHL, TEAM_CONFIGS } from '../nhl.js'
 import { pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_IDS } from '../ahl.js'
 import { ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS } from '../echl.js'
@@ -80,6 +80,53 @@ describe('hockeyTechPeriodName()', () => {
     ['SO', 'SO'], ['', ''], [null, ''], ['4', ''], ['P1', ''],
   ])('%s -> %s', (raw, label) => {
     expect(hockeyTechPeriodName(raw)).toBe(label)
+  })
+})
+
+describe('scorebarLiveFields(): /today\'s period, clock and intermission', () => {
+  const NONE = { period: null, periodType: null, periodLabel: null, clock: null, inIntermission: false }
+  const live = (over) => ({ game_status_code: 2, game_state: 'In Progress', ...over })
+
+  it('is the one hockeyTechPeriodName (re-exported from liveActivity.js)', () => {
+    expect(hockeyTechPeriodName).toBe(sharedPeriodName)
+  })
+
+  it.each([
+    ['1', '15:00', { period: 1, periodType: 'REG', periodLabel: '1st' }],
+    ['3', '00:42', { period: 3, periodType: 'REG', periodLabel: '3rd' }],
+    ['OT', '04:00', { period: 4, periodType: 'OT', periodLabel: 'OT' }],
+    ['OT1', '04:00', { period: 4, periodType: 'OT', periodLabel: 'OT' }],
+    ['2OT', '18:09', { period: 5, periodType: 'OT', periodLabel: '2OT' }],
+    ['OT2', '04:36', { period: 5, periodType: 'OT', periodLabel: '2OT' }],
+    ['OT3', '15:58', { period: 6, periodType: 'OT', periodLabel: '3OT' }],
+    ['SO', '00:00', { period: null, periodType: 'SO', periodLabel: 'SO' }],
+  ])('live in %s', (name, clock, want) => {
+    expect(scorebarLiveFields(live({ period_name_short: name, game_clock: clock, intermission: false }), 'live'))
+      .toEqual({ ...want, clock, inIntermission: false })
+  })
+
+  it('reports the intermission with the period and clock', () => {
+    expect(scorebarLiveFields(live({ period_name_short: '1', game_clock: '00:00' }), 'live'))
+      .toEqual({ period: 1, periodType: 'REG', periodLabel: '1st', clock: '00:00', inIntermission: true })
+  })
+
+  it('no period or clock on the scorebar: nulls, or the fallback period', () => {
+    expect(scorebarLiveFields(live({}), 'live')).toEqual(NONE)
+    expect(scorebarLiveFields(live({ period_name_short: 'P1', game_clock: '' }), 'live')).toEqual(NONE)
+    expect(scorebarLiveFields(live({}), 'live', { fallbackPeriod: 2 }))
+      .toEqual({ period: 2, periodType: 'REG', periodLabel: '2nd', clock: null, inIntermission: false })
+    // game_log's numbering past the 3rd is unconfirmed: the number, no type.
+    expect(scorebarLiveFields(live({}), 'live', { fallbackPeriod: 4 }))
+      .toEqual({ period: 4, periodType: null, periodLabel: null, clock: null, inIntermission: false })
+    // The scorebar's period wins over the fallback.
+    expect(scorebarLiveFields(live({ period_name_short: '3', game_clock: '10:00' }), 'live', { fallbackPeriod: 2 }).period).toBe(3)
+  })
+
+  it('not live: nulls and no intermission, whatever the row says', () => {
+    const row = { game_status_code: 4, period_name_short: 'OT', game_clock: '00:13', intermission: true }
+    expect(scorebarLiveFields(row, 'final')).toEqual(NONE)
+    expect(scorebarLiveFields({ game_status_code: 1, period_name_short: '1', game_clock: '20:00' }, 'pre', { fallbackPeriod: 1 })).toEqual(NONE)
+    expect(scorebarLiveFields(null, 'live')).toEqual(NONE)
   })
 })
 

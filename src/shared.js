@@ -127,6 +127,25 @@ export function scorebarPeriodNumber(raw) {
   return ot ? 3 + Number(ot[1] || 1) : null;
 }
 
+// A HockeyTech period name as the app labels periods (the NHL's
+// '1st'..'3rd', 'OT', '2OT'.., 'SO'), or '' when there isn't one. The
+// feeds name overtimes differently: the AHL's scorebar and PBP say 'OT',
+// '2OT', '3OT'; the ECHL's and PWHL's 'OT1', 'OT2'.. (all three checked
+// against every final in their scorebars, 2026-10-09). Takes the
+// scorebar's PeriodNameShort or a PBP event's period.shortName / .id.
+// Lives here so /today (scorebarLiveFields()) and the Live Activity
+// share it; liveActivity.js re-exports it.
+export function hockeyTechPeriodName(raw) {
+  const s = String(raw ?? '').trim().toUpperCase();
+  const reg = { 1: '1st', 2: '2nd', 3: '3rd' }[s];
+  if (reg) return reg;
+  if (s === 'SO') return 'SO';
+  const ot = s.match(/^OT(\d*)$/) || s.match(/^(\d+)OT$/);
+  if (!ot) return '';
+  const n = Number(ot[1] || 1);
+  return n <= 1 ? 'OT' : `${n}OT`;
+}
+
 // ── HockeyTech: is the game between periods? (2026-10-17) ──
 // Whether a PWHL/AHL/ECHL game is in an intermission right now, from its
 // game_log row with the scorebar laid over it (withLiveScorebar(..., {
@@ -162,6 +181,38 @@ export function scorebarIntermission(row) {
   return period != null && period !== 99 && ZERO_CLOCK.test(String(row.game_clock ?? '').trim());
 }
 
+// The live period/clock fields of a PWHL/AHL/ECHL /today row, normalized
+// like /nhl/today's (nhl.js normalizeScoreboardGame()) plus a label. `row`
+// is a game row with the scorebar laid over it (withLiveScorebar(..., {
+// withClock: true }), or upcomingFromScorebar()'s rows); `status` its
+// deriveGameStatus(). While live:
+//   period:         1-3, 4 for the first overtime, 5 for the second..;
+//                   null in the shootout or when the scorebar has none
+//                   (then `fallbackPeriod`, PWHL's game_log period, if any)
+//   periodType:     'REG' | 'OT' | 'SO' | null
+//   periodLabel:    '1st'..'3rd', 'OT', '2OT'.., 'SO' | null
+//   clock:          the scorebar's GameClock ('07:58'), time left in the
+//                   period as of the scorebar's 60 s cache | null
+//   inIntermission: scorebarIntermission()
+// Otherwise nulls and inIntermission false, as /nhl/today sends.
+const REG_LABEL = { 1: '1st', 2: '2nd', 3: '3rd' };
+export function scorebarLiveFields(row, status, { fallbackPeriod = null } = {}) {
+  if (status !== 'live' || !row) {
+    return { period: null, periodType: null, periodLabel: null, clock: null, inIntermission: false };
+  }
+  const n = scorebarPeriodNumber(row.period_name_short);
+  const clock = typeof row.game_clock === 'string' && row.game_clock.trim() ? row.game_clock.trim() : null;
+  const inIntermission = scorebarIntermission(row);
+  if (n === 99) return { period: null, periodType: 'SO', periodLabel: 'SO', clock, inIntermission };
+  if (n != null) {
+    return { period: n, periodType: n <= 3 ? 'REG' : 'OT', periodLabel: hockeyTechPeriodName(row.period_name_short) || null, clock, inIntermission };
+  }
+  // No period on the scorebar. game_log's own period (PWHL) is a number;
+  // past the 3rd its numbering is unconfirmed, so only 1-3 get a type.
+  const fb = Number.isInteger(fallbackPeriod) && fallbackPeriod > 0 ? fallbackPeriod : null;
+  return { period: fb, periodType: REG_LABEL[fb] ? 'REG' : null, periodLabel: REG_LABEL[fb] || null, clock, inIntermission };
+}
+
 // Whether a PWHL/AHL/ECHL narrative may be written for `period` (a period
 // number, or 'game'), from the Worker's reading of the game: `row` is the
 // game's {league}_game_log row with the 60 s-cached scorebar laid over it
@@ -178,6 +229,21 @@ export function hockeyTechNarrativeReady(row, period) {
   const current = scorebarPeriodNumber(row.period_name_short);
   if (current == null) return false;
   return current > period || (current === period && scorebarIntermission(row));
+}
+
+// A scorebar game's period/clock columns, as fetchScorebar() and
+// hockeytech.js's upcomingFromScorebar() both store them.
+// PeriodNameShort: '1'-'3', then 'OT'/'2OT'.. (AHL) or 'OT1'/'OT2'..
+// (ECHL, PWHL), and 'SO'. GameClock is the time left in the period
+// ('07:58'). Intermission is '1' between periods -- or should be: it
+// didn't show one in ECHL 25487 (2026-10-16), so read "between periods"
+// through scorebarIntermission().
+export function scorebarClockFields(g) {
+  return {
+    period_name_short: typeof g.PeriodNameShort === 'string' && g.PeriodNameShort ? g.PeriodNameShort : null,
+    game_clock:        typeof g.GameClock === 'string' && g.GameClock ? g.GameClock : null,
+    intermission:      g.Intermission == null ? null : String(g.Intermission) === '1',
+  };
 }
 
 // ── HockeyTech live scorebar ──────────────────────────────────
@@ -223,14 +289,7 @@ export async function fetchScorebar(env, ht) {
         // GameStatusString is plain "Final" whatever the ending; the long
         // form says "Final OT" / "Final SO".
         ended_in:         code === 4 ? endedInFromStatus(g.GameStatusStringLong) : null,
-        // PeriodNameShort: '1'-'3', then 'OT'/'2OT'.. (AHL) or 'OT1'/
-        // 'OT2'.. (ECHL, PWHL), and 'SO'. GameClock is the time left in
-        // the period ('07:58'). Intermission is '1' between periods -- or
-        // should be: it didn't show one in ECHL 25487 (2026-10-16), so
-        // read "between periods" through scorebarIntermission().
-        period_name_short: typeof g.PeriodNameShort === 'string' && g.PeriodNameShort ? g.PeriodNameShort : null,
-        game_clock:        typeof g.GameClock === 'string' && g.GameClock ? g.GameClock : null,
-        intermission:      g.Intermission == null ? null : String(g.Intermission) === '1',
+        ...scorebarClockFields(g),
       };
     }
     await kvPut(env, kvKey, map, 60);
@@ -245,8 +304,8 @@ export async function fetchScorebar(env, ht) {
 // game toward final -- unless `withEndedIn`: the AHL/ECHL game_log may not
 // carry ended_in, so a route that reports OT/SO for today's finals asks
 // the scorebar anyway. The period/clock/intermission fields are only laid
-// on with `withClock` (the pollers' Live Activity state), so the routes
-// serving these rows answer exactly what they did before.
+// on with `withClock` (the pollers' Live Activity state, the narrative
+// gate, and the /today routes' scorebarLiveFields()).
 const SCOREBAR_CLOCK_FIELDS = ['period_name_short', 'game_clock', 'intermission'];
 export async function withLiveScorebar(env, ht, rows, { withEndedIn = false, withClock = false } = {}) {
   if (!withEndedIn && !rows.some(r => deriveGameStatus(r) !== 'final')) return rows;
