@@ -31,7 +31,7 @@ vi.mock('../seasons.js', async (importOriginal) => {
 import {
   LA_TEAM_COLORS, hockeyTechPeriodName, hockeyTechLiveActivityState, handleLiveActivity, startLiveActivities, pushLiveActivities, laKeys,
 } from '../liveActivity.js'
-import { fetchScorebar, withLiveScorebar, scorebarIntermission, hockeyTechNarrativeReady, scorebarLiveFields, hockeyTechPeriodName as sharedPeriodName } from '../shared.js'
+import { fetchScorebar, withLiveScorebar, scorebarIntermission, scorebarIntermissionState, hockeyTechNarrativeReady, scorebarLiveFields, deriveGameStatus, endedInFromPlays, hockeyTechPeriodName as sharedPeriodName } from '../shared.js'
 import { handleNHL, TEAM_CONFIGS } from '../nhl.js'
 import { pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_IDS } from '../ahl.js'
 import { ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS } from '../echl.js'
@@ -141,6 +141,34 @@ describe('fetchScorebar() period fields', () => {
     expect(plain).toEqual({ ...row1029093, game_status_code: 2, game_state: 'In Progress', home_score: 5, away_score: 4, ended_in: null })
     const [clocked] = await withLiveScorebar(env, ht, [row1029093], { withClock: true })
     expect(clocked).toMatchObject({ period_name_short: '2', game_clock: '07:58', intermission: true })
+  })
+})
+
+describe('fetchScorebar({ fresh }): the pollers\' once-a-minute read', () => {
+  const ht = { client: 'ahl', base: 'https://ht.example/feed', key: 'k', siteId: '3', leagueId: '4', headers: { 'User-Agent': 'x' } }
+  const sb = (GameClock) => ({ ...realScorebar.ahl1029093, GameStatus: '2', GameStatusString: `${GameClock} 3rd`, PeriodNameShort: '3', GameClock, Intermission: '0' })
+  const stale = { 1029093: { game_status_code: 2, game_state: '12:00 3rd', home_score: 5, away_score: 4, ended_in: null, period_name_short: '3', game_clock: '12:00', intermission: false } }
+
+  it('skips the KV copy and the edge cache, then refills the KV copy for the routes', async () => {
+    globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ SiteKit: { Scorebar: [sb('10:41')] } }) }))
+    const env = makeEnv({ CACHE: makeFakeCache({ 'ahl:scorebar': stale }) })
+    expect((await fetchScorebar(env, ht))[1029093].game_clock).toBe('12:00') // a route: the KV copy
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect((await fetchScorebar(env, ht, { fresh: true }))[1029093].game_clock).toBe('10:41')
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(globalThis.fetch.mock.calls[0][1]).toEqual({ headers: ht.headers, cf: { cacheTtl: 0 } })
+    expect(JSON.parse(await env.CACHE.get('ahl:scorebar'))[1029093].game_clock).toBe('10:41')
+    expect((await fetchScorebar(env, ht))[1029093].game_clock).toBe('10:41') // the route now reads it
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to the KV copy when HockeyTech fails', async () => {
+    const env = makeEnv({ CACHE: makeFakeCache({ 'ahl:scorebar': stale }) })
+    globalThis.fetch = vi.fn(async () => ({ ok: false, status: 503 }))
+    expect(await fetchScorebar(env, ht, { fresh: true })).toEqual(stale)
+    globalThis.fetch = vi.fn(async () => { throw new Error('network') })
+    expect(await fetchScorebar(env, ht, { fresh: true })).toEqual(stale)
+    expect(await fetchScorebar(makeEnv({ CACHE: makeFakeCache({}) }), ht, { fresh: true })).toEqual({})
   })
 })
 
@@ -271,6 +299,115 @@ describe('scorebarIntermission(): the Live Activity\'s INT and the narratives\' 
     await pushLiveActivities(env, 'echl', 25487, inter)
     expect(sendLiveActivityPushMock).toHaveBeenCalledTimes(1)
     expect(sendLiveActivityPushMock.mock.calls[0][1]).toMatchObject({ event: 'update', priority: 10, state: { inIntermission: true, clock: '00:00' } })
+  })
+})
+
+// ── Intermission, as the feeds really show it (2026-10-19) ─────────────
+// Rows captured from the live AHL and ECHL scorebars through 2026-10-18's
+// afternoon games. The ECHL never sets Intermission; the AHL sets it
+// (status 10) minutes after the horn; both put the next period up at 20:00
+// several minutes before the puck drops; and both go 3 'Unofficial Final'
+// before 4 'Final'.
+describe('intermissions and finals from the real scorebar sequences', () => {
+  const opts = { teamCodes: AHL_TEAM_CODES }
+  // ECHL 25512 (2026-10-18), at 15:47, 16:06 and 16:50 ET.
+  const echl = (GameStatusString, PeriodNameShort, GameClock, over = {}) =>
+    ({ ...realScorebar.ahl1029093, GameStatus: '2', GameStatusString, GameStatusStringLong: GameStatusString, PeriodNameShort, GameClock, Intermission: '0', ...over })
+  const la = async (sb, laOpts = {}) => hockeyTechLiveActivityState(await overlaid(sb, row1029093), null, { ...opts, ...laOpts })
+
+  it('ECHL "20:00 3rd" before the puck drops is the 2nd intermission: "2nd INT", not "3rd · 20:00"', async () => {
+    expect(await la(echl('20:00 3rd', '3', '20:00'))).toMatchObject({ periodLabel: '2nd', clock: '00:00', inIntermission: true, status: 'live' })
+    expect(await la(echl('20:00 2nd', '2', '20:00'))).toMatchObject({ periodLabel: '1st', clock: '00:00', inIntermission: true })
+    expect(await la(echl('20:00 2nd', '2', '20:00:00'))).toMatchObject({ periodLabel: '1st', inIntermission: true })
+    // A playoff overtime is put up at 20:00 too: after the 3rd, after OT.
+    expect(await la(echl('20:00 1st OT', 'OT1', '20:00'))).toMatchObject({ periodLabel: '3rd', inIntermission: true })
+    expect(await la(echl('20:00 2OT', '2OT', '20:00'))).toMatchObject({ periodLabel: 'OT', inIntermission: true })
+    expect(scorebarIntermissionState({ game_status_code: 2, period_name_short: '3', game_clock: '20:00' })).toEqual({ after: 2, preset: true })
+  })
+
+  it('once the clock runs it is the period again', async () => {
+    expect(await la(echl('19:59 3rd', '3', '19:59'))).toMatchObject({ periodLabel: '3rd', clock: '19:59', inIntermission: false })
+    expect(await la(echl('18:35 3rd', '3', '18:35'))).toMatchObject({ periodLabel: '3rd', clock: '18:35', inIntermission: false })
+  })
+
+  it('"00:00 2nd" then "20:00 3rd" is one intermission: the same state, so no push', async () => {
+    const update = 'bb'.repeat(32)
+    const atHorn = await la(echl('00:00 2nd', '2', '00:00'))
+    const preset = await la(echl('20:00 3rd', '3', '20:00'))
+    expect(preset).toEqual(atHorn)
+    const env = makeEnv({ CACHE: makeFakeCache({ [laKeys.tokens('echl', 25512)]: [update], [laKeys.last('echl', 25512)]: atHorn }) })
+    await pushLiveActivities(env, 'echl', 25512, preset)
+    expect(sendLiveActivityPushMock).not.toHaveBeenCalled()
+  })
+
+  it('period 1 at 20:00 while live is the opening faceoff, not an intermission', async () => {
+    expect(await la(echl('20:00 1st', '1', '20:00'))).toMatchObject({ periodLabel: '1st', clock: '20:00', inIntermission: false })
+    expect(scorebarIntermission({ game_status_code: 2, period_name_short: '1', game_clock: '20:00:00' })).toBe(false)
+  })
+
+  it('ECHL "00:00 1st" while live is the 1st intermission (every such row came after the 1st was played)', async () => {
+    expect(await la(echl('00:00 1st', '1', '00:00'))).toMatchObject({ periodLabel: '1st', clock: '00:00', inIntermission: true })
+  })
+
+  it('AHL status 10 "Intermission" is the intermission after the period it shows, countdown clock and all', async () => {
+    // AHL 1029166 at 16:40 ET: End of 2nd, the intermission's clock at 04:36.
+    const ahl10 = { ...realScorebar.ahl1029093, GameStatus: '10', GameStatusString: 'Intermission', GameStatusStringLong: 'End of 2nd', PeriodNameShort: '2', GameClock: '04:36', Intermission: '1' }
+    expect(await la(ahl10)).toMatchObject({ periodLabel: '2nd', clock: '04:36', inIntermission: true, status: 'live' })
+    const row = await overlaid(ahl10, row1029093)
+    expect(deriveGameStatus(row)).toBe('live')
+    expect(scorebarIntermissionState(row)).toEqual({ after: 2, preset: false })
+  })
+
+  it('status 3 "Unofficial Final" is final: no "3rd INT" after the horn', async () => {
+    const unofficial = { ...realScorebar.ahl1029093, GameStatus: '3', GameStatusString: 'Unofficial Final', GameStatusStringLong: 'Unofficial Final', PeriodNameShort: '3', GameClock: '00:00', Intermission: '0' }
+    const row = await overlaid(unofficial, row1029093)
+    expect(deriveGameStatus(row)).toBe('final')
+    expect(scorebarIntermission(row)).toBe(false)
+    expect(scorebarLiveFields(row, deriveGameStatus(row))).toMatchObject({ period: null, inIntermission: false })
+    expect(hockeyTechNarrativeReady(row, 'game')).toBe(true)
+    // a row from before game_status_code: the string alone
+    expect(deriveGameStatus({ game_state: 'Unofficial Final' })).toBe('final')
+  })
+
+  it('the shootout and a final are never an intermission, flag or not', async () => {
+    expect(await la(echl('SO', 'SO', '00:00', { Intermission: '1' }))).toMatchObject({ periodLabel: 'SO', inIntermission: false })
+    expect(scorebarIntermission({ game_status_code: 10, game_state: 'Intermission', period_name_short: 'SO', intermission: true })).toBe(false)
+    expect(scorebarIntermission({ game_status_code: 4, period_name_short: '3', game_clock: '20:00' })).toBe(false)
+    expect(scorebarIntermission({ game_status_code: 3, period_name_short: '3', game_clock: '00:00', intermission: true })).toBe(false)
+  })
+
+  it('/today shows the pre-set intermission as the ended period at 00:00', () => {
+    const row = { game_status_code: 2, game_state: '20:00 3rd', period_name_short: '3', game_clock: '20:00', intermission: false }
+    expect(scorebarLiveFields(row, 'live')).toEqual({ period: 2, periodType: 'REG', periodLabel: '2nd', clock: '00:00', inIntermission: true })
+    const ot = { game_status_code: 2, game_state: '20:00 1st OT', period_name_short: 'OT1', game_clock: '20:00', intermission: false }
+    expect(scorebarLiveFields(ot, 'live')).toEqual({ period: 3, periodType: 'REG', periodLabel: '3rd', clock: '00:00', inIntermission: true })
+  })
+
+  it('the narrative gate counts the period the intermission follows, not the one put up at 20:00', () => {
+    const preset = { game_status_code: 2, period_name_short: '3', game_clock: '20:00', intermission: false }
+    expect(hockeyTechNarrativeReady(preset, 1)).toBe(true)
+    expect(hockeyTechNarrativeReady(preset, 2)).toBe(true)
+    expect(hockeyTechNarrativeReady(preset, 3)).toBe(false)
+    const ahl10 = { game_status_code: 10, game_state: 'Intermission', period_name_short: '2', game_clock: '04:36', intermission: true }
+    expect(hockeyTechNarrativeReady(ahl10, 2)).toBe(true)
+    expect(hockeyTechNarrativeReady(ahl10, 3)).toBe(false)
+    const opening = { game_status_code: 2, period_name_short: '1', game_clock: '20:00', intermission: false }
+    expect(hockeyTechNarrativeReady(opening, 1)).toBe(false)
+    const playing = { game_status_code: 2, period_name_short: '3', game_clock: '12:00', intermission: false }
+    expect(hockeyTechNarrativeReady(playing, 2)).toBe(true)
+    expect(hockeyTechNarrativeReady(playing, 3)).toBe(false)
+  })
+})
+
+describe('endedInFromPlays(): OT/SO for an Unofficial Final', () => {
+  it('reads the play-by-play: shootout attempts, an overtime period, else regulation', () => {
+    expect(endedInFromPlays(pbp1029093)).toBe('OT') // AHL 1029093 ended 4:47 into OT
+    const reg = [{ event: 'goal', details: { period: { id: '3', shortName: '3' } } }]
+    expect(endedInFromPlays(reg)).toBe(null)
+    expect(endedInFromPlays([...reg, { event: 'shot', details: { period: { id: 'OT1', shortName: 'OT1' } } }])).toBe('OT')
+    expect(endedInFromPlays([...reg, { event: 'shootout', details: { period: { id: 'OT1' } } }])).toBe('SO')
+    expect(endedInFromPlays(null)).toBe(null)
+    expect(endedInFromPlays([])).toBe(null)
   })
 })
 
@@ -540,6 +677,64 @@ describe('pollAHL: a game\'s Live Activities start, update and end', () => {
   })
 })
 
+describe('pollAHL: the scorebar each tick, and an Unofficial Final', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-04T21:00:00Z'))
+  })
+  const liveSb = (over) => ({ ...realScorebar.ahl1029093, GameStatus: '2', GameStatusString: 'In Progress', GameStatusStringLong: 'In Progress', Intermission: '0', ...over })
+  const scorebarReads = () => globalThis.fetch.mock.calls.filter(([u]) => String(u).includes('view=scorebar') && String(u).includes('numberofdaysback=1'))
+
+  it('reads the scorebar fresh every tick, not the 60 s KV copy, and leaves it in KV for the routes', async () => {
+    const update = 'bb'.repeat(32)
+    const env = makeEnv({ VAPID_PRIVATE_KEY: 'k', CACHE: makeFakeCache({
+      'ahl:push:state:1029093': { homeScore: 4, awayScore: 4, eventCount: 0, started: true, period: 3, scorerGoalCounts: {} },
+      'la:tokens:ahl:1029093': [update],
+      // what a route cached a few seconds ago
+      'ahl:scorebar': { 1029093: { game_status_code: 2, game_state: 'In Progress', home_score: 4, away_score: 4, ended_in: null, period_name_short: '3', game_clock: '02:10', intermission: false } },
+    }) })
+    installFetch({ table: 'ahl_game_log', gameRow: row1029093, scorebar: [liveSb({ HomeGoals: '4', VisitorGoals: '4', PeriodNameShort: '3', GameClock: '01:05' })], pbp: pbp1029093.slice(0, 20) })
+    await pollAHL(env)
+    expect(scorebarReads()).toHaveLength(1)
+    expect(scorebarReads()[0][1]).toMatchObject({ cf: { cacheTtl: 0 } })
+    expect(sendLiveActivityPushMock.mock.calls[0][1].state).toMatchObject({ periodLabel: '3rd', clock: '01:05' })
+    expect(JSON.parse(await env.CACHE.get('ahl:scorebar'))[1029093].game_clock).toBe('01:05')
+
+    // Next minute: fresh again, though the KV copy is still within its 60 s.
+    installFetch({ table: 'ahl_game_log', gameRow: row1029093, scorebar: [liveSb({ HomeGoals: '4', VisitorGoals: '4', PeriodNameShort: '3', GameClock: '00:12' })], pbp: pbp1029093.slice(0, 20) })
+    await pollAHL(env)
+    expect(scorebarReads()).toHaveLength(1)
+    expect(sendLiveActivityPushMock.mock.calls[1][1].state).toMatchObject({ clock: '00:12' })
+  })
+
+  it('status 3 ends the activity once with OT from the play-by-play; status 4 after it sends nothing', async () => {
+    const update = 'bb'.repeat(32)
+    const env = makeEnv({ VAPID_PRIVATE_KEY: 'k', SUPABASE_SERVICE_KEY: 'svc', CACHE: makeFakeCache({
+      'ahl:push:state:1029093': { homeScore: 4, awayScore: 4, eventCount: 0, started: true, period: 4, scorerGoalCounts: {} },
+      'ahl:push:start:1029093': true,
+      'la:tokens:ahl:1029093': [update],
+    }) })
+    const patches = () => globalThis.fetch.mock.calls.filter(([, o]) => o?.method === 'PATCH').map(([, o]) => JSON.parse(o.body))
+    // 'Unofficial Final' says nothing of OT; the period and clock are frozen at the winning goal.
+    const unofficial = { ...realScorebar.ahl1029093, GameStatus: '3', GameStatusString: 'Unofficial Final', GameStatusStringLong: 'Unofficial Final' }
+    installFetch({ table: 'ahl_game_log', gameRow: row1029093, scorebar: [unofficial], pbp: pbp1029093 })
+    await pollAHL(env)
+    const ends = () => sendLiveActivityPushMock.mock.calls.filter(([, o]) => o.event === 'end')
+    expect(ends()).toHaveLength(1)
+    expect(ends()[0][1].state).toMatchObject({ status: 'final', periodLabel: 'OT', inIntermission: false, homeScore: 5, awayScore: 4 })
+    expect(patches()).toEqual([{ home_score: 5, away_score: 4, game_state: 'Final', game_status_code: 4, ended_in: 'OT' }])
+    expect(await env.CACHE.get('ahl:push:final:1029093')).toBe('true')
+
+    // Minutes later HockeyTech makes it official.
+    installFetch({ table: 'ahl_game_log', gameRow: row1029093, scorebar: [realScorebar.ahl1029093], pbp: pbp1029093 })
+    await pollAHL(env)
+    expect(ends()).toHaveLength(1)
+    expect(sendLiveActivityPushMock).toHaveBeenCalledTimes(1)
+    expect(patches()).toEqual([])
+    expect(globalThis.fetch.mock.calls.some(([u]) => String(u).includes('gameCenterPlayByPlay'))).toBe(false)
+  })
+})
+
 describe('pollPWHL: Live Activities', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
@@ -582,5 +777,23 @@ describe('pollPWHL: Live Activities', () => {
     expect(ends).toHaveLength(1)
     expect(ends[0][1].state).toMatchObject({ status: 'final', periodLabel: 'SO', homeScore: 0, awayScore: 2 })
     expect(await env.CACHE.get(laKeys.tokens('pwhl', 300))).toBe(JSON.stringify([update]))
+  })
+
+  it('reads the scorebar fresh every tick, past the KV copy', async () => {
+    const update = 'bb'.repeat(32)
+    const env = makeEnv({ VAPID_PRIVATE_KEY: 'k', CACHE: makeFakeCache({
+      'pwhl:push:state:300': { homeScore: 0, awayScore: 1, eventCount: 0, started: true, period: 2, scorerGoalCounts: {} },
+      'la:tokens:pwhl:300': [update],
+      'pwhl:scorebar': { 300: { game_status_code: 2, game_state: 'In Progress', home_score: 0, away_score: 1, ended_in: null, period_name_short: '2', game_clock: '11:20', intermission: false } },
+    }) })
+    const gameRow = { game_id: 300, home_team_id: 1, away_team_id: 6, home_score: 0, away_score: 0, game_state: 'In Progress', game_status_code: 2 }
+    const pbp = [{ event: 'shot', details: { shooterTeamId: '6', period: { id: '2', shortName: '2' }, time: '5:00', isGoal: false } }]
+    installFetch({ table: 'pwhl_game_log', gameRow, scorebar: [{ ID: '300', HomeGoals: '0', VisitorGoals: '1', GameStatus: '2', GameStatusString: 'In Progress', PeriodNameShort: '2', GameClock: '09:58', Intermission: '0' }], pbp })
+    await pollPWHL(env)
+    const reads = globalThis.fetch.mock.calls.filter(([u]) => String(u).includes('view=scorebar'))
+    expect(reads).toHaveLength(1)
+    expect(reads[0][1]).toMatchObject({ cf: { cacheTtl: 0 } })
+    expect(sendLiveActivityPushMock.mock.calls[0][1].state).toMatchObject({ periodLabel: '2nd', clock: '09:58' })
+    expect(JSON.parse(await env.CACHE.get('pwhl:scorebar'))[300].game_clock).toBe('09:58')
   })
 })

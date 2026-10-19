@@ -537,6 +537,27 @@ describe.each(LEAGUES)('$key', (L) => {
       expect(upstreamCalls().map(c => c.url).filter(u => u.includes('gameCenterPlayByPlay'))).toEqual([])
     })
 
+    // 2026-10-19: GameStatus 3 'Unofficial Final' reads as final, so the
+    // game-over push goes out at 3 -- and not again when 4 follows.
+    it('Unofficial Final (3) then Final (4): one game-over push, at 3', async () => {
+      installUpstream(L, { overrides: { game_log: [liveGame()] } })
+      const { env } = makeRecordingEnv({ 'push:subs': subsFor() }, { VAPID_PRIVATE_KEY: 'k' })
+      await L.poll(env)
+
+      const sb = (GameStatus, GameStatusString) => [{ ID: String(GAME_ID), GameStatus, GameStatusString, GameStatusStringLong: GameStatusString, HomeGoals: '4', VisitorGoals: '2', PeriodNameShort: '3', GameClock: '00:00', Intermission: '0' }]
+      sendPushMock.mockClear()
+      installUpstream(L, { overrides: { game_log: [liveGame()], scorebar: sb('3', 'Unofficial Final') } })
+      await L.poll(env)
+      const tags = [...new Set(pushes().map(p => p.tag))]
+      expect(tags).toEqual([`${L.key}-win-${GAME_ID}-home`, `${L.key}-final-${GAME_ID}-away`])
+      expect(pushes().find(p => p.tag.includes('-win-')).title).toBe(`🏆 ${L.codes[L.teamA]} Win! ${L.codes[L.teamA]} 4–2 ${L.codes[L.teamB]}`)
+
+      sendPushMock.mockClear()
+      installUpstream(L, { overrides: { game_log: [liveGame()], scorebar: sb('4', 'Final') } })
+      await L.poll(env)
+      expect(sendPushMock).not.toHaveBeenCalled()
+    })
+
     // C3 (2026-10): the poll writes puck drop and the final into
     // {league}_game_log itself, once each -- the pipeline job that used to
     // do it ran 3-4 times a day.

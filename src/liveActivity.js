@@ -20,7 +20,7 @@
 // working; every other league adds its own segment (`la:start:ahl:CHI`,
 // `la:tokens:pwhl:341`).
 
-import { kvGet, kvPut, json, badRequest, errorJson, sendLiveActivityPush, checkPublicWriteRateLimit, scorebarIntermission, hockeyTechPeriodName } from './shared.js';
+import { kvGet, kvPut, json, badRequest, errorJson, sendLiveActivityPush, checkPublicWriteRateLimit, scorebarShownPeriod, hockeyTechPeriodName } from './shared.js';
 
 export const LA_LEAGUES = ['nhl', 'pwhl', 'ahl', 'echl'];
 export const LA_TOKEN_TTL = 8 * 3600;
@@ -254,10 +254,15 @@ export function hockeyTechLiveActivityState(game, events, { teamCodes = {}, fina
   const homeId = Number(game.home_team_id), awayId = Number(game.away_team_id);
   const abbrOf = (id, fallback) => teamCodes[Number(id)] || fallback || null;
   const plays = Array.isArray(events) ? events : null;
-  // Not just the scorebar's Intermission flag: it never read '1' through
-  // an intermission of ECHL 25487 (2026-10-16). See scorebarIntermission().
-  const inIntermission = !final && scorebarIntermission(game);
-  const periodLabel = hockeyTechPeriodName(game.period_name_short);
+  // Not just the scorebar's Intermission flag: the ECHL never sets it and
+  // the AHL sets it late. In an intermission the period shown is the one
+  // it follows, even once the scorebar puts the next period up at 20:00
+  // ("2nd INT", not "3rd · 20:00"). See scorebarIntermissionState().
+  const shown = final
+    ? { periodShort: game.period_name_short, clock: game.game_clock, intermission: null }
+    : scorebarShownPeriod(game);
+  const inIntermission = shown.intermission != null;
+  const periodLabel = hockeyTechPeriodName(shown.periodShort);
 
   let lastEvent = null;
   const last = plays && [...plays].reverse().find(e => e?.event === 'goal' || e?.event === 'penalty');
@@ -317,7 +322,7 @@ export function hockeyTechLiveActivityState(game, events, { teamCodes = {}, fina
     homeScore: game.home_score ?? 0,
     awayScore: game.away_score ?? 0,
     periodLabel: label,
-    clock: (typeof game.game_clock === 'string' && game.game_clock) || '',
+    clock: (typeof shown.clock === 'string' && shown.clock) || '',
     inIntermission,
     status: final ? 'final' : 'live',
     lastEvent,
