@@ -6,7 +6,7 @@
  */
 
 import { ParamError, readJsonObject, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, h2hNarrativeStats, hockeyTechNarrativeReady, scorebarLiveFields } from './shared.js';
-import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, readPollSecret, withParamErrors } from './shared.js';
+import { kvGet, kvPut, json, cachedJson, cachedUntilFinal, sbRows, sbRowsOr, sbRosterRows, sbHeaders, sbError, errorJson, badRequest, unauthorized, SB_URL, HT_BASE, HT_KEY, HT_HDR, unwrapJsonp, parseRSS, parseESPN, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, extractCareerTotal, extractRows, extractBioPoints, extractPhoto, deriveGameStatus, withLiveScorebar, finalLabel, endedInSuffix, endedInFromStatus, normalizeLink, recordHealth, requestLocale, localeKeySuffix, broadcastToTeam, patchGameLog, gameLogLiveFields, gameLogFinalFields, endedInFromPlays, etDateString, addDaysToDateString, TODAY_LOOKAHEAD_DAYS, sbParam, sbParamList, secretMatches, readPollSecret, withParamErrors } from './shared.js';
 import { hockeyTechLiveActivityState, startLiveActivities, pushLiveActivities } from './liveActivity.js';
 import { resolvePWHLSeason, getAllPWHLSeasonTypes, getAllPWHLSeasons, getPWHLScheduleSeasonIds } from './seasons.js';
 import { buildHockeyTechPrediction, gameResult, endedInOf } from './hockeytechPrediction.js';
@@ -343,8 +343,9 @@ export async function pollPWHL(env) {
     );
     if (!logged?.length) return;
     // withClock: the period/clock fields pollPWHLGame()'s Live Activity
-    // state reads.
-    const games = await withLive(env, logged, { withClock: true });
+    // state reads. fresh: straight from HockeyTech, refilling the 60 s KV
+    // copy the routes read (shared.js fetchScorebar()).
+    const games = await withLive(env, logged, { withClock: true, fresh: true });
 
     // Live games, plus games that have gone final -- pollPWHLGame() sends a
     // final game's game-over push once, then skips it.
@@ -577,9 +578,12 @@ async function pollPWHLGame(env, game) {
       const as = game.away_score ?? 0;
       // A game the pipeline already marked final skipped the scorebar
       // overlay, so ask it now for OT/SO -- once, for this push.
-      const endedIn = 'ended_in' in game
+      let endedIn = 'ended_in' in game
         ? game.ended_in
         : (await withLive(env, [game], { withEndedIn: true }))[0].ended_in;
+      // 'Unofficial Final' (status 3) doesn't say OT/SO; the play-by-play
+      // does (shared.js endedInFromPlays()).
+      if (endedIn == null && game.game_status_code === 3) endedIn = endedInFromPlays(events);
       // The final state to every Live Activity, which then ends. Once:
       // this block runs once per game (finalKey). A row without the
       // scorebar's period (game_log already final) asks it for that too.

@@ -96,21 +96,29 @@ export async function verifyAdminUser(request, env) {
 // when present: confirmed live that a not-yet-started game's game_state
 // string is literally its scheduled clock time ("7:00PM"), not a state
 // word, so string-matching alone can't reliably tell "scheduled" apart
-// from an unrecognized live state. 1=scheduled, 4=final confirmed live;
-// 2/3 unconfirmed (no in-progress game observed yet) -- treated as live
-// rather than guessing the exact code. Falls back to the original
-// string-matching approach for rows written before this column existed
-// (or if the live-score-refresh job hasn't reached this game yet).
+// from an unrecognized live state. Codes seen in the AHL/ECHL scorebars
+// (2026-10-18): 1 scheduled, 2 in progress, 10 intermission (AHL only),
+// 3 'Unofficial Final' and 4 'Final'. 3 is the game over with the
+// official score sheet pending: the AHL and ECHL sat on it for roughly
+// 9-20 min after the horn (as far as a capture every few minutes shows)
+// with the period and clock frozen at the end (00:00 in the 3rd, the
+// winning goal's time in OT) and the score unchanged into 4, and two
+// finished ECHL games went 4 -> 3 -> 4 again hours later. So it reads as
+// final: as live it showed "3rd INT" on the Lock Screen for those
+// minutes. Anything else non-1 is live. Falls back to
+// the original string-matching approach for rows written before this
+// column existed (or if the live-score-refresh job hasn't reached this
+// game yet).
 export function deriveGameStatus(gameRow) {
   if (!gameRow) return 'pre';
   const code = gameRow.game_status_code;
   if (code != null) {
-    if (code === 4) return 'final';
+    if (code === 4 || code === 3) return 'final';
     if (code === 1) return 'pre';
     return 'live';
   }
   const gs = (gameRow.game_state || '').toLowerCase();
-  if (gs === 'final' || gs === 'official') return 'final';
+  if (gs === 'final' || gs === 'official' || gs === 'unofficial final') return 'final';
   if (gs.includes('progress') || gs.includes('live') || gs.includes('intermission')) return 'live';
   return 'pre';
 }
@@ -146,39 +154,106 @@ export function hockeyTechPeriodName(raw) {
   return n <= 1 ? 'OT' : `${n}OT`;
 }
 
-// ── HockeyTech: is the game between periods? (2026-10-17) ──
-// Whether a PWHL/AHL/ECHL game is in an intermission right now, from its
-// game_log row with the scorebar laid over it (withLiveScorebar(..., {
-// withClock: true })). The Live Activity's inIntermission and the
-// narratives' "is the period over" both read this, so they agree.
+// A period number (scorebarPeriodNumber()) back as a HockeyTech short
+// name: '1'-'3', then 'OT', '2OT'.. (what hockeyTechPeriodName() reads).
+export function scorebarPeriodShortName(n) {
+  if (!Number.isInteger(n) || n < 1 || n === 99) return null;
+  return n <= 3 ? String(n) : n === 4 ? 'OT' : `${n - 3}OT`;
+}
+
+// ── HockeyTech: is the game between periods? (2026-10-17, -19) ──
+// Whether a PWHL/AHL/ECHL game is in an intermission right now, and after
+// which period, from its game_log row with the scorebar laid over it
+// (withLiveScorebar(..., { withClock: true })). The Live Activity, the
+// /today rows and the narratives' "is the period over" all read this, so
+// they agree.
 //
-// The scorebar's Intermission flag alone wasn't enough: through an
-// intermission of ECHL game 25487 (Greensboro vs Reading, 2026-10-16) the
-// Lock Screen kept the previous period at 0:00 and never showed INT, so
-// the flag never read '1' on any minute the poller saw. No in-intermission
-// scorebar row has been captured yet, so how the feed says it is unknown;
-// the answer is layered, any one of these is enough:
-//   1. Intermission is '1' (the flag, when the feed does set it);
-//   2. GameStatusString says so ("1st Intermission" and the like --
-//      deriveGameStatus() already reads such a string as live);
-//   3. the game is live (not final, not pre) and its clock has run out
-//      (GameClock 0:00 / 00:00 / 00:00:00) in a regulation or overtime
-//      period. The clock counts down, so a live period at zero is over;
-//      a shootout has no clock to run out, so 'SO' is never one.
-// A final row is never in an intermission. The catch in 3: after the
-// final horn and before the scorebar's GameStatus flips to 4, the last
-// period reads as its intermission -- up to a minute (the scorebar's
-// cache), which is acceptable: the final follows on the next tick.
+// What the scorebar shows between periods (live AHL and ECHL rows
+// captured every few minutes through 2026-10-18's afternoon games):
+//   - The ECHL never sets the Intermission flag. Through the whole
+//     intermission the row reads GameStatus 2, GameStatusString
+//     '00:00 2nd', GameClock '00:00', Intermission '0', period unchanged.
+//   - The AHL does, late: the row sits on status 2 at 00:00 for minutes
+//     after the horn, then reads GameStatus 10, GameStatusString
+//     'Intermission' ('End of 2nd' long), Intermission '1', the period it
+//     follows -- sometimes with the intermission's own countdown as the
+//     clock ('04:36').
+//   - Both then put the NEXT period up at a full clock ('20:00 3rd', status
+//     2) several minutes before the puck drops (4.5+ min seen).
+// So any one of these is an intermission:
+//   1. Intermission is '1' (the flag), or
+//   2. GameStatusString says so ('Intermission') -- after the period the
+//      row shows;
+//   3. the game is live and its clock has run out (GameClock 0:00 /
+//      00:00 / 00:00:00) in a regulation or overtime period -- after that
+//      period. This includes the 1st: every live '00:00 1st' row in the
+//      capture came after the 1st was played (pre-game rows are status 1,
+//      or status 2 at '20:00 1st');
+//   4. the game is live and period N (2nd or later) shows exactly 20:00
+//      ('20:00' or '20:00:00') -- after period N-1, which has ended (the
+//      `preset` case: callers show period N-1 at 00:00). Period 1 at 20:00
+//      is the opening faceoff, not an intermission. A regular-season
+//      overtime is shorter than 20:00, so only a playoff overtime matches.
+// The shootout is never an intermission (it has no clock to run out), and
+// neither is a final: GameStatus 3 'Unofficial Final' reads as final
+// (deriveGameStatus()), so the last period doesn't hang on as "3rd INT"
+// after the horn. Left: the minute or so between the horn and status 3,
+// when rule 3 shows the last period's intermission.
+//
+// null when not in an intermission, else { after, preset }: `after` the
+// period number the intermission follows (null when the row has no
+// period), `preset` true for rule 4.
 const ZERO_CLOCK = /^0{1,2}(:00){1,2}$/;
-export function scorebarIntermission(row) {
-  if (!row) return false;
+const FULL_PERIOD_CLOCK = /^20:00(:00)?$/;
+export function scorebarIntermissionState(row) {
+  if (!row) return null;
   const status = deriveGameStatus(row);
-  if (status === 'final') return false;
-  if (row.intermission === true) return true;
-  if (/intermission/i.test(String(row.game_state || ''))) return true;
-  if (status !== 'live') return false;
+  if (status === 'final') return null;
   const period = scorebarPeriodNumber(row.period_name_short);
-  return period != null && period !== 99 && ZERO_CLOCK.test(String(row.game_clock ?? '').trim());
+  if (period === 99) return null;
+  if (row.intermission === true || /intermission/i.test(String(row.game_state || ''))) {
+    return { after: period, preset: false };
+  }
+  if (status !== 'live' || period == null) return null;
+  const clock = String(row.game_clock ?? '').trim();
+  if (ZERO_CLOCK.test(clock)) return { after: period, preset: false };
+  if (period >= 2 && FULL_PERIOD_CLOCK.test(clock)) return { after: period - 1, preset: true };
+  return null;
+}
+
+export function scorebarIntermission(row) {
+  return scorebarIntermissionState(row) != null;
+}
+
+// The period and clock to show for a live scorebar row: the row's own,
+// except in a `preset` intermission (scorebarIntermissionState() rule 4),
+// where the scorebar already shows the next period at 20:00 -- then the
+// period the intermission follows, at 00:00, as the zero-clock rows before
+// it read. Returns { periodShort, clock, intermission }.
+export function scorebarShownPeriod(row) {
+  const intermission = scorebarIntermissionState(row);
+  if (intermission?.preset) {
+    return { periodShort: scorebarPeriodShortName(intermission.after), clock: '00:00', intermission };
+  }
+  return { periodShort: row?.period_name_short ?? null, clock: row?.game_clock ?? null, intermission };
+}
+
+// 'OT' | 'SO' | null for a finished game from its play-by-play
+// (gameCenterPlayByPlay events): 'SO' when there are shootout attempts,
+// 'OT' when play reached an overtime period, else null (regulation). For
+// a game the scorebar shows as GameStatus 3 'Unofficial Final', whose
+// GameStatusStringLong is just 'Unofficial Final' -- no OT/SO, unlike
+// 4's 'Final OT' / 'Final 1st OT' / 'Final SO' (2026-10-18 capture). null
+// without events.
+export function endedInFromPlays(events) {
+  if (!Array.isArray(events) || !events.length) return null;
+  if (events.some(e => e?.event === 'shootout')) return 'SO';
+  const reachedOT = events.some(e => {
+    const p = e?.details?.period || {};
+    const n = scorebarPeriodNumber(p.id) ?? scorebarPeriodNumber(p.shortName);
+    return n != null && n > 3 && n !== 99;
+  });
+  return reachedOT ? 'OT' : null;
 }
 
 // The live period/clock fields of a PWHL/AHL/ECHL /today row, normalized
@@ -192,20 +267,25 @@ export function scorebarIntermission(row) {
 //   periodType:     'REG' | 'OT' | 'SO' | null
 //   periodLabel:    '1st'..'3rd', 'OT', '2OT'.., 'SO' | null
 //   clock:          the scorebar's GameClock ('07:58'), time left in the
-//                   period as of the scorebar's 60 s cache | null
+//                   period as of the poller's last read (once a minute) |
+//                   null
 //   inIntermission: scorebarIntermission()
+// In an intermission the period is the one it follows: when the scorebar
+// already shows the next period at 20:00, period/label/clock are the
+// ended period at '00:00' (scorebarShownPeriod()).
 // Otherwise nulls and inIntermission false, as /nhl/today sends.
 const REG_LABEL = { 1: '1st', 2: '2nd', 3: '3rd' };
 export function scorebarLiveFields(row, status, { fallbackPeriod = null } = {}) {
   if (status !== 'live' || !row) {
     return { period: null, periodType: null, periodLabel: null, clock: null, inIntermission: false };
   }
-  const n = scorebarPeriodNumber(row.period_name_short);
-  const clock = typeof row.game_clock === 'string' && row.game_clock.trim() ? row.game_clock.trim() : null;
-  const inIntermission = scorebarIntermission(row);
+  const shown = scorebarShownPeriod(row);
+  const n = scorebarPeriodNumber(shown.periodShort);
+  const clock = typeof shown.clock === 'string' && shown.clock.trim() ? shown.clock.trim() : null;
+  const inIntermission = shown.intermission != null;
   if (n === 99) return { period: null, periodType: 'SO', periodLabel: 'SO', clock, inIntermission };
   if (n != null) {
-    return { period: n, periodType: n <= 3 ? 'REG' : 'OT', periodLabel: hockeyTechPeriodName(row.period_name_short) || null, clock, inIntermission };
+    return { period: n, periodType: n <= 3 ? 'REG' : 'OT', periodLabel: hockeyTechPeriodName(shown.periodShort) || null, clock, inIntermission };
   }
   // No period on the scorebar. game_log's own period (PWHL) is a number;
   // past the 3rd its numbering is unconfirmed, so only 1-3 get a type.
@@ -215,29 +295,33 @@ export function scorebarLiveFields(row, status, { fallbackPeriod = null } = {}) 
 
 // Whether a PWHL/AHL/ECHL narrative may be written for `period` (a period
 // number, or 'game'), from the Worker's reading of the game: `row` is the
-// game's {league}_game_log row with the 60 s-cached scorebar laid over it
+// game's {league}_game_log row with the scorebar laid over it
 // (withLiveScorebar(..., { withClock: true }): game_status_code /
 // game_state, period_name_short, game_clock, intermission). A game is
 // over when final; a period once play has moved past it, or the game is
-// in the intermission after it (scorebarIntermission(), the same signal
-// the Live Activity shows). No row, or no period from the scorebar for a
-// game that isn't final, is "not over".
+// in the intermission after it (scorebarIntermissionState(), the same
+// signal the Live Activity shows). In the intermission the period that
+// counts is the one it follows, not the next one the scorebar may already
+// show at 20:00 -- that one hasn't started. No row, or no period from the
+// scorebar for a game that isn't final, is "not over".
 export function hockeyTechNarrativeReady(row, period) {
   if (!row) return false;
   if (deriveGameStatus(row) === 'final') return true;
   if (period === 'game') return false;
+  const intermission = scorebarIntermissionState(row);
+  if (intermission?.after != null) return intermission.after >= period;
   const current = scorebarPeriodNumber(row.period_name_short);
   if (current == null) return false;
-  return current > period || (current === period && scorebarIntermission(row));
+  return current > period;
 }
 
 // A scorebar game's period/clock columns, as fetchScorebar() and
 // hockeytech.js's upcomingFromScorebar() both store them.
 // PeriodNameShort: '1'-'3', then 'OT'/'2OT'.. (AHL) or 'OT1'/'OT2'..
 // (ECHL, PWHL), and 'SO'. GameClock is the time left in the period
-// ('07:58'). Intermission is '1' between periods -- or should be: it
-// didn't show one in ECHL 25487 (2026-10-16), so read "between periods"
-// through scorebarIntermission().
+// ('07:58'). Intermission is '1' between periods in the AHL only, and
+// late; the ECHL never sets it -- read "between periods" through
+// scorebarIntermissionState().
 export function scorebarClockFields(g) {
   return {
     period_name_short: typeof g.PeriodNameShort === 'string' && g.PeriodNameShort ? g.PeriodNameShort : null,
@@ -255,7 +339,8 @@ export function scorebarClockFields(g) {
 // reads the same feed=modulekit&view=scorebar itself (+/-1 day, the window
 // that job reads) and overlays it onto game_log rows; the pipeline job
 // stays as the persistent backstop. Cached 60s under `{client}:scorebar`
-// so the cron and every route share one HockeyTech call a minute.
+// so the cron and every route share one HockeyTech call a minute; the
+// cron's own read is fresh and refills that key (`fresh` below).
 //
 // `ht`: { client, base, key, siteId, leagueId, headers }. Resolves to
 // { [gameId]: { game_status_code, game_state, home_score, away_score,
@@ -263,19 +348,29 @@ export function scorebarClockFields(g) {
 // the feed is unreachable (callers then use game_log as-is). The last
 // three are the Live Activity's period and clock (liveActivity.js), laid
 // over rows only on request -- see withLiveScorebar().
-export async function fetchScorebar(env, ht) {
+//
+// `fresh` (the pollers' once-a-minute tick, 2026-10-19): skip the KV read
+// and Cloudflare's edge cache and ask HockeyTech now, then write the
+// result to the same key so the routes read it too. Through the cache the
+// Lock Screen clock ran 2-3 min behind: a KV copy up to 60 s old (older
+// in another colo), and HockeyTech answers with max-age=240. The pollers
+// are the one caller a minute, so this stays one HockeyTech call per
+// league per minute. When the fresh read fails, the cached copy (if any)
+// is used, as before.
+export async function fetchScorebar(env, ht, { fresh = false } = {}) {
   const kvKey = `${ht.client}:scorebar`;
   const cached = await kvGet(env, kvKey);
-  if (cached) return cached;
+  if (cached && !fresh) return cached;
+  const fallback = cached || {};
   try {
     const res = await fetch(
       `${ht.base}?feed=modulekit&view=scorebar&numberofdaysback=1&numberofdaysahead=1&limit=100` +
       `&league_id=${ht.leagueId}&key=${ht.key}&client_code=${ht.client}&site_id=${ht.siteId}&lang=en`,
-      { headers: ht.headers }
+      fresh ? { headers: ht.headers, cf: { cacheTtl: 0 } } : { headers: ht.headers }
     );
-    if (!res.ok) return {};
+    if (!res.ok) return fallback;
     const games = (await res.json())?.SiteKit?.Scorebar;
-    if (!Array.isArray(games)) return {};
+    if (!Array.isArray(games)) return fallback;
     const map = {};
     for (const g of games) {
       const id = parseInt(g.ID, 10);
@@ -295,7 +390,7 @@ export async function fetchScorebar(env, ht) {
     await kvPut(env, kvKey, map, 60);
     return map;
   } catch {
-    return {};
+    return fallback;
   }
 }
 
@@ -305,11 +400,12 @@ export async function fetchScorebar(env, ht) {
 // carry ended_in, so a route that reports OT/SO for today's finals asks
 // the scorebar anyway. The period/clock/intermission fields are only laid
 // on with `withClock` (the pollers' Live Activity state, the narrative
-// gate, and the /today routes' scorebarLiveFields()).
+// gate, and the /today routes' scorebarLiveFields()). `fresh`: see
+// fetchScorebar() -- the pollers' tick only.
 const SCOREBAR_CLOCK_FIELDS = ['period_name_short', 'game_clock', 'intermission'];
-export async function withLiveScorebar(env, ht, rows, { withEndedIn = false, withClock = false } = {}) {
+export async function withLiveScorebar(env, ht, rows, { withEndedIn = false, withClock = false, fresh = false } = {}) {
   if (!withEndedIn && !rows.some(r => deriveGameStatus(r) !== 'final')) return rows;
-  const live = await fetchScorebar(env, ht);
+  const live = await fetchScorebar(env, ht, { fresh });
   return rows.map(r => {
     const s = live[r.game_id];
     if (!s) return r;
