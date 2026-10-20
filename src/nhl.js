@@ -4489,6 +4489,18 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
     const carHDCF = num(stats.carHDCF), oppHDCF = num(stats.oppHDCF);
     const carHits = num(stats.carHits), carFOPct = num(stats.carFOPct);
     const carGoals = num(stats.carGoals), oppGoals = num(stats.oppGoals);
+    // The score after this period (the client's carScore/oppScore, from
+    // every goal so far), and what it means for the result. Without it a
+    // period's goals read as the game's: P3 of BOS @ CAR 2025021237 (5-5
+    // after it, CAR 6-5 in OT) came back "Boston ... secured the win".
+    const carScore = num(stats.carScore), oppScore = num(stats.oppScore);
+    const scoreKnown = carScore != null && oppScore != null;
+    const periodNum = Number(period);
+    const resultNote = isGame ? ''
+      : periodNum < 3 ? ' The game goes on after this period: do not say it is over or who won.'
+      : !scoreKnown ? ' Do not say the game is over or who won unless the stats show it.'
+      : carScore === oppScore ? ' The game is tied after this period and continues in overtime: do not say who won.'
+      : '';
     const samePeriod = stats.bestPeriod?.period != null && Number(stats.bestPeriod.period) === Number(stats.worstPeriod?.period);
     const penaltyCount = num(stats.penaltyCount), carPenaltyCount = num(stats.carPenaltyCount);
     // The period summary names its period from the client's label
@@ -4539,6 +4551,7 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       ...statLine(carGoals != null && oppGoals != null, `${carAbbr} goals: ${carGoals}, ${oppAbbr} goals: ${oppGoals}`),
       ...statLine(carHits != null, `${carAbbr} hits: ${carHits}`),
       ...statLine(penaltyCount != null && carPenaltyCount != null, `Penalties: ${penaltyCount} total (${carPenaltyCount} against ${carAbbr})`),
+      ...statLine(scoreKnown, `Score after this period: ${carAbbr} ${carScore}, ${oppAbbr} ${oppScore}`),
       `  - Goals: ${goalsSummary}${goalieLine}`,
     ].join('\n');
 
@@ -4562,7 +4575,7 @@ ${periodLines}
 
   ${allowedNamesNote}
 
-  Focus on what mattered most — ${cf != null ? 'possession dominance, ' : ''}momentum, key goals. Under 60 words.${playoffNote}`;
+  Focus on what mattered most — ${cf != null ? 'possession dominance, ' : ''}momentum, key goals. Under 60 words.${resultNote}${playoffNote}`;
 
     // For game summaries, also generate a short card caption in parallel
     const cardPrompt = isGame

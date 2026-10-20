@@ -7126,7 +7126,7 @@ exports[`summary/narrative (period) > response, upstream requests and KV writes;
 
   Players you may name: Sebastian Aho, Pyotr Kochetkov. Do not name any other player — not linemates, not defensemen, not anyone not listed here.
 
-  Focus on what mattered most — possession dominance, momentum, key goals. Under 60 words.",
+  Focus on what mattered most — possession dominance, momentum, key goals. Under 60 words. The game goes on after this period: do not say it is over or who won.",
       "maxTokens": 1024,
       "method": "POST",
       "url": "https://openrouter.ai/api/v1/chat/completions",
