@@ -4234,6 +4234,80 @@ describe('POST /summary/narrative', () => {
     expect(aiCalls(globalThis.fetch)).toHaveLength(2)
   })
 
+  it('asks the card prompt for a caption only, not a game summary and a caption', async () => {
+    // The caption prompt used to be the game prompt with just its closing
+    // sentence swapped, so it still opened "Write a sharp 3-4 sentence final
+    // game summary" and then asked for a caption -- and the model answered
+    // both under "**Summary**" / "**Caption**" headings.
+    const env = narrativeEnv()
+    mockFetchWithAI('Game summary text.')
+    await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=game&carAbbr=CAR', {
+        method: 'POST',
+        body: { carGoals: 3, oppGoals: 1, corsiForPct: 55, carSOG: 30, oppSOG: 22, goals: [] },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=game&carAbbr=CAR')
+    )
+    const [gamePrompt, cardPrompt] = [0, 1].map(i => aiPrompt(globalThis.fetch, i)[0].content)
+    expect(gamePrompt).toMatch(/final game summary for CAR vs BOS/)
+    expect(gamePrompt).toMatch(/no markdown, no headings, no labels/)
+    expect(cardPrompt).toMatch(/shareable card caption for the CAR vs BOS final/)
+    expect(cardPrompt).not.toMatch(/final game summary/)
+    expect(cardPrompt).toMatch(/no heading, no "Summary" or "Caption" label/)
+    // Everything else -- the stats, the allowed names -- is the same prompt.
+    expect(cardPrompt).toMatch(/Final: CAR 3 - 1 BOS/)
+  })
+
+  it('caches the card caption as plain text: only the Caption section, no headings or markdown', async () => {
+    // The shape of the bad cached values found 2026-10-19 (e.g.
+    // narrative:game:2026020136:CAR): the model wrote both sections with
+    // bold headings, and the app printed the headings on the shareable card.
+    const env = narrativeEnv()
+    mockFetchWithAI('**Summary**\nThe Canes controlled play all night, out-attempting Florida 60-40. Aho opened the scoring in the second and Kochetkov held the lead.\n\n**Caption**\nCanes edge the Panthers 2-1 behind Aho and a 58% Corsi night.')
+    const res = await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=game&carAbbr=CAR', {
+        method: 'POST',
+        body: { carGoals: 2, oppGoals: 1, corsiForPct: 58, carSOG: 30, oppSOG: 22, goals: [] },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=game&carAbbr=CAR')
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.cardNarrative).toBe('Canes edge the Panthers 2-1 behind Aho and a 58% Corsi night.')
+    // The narrative keeps its Summary section, as one paragraph, no heading.
+    expect(body.narrative).toBe('The Canes controlled play all night, out-attempting Florida 60-40. Aho opened the scoring in the second and Kochetkov held the lead.')
+    expect(body.narrative).not.toMatch(/\*|Summary|Caption|\n/)
+    expect(JSON.parse(await env.CACHE.get('narrative:game:1:CAR'))).toMatchObject({ narrative: body.narrative, cardNarrative: body.cardNarrative })
+  })
+
+  it('strips a heading, bold and bullets from a narrative that has no sections', async () => {
+    const env = narrativeEnv()
+    mockFetchWithAI('## Period 2 recap\n- The Canes **owned** the period.\n- Aho scored.')
+    const res = await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=2&carAbbr=CAR', {
+        method: 'POST',
+        body: { carGoals: 1, oppGoals: 0, corsiForPct: 60, carSOG: 12, oppSOG: 5, goals: [] },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=2&carAbbr=CAR')
+    )
+    expect(res.status).toBe(200)
+    expect((await res.json()).narrative).toBe('The Canes owned the period. Aho scored.')
+  })
+
+  it('502s without caching when the AI answer is nothing but headings', async () => {
+    const env = narrativeEnv()
+    mockFetchWithAI('**Summary**\n\n**Caption**\n')
+    const res = await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=game&carAbbr=CAR', {
+        method: 'POST',
+        body: { carGoals: 2, oppGoals: 1, corsiForPct: 58, carSOG: 30, oppSOG: 22, goals: [] },
+      }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=game&carAbbr=CAR')
+    )
+    expect(res.status).toBe(502)
+    expect(await env.CACHE.get('narrative:game:1:CAR')).toBeNull()
+  })
+
   it('includes each goal\'s period in a full-game prompt, so the model states it instead of guessing', async () => {
     // Regression for a real, confirmed bug: without a period, a side-by-side
     // model comparison found BOTH Gemma and DeepSeek inventing one anyway

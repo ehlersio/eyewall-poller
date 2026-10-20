@@ -7,7 +7,7 @@
 
 import { penaltyText, penaltyDescription } from './penaltyText.js';
 import { startLiveActivities as startLeagueLiveActivities, pushLiveActivities, handleLiveActivity } from './liveActivity.js';
-import { checkPublicWriteRateLimit, readJsonObject, h2hNarrativeStats, isAllowedPushEndpoint, isValidPushKeys, normalizeApnsToken, normalizePushSubs, subId, MAX_PUSH_SUBS, PUSH_SUBS_TTL, safeName, safeStrength, safeClock, finiteOrNull, NARRATIVE_MAX_GOALS, ParamError } from './shared.js';
+import { checkPublicWriteRateLimit, readJsonObject, h2hNarrativeStats, isAllowedPushEndpoint, isValidPushKeys, normalizeApnsToken, normalizePushSubs, subId, MAX_PUSH_SUBS, PUSH_SUBS_TTL, safeName, safeStrength, safeClock, finiteOrNull, plainNarrative, NARRATIVE_MAX_GOALS, ParamError } from './shared.js';
 import { kvGet, kvPut, json, LIVE_MAX_AGE, nhlSeasonEnd, etDateString, finalLabel, endedInSuffix, cachedJson, sbRows, ON_ROSTER_FILTER, sbHeaders, errorJson, badRequest, unauthorized, corsHeaders, SB_URL, parseRSS, parseESPN, parseAtom, parseSportsnet, parseGoogleNews, parseNHLNews, sendPush, checkAiRateLimit, buildHeadToHeadPayload, generateText, recordHealth, requestLocale, localizePrompt, localeKeySuffix, broadcastToTeam, flushAlertLog, readAlertLog, EARLY_SEASON_K, blendStat, describeStat, fmtPct, fmtRate, asPct, leagueSpecialTeams as sharedLeagueSpecialTeams, leagueAverageLine as sharedLeagueAverageLine, expectedScore, sbParam, sbParamList, sbRowsIfTable, secretMatches, readPollSecret, withParamErrors } from './shared.js';
 import { handleGoalReplay } from './goalReplay.js';
 import { handleEdge } from './edge.js';
@@ -4555,20 +4555,32 @@ Write the analysis now. Mention the single most decisive factor, one risk or con
       `  - Goals: ${goalsSummary}${goalieLine}`,
     ].join('\n');
 
-    const prompt = isGame
-      ? `You are EyeWall, an analytics assistant for ${carAbbr} hockey fans.
-  Write a sharp 3-4 sentence final game summary for ${carAbbr} vs ${oppAbbr}.
-  Tone: analytical, knowledgeable fan. No fluff. No bullet points.
+    // The game prompt and the card-caption prompt share everything but the
+    // ask and the closing task. The caption prompt used to be the game prompt
+    // with only its closing sentence swapped, so it still opened with "Write
+    // a ... final game summary" and then asked for a caption: the model
+    // answered both, under "**Summary**" and "**Caption**" headings, and the
+    // headings reached the shareable card (narrative:game entries checked
+    // 2026-10-19). Both answers are also run through plainNarrative() below.
+    const gamePrompt = (ask, task) => `You are EyeWall, an analytics assistant for ${carAbbr} hockey fans.
+  ${ask}
+  Tone: analytical, knowledgeable fan. No fluff. No bullet points. Plain text only: no markdown, no headings, no labels.
 
   Game stats:
 ${gameLines}
 
   ${allowedNamesNote}
 
-  Summarize how the game went, key turning points, and whether the result matched the underlying play. Under 80 words.${playoffNote}`
+  ${task}${playoffNote}`;
+
+    const prompt = isGame
+      ? gamePrompt(
+          `Write a sharp 3-4 sentence final game summary for ${carAbbr} vs ${oppAbbr}.`,
+          'Summarize how the game went, key turning points, and whether the result matched the underlying play. Under 80 words. Reply with the summary sentences only, as one paragraph.'
+        )
       : `You are EyeWall, an analytics assistant for ${carAbbr} hockey fans.
   Write a tight 2-3 sentence period summary for ${periodTitle ? `${periodTitle} of ` : ''}a ${carAbbr} vs ${oppAbbr} game.
-  Tone: sharp, analytical, knowledgeable fan. No fluff. No bullet points. Just sentences.
+  Tone: sharp, analytical, knowledgeable fan. No fluff. No bullet points. Just sentences. Plain text only: no markdown, no headings, no labels.
 
   Stats:
 ${periodLines}
@@ -4579,9 +4591,9 @@ ${periodLines}
 
     // For game summaries, also generate a short card caption in parallel
     const cardPrompt = isGame
-      ? prompt.replace(
-          'Summarize how the game went, key turning points, and whether the result matched the underlying play. Under 80 words.',
-          'Write a 2-3 sentence shareable card caption. Hit the key result, one standout moment, and the underlying play if telling. Under 50 words. Plain text only.'
+      ? gamePrompt(
+          `Write a 2-3 sentence shareable card caption for the ${carAbbr} vs ${oppAbbr} final.`,
+          'Hit the key result, one standout moment, and the underlying play if telling. Under 50 words. Reply with the caption sentences only, as one paragraph: no heading, no "Summary" or "Caption" label, no quotation marks, nothing before or after the caption.'
         )
       : null;
 
@@ -4602,8 +4614,12 @@ ${periodLines}
       return errorJson(502, { error: 'AI generation failed' });
     }
 
-    const narrative     = aiResponse.response?.trim() || '';
-    const cardNarrative = cardResponse?.response?.trim() || null;
+    // Both answers are cached and printed verbatim by the app, so any heading
+    // or label the model added is dropped here: the caption keeps only its
+    // "Caption" section when the model wrote a summary too, the narrative its
+    // "Summary" section (plainNarrative(), shared.js).
+    const narrative     = plainNarrative(aiResponse.response, { section: /summary|narrative|recap/i });
+    const cardNarrative = plainNarrative(cardResponse?.response, { section: /caption/i }) || null;
     if (!narrative) return errorJson(502, { error: 'Empty response' });
 
     const result = { narrative, cardNarrative, gameId, period, generatedAt: new Date().toISOString() };

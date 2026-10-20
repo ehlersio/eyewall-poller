@@ -6986,7 +6986,7 @@ exports[`summary/narrative (game) > response, upstream requests and KV writes; r
     {
       "aiPrompt": "You are EyeWall, an analytics assistant for CAR hockey fans.
   Write a sharp 3-4 sentence final game summary for CAR vs BOS.
-  Tone: analytical, knowledgeable fan. No fluff. No bullet points.
+  Tone: analytical, knowledgeable fan. No fluff. No bullet points. Plain text only: no markdown, no headings, no labels.
 
   Game stats:
   - Final: CAR 4 - 2 BOS
@@ -7001,15 +7001,15 @@ exports[`summary/narrative (game) > response, upstream requests and KV writes; r
 
   Players you may name: Sebastian Aho, Pyotr Kochetkov. Do not name any other player — not linemates, not defensemen, not anyone not listed here.
 
-  Summarize how the game went, key turning points, and whether the result matched the underlying play. Under 80 words.",
+  Summarize how the game went, key turning points, and whether the result matched the underlying play. Under 80 words. Reply with the summary sentences only, as one paragraph.",
       "maxTokens": 1024,
       "method": "POST",
       "url": "https://openrouter.ai/api/v1/chat/completions",
     },
     {
       "aiPrompt": "You are EyeWall, an analytics assistant for CAR hockey fans.
-  Write a sharp 3-4 sentence final game summary for CAR vs BOS.
-  Tone: analytical, knowledgeable fan. No fluff. No bullet points.
+  Write a 2-3 sentence shareable card caption for the CAR vs BOS final.
+  Tone: analytical, knowledgeable fan. No fluff. No bullet points. Plain text only: no markdown, no headings, no labels.
 
   Game stats:
   - Final: CAR 4 - 2 BOS
@@ -7024,7 +7024,7 @@ exports[`summary/narrative (game) > response, upstream requests and KV writes; r
 
   Players you may name: Sebastian Aho, Pyotr Kochetkov. Do not name any other player — not linemates, not defensemen, not anyone not listed here.
 
-  Write a 2-3 sentence shareable card caption. Hit the key result, one standout moment, and the underlying play if telling. Under 50 words. Plain text only.",
+  Hit the key result, one standout moment, and the underlying play if telling. Under 50 words. Reply with the caption sentences only, as one paragraph: no heading, no "Summary" or "Caption" label, no quotation marks, nothing before or after the caption.",
       "maxTokens": 1024,
       "method": "POST",
       "url": "https://openrouter.ai/api/v1/chat/completions",
@@ -7113,7 +7113,7 @@ exports[`summary/narrative (period) > response, upstream requests and KV writes;
     {
       "aiPrompt": "You are EyeWall, an analytics assistant for CAR hockey fans.
   Write a tight 2-3 sentence period summary for 2nd Period of a CAR vs BOS game.
-  Tone: sharp, analytical, knowledgeable fan. No fluff. No bullet points. Just sentences.
+  Tone: sharp, analytical, knowledgeable fan. No fluff. No bullet points. Just sentences. Plain text only: no markdown, no headings, no labels.
 
   Stats:
   - CAR Corsi For%: 56.1%
