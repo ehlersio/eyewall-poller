@@ -723,6 +723,67 @@ export function safeName(value, max = 40, { digits = false, fallback = 'unknown'
   return s || fallback;
 }
 
+// ── Narrative text cleanup ─────────────────────────────────────
+// The narrative model sometimes answers with markdown: a "**Summary**" /
+// "**Caption**" heading per section, "## Game recap", a "Caption:" label,
+// bold phrases. The app prints the text verbatim (the card caption goes on
+// the shareable card image), so the headings showed up there (narrative:game
+// entries checked 2026-10-19). plainNarrative() turns such an answer into
+// one plain paragraph: label-only lines are dropped and split the text into
+// sections; with `section` (a RegExp) and a section whose label matches, only
+// those sections are kept -- the card caption keeps its "Caption" section,
+// the narrative its "Summary"; a label at the start of a line with text after
+// it ("**Caption:** Canes edge...") is stripped the same way; bullets and
+// bold/italic markers go; whitespace collapses to single spaces; a pair of
+// quotation marks around the whole text goes too.
+// A line counts as a label only with a marker -- `#` heading, bold/italic
+// wrapping, a trailing colon -- or when it is one of LABEL_WORDS on its own,
+// so a short plain line ("Canes edge the Panthers") is kept.
+const LABEL_WORDS = /^(?:summary|caption|card caption|card|narrative|recap|headline|title|game summary|final game summary|shareable card caption|period summary|response|output|text)$/i;
+const LABEL_ONLY_LINE = /^\s*(#{1,6}\s*)?(\*{1,3}|_{1,3})?\s*([A-Za-z][A-Za-z ]{0,30}?)\s*:?\s*(\*{1,3}|_{1,3})?\s*:?\s*$/;
+// A label at the start of a line with text after it: the label must be a
+// LABEL_WORDS word, wrapped in bold/italic markers or followed by a colon.
+const INLINE_LABEL = /^\s*(?:#{1,6}\s*)?(?:(\*{1,3}|_{1,3})\s*([A-Za-z][A-Za-z ]{0,30}?)\s*:?\s*\1\s*:?\s*|([A-Za-z][A-Za-z ]{0,30}?)\s*:\s+)(\S.*)$/;
+
+function labelOf(line) {
+  const heading = line.match(/^\s*#{1,6}\s+(.*?)\s*#*\s*$/);       // "## Period 2 recap"
+  if (heading) return { label: heading[1].replace(/[*_:]/g, '').trim(), rest: '' };
+  const only = line.match(LABEL_ONLY_LINE);
+  if (only) {
+    const [, hash, open, label, close] = only;
+    const marked = hash || open || close || /:\s*$/.test(line);
+    if (marked || LABEL_WORDS.test(label)) return { label: label.trim(), rest: '' };
+    return null;
+  }
+  const inline = line.match(INLINE_LABEL);
+  if (inline) {
+    const label = (inline[2] ?? inline[3] ?? '').trim();
+    if (LABEL_WORDS.test(label)) return { label, rest: inline[4] };
+  }
+  return null;
+}
+
+export function plainNarrative(text, { section = null } = {}) {
+  if (typeof text !== 'string') return '';
+  const sections = [{ label: null, lines: [] }];
+  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
+    const found = labelOf(line);
+    if (found) {
+      sections.push({ label: found.label, lines: found.rest ? [found.rest] : [] });
+    } else {
+      sections[sections.length - 1].lines.push(line);
+    }
+  }
+  const wanted = section ? sections.filter(s => s.label && section.test(s.label)) : [];
+  const kept = wanted.length ? wanted : sections;
+  return kept.flatMap(s => s.lines).join('\n')
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, '')                 // bullets
+    .replace(/(\*{1,3}|_{1,3})(?=\S)(.+?)(?<=\S)\1/g, '$2')      // **bold**, *italic*
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^["\u201c](.*)["\u201d]$/, '$1');                   // a caption the model put in quotes
+}
+
 // A finite number from the body, or null (a stat the client didn't have,
 // or something that isn't a number). Numeric strings are coerced.
 export function finiteOrNull(value) {

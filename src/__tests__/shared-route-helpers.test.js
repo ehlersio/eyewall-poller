@@ -1,11 +1,11 @@
 // src/__tests__/shared-route-helpers.test.js
 // shared.js's route-handler helpers: cachedJson, sbRows, sbRowsOr, sbError,
-// errorJson. Route-level behavior through them is pinned by the league
+// errorJson, plus plainNarrative (the AI narrative cleanup). Route-level behavior through them is pinned by the league
 // characterization suites; these cover the helpers' own contracts.
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { makeFakeCache } from './route-harness.js'
-import { cachedJson, sbRows, sbRowsOr, sbRosterRows, ON_ROSTER_FILTER, sbError, errorJson, SB_ANON } from '../shared.js'
+import { cachedJson, sbRows, sbRowsOr, sbRosterRows, ON_ROSTER_FILTER, sbError, errorJson, SB_ANON, plainNarrative } from '../shared.js'
 
 const realFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = realFetch })
@@ -107,5 +107,41 @@ describe('sbRosterRows', () => {
     const res = await sbRosterRows(URL_)
     expect(res).toBeInstanceOf(Response)
     expect(res.status).toBe(502)
+  })
+})
+
+// The narrative model's markdown habits (headings, "**Summary**" /
+// "**Caption**" sections, bold, bullets) against what the app prints
+// verbatim: one plain paragraph.
+describe('plainNarrative', () => {
+  const both = '**Summary**\nThe Canes controlled play.\nAho scored.\n\n**Caption**\nCanes edge the Panthers 2-1.'
+
+  it('keeps only the section asked for when the model wrote several', () => {
+    expect(plainNarrative(both, { section: /caption/i })).toBe('Canes edge the Panthers 2-1.')
+    expect(plainNarrative(both, { section: /summary/i })).toBe('The Canes controlled play. Aho scored.')
+  })
+
+  it('keeps everything, minus the labels, when no section matches or none is asked for', () => {
+    expect(plainNarrative(both, { section: /headline/i })).toBe('The Canes controlled play. Aho scored. Canes edge the Panthers 2-1.')
+    expect(plainNarrative(both)).toBe('The Canes controlled play. Aho scored. Canes edge the Panthers 2-1.')
+  })
+
+  it('drops heading lines, inline labels, bullets, bold and italics', () => {
+    expect(plainNarrative('## Game recap\n- The Canes **owned** the night.\n- *Aho* scored.')).toBe('The Canes owned the night. Aho scored.')
+    expect(plainNarrative('Caption: Canes edge the Panthers.', { section: /caption/i })).toBe('Canes edge the Panthers.')
+    expect(plainNarrative('**Card caption:** Canes edge the Panthers.', { section: /caption/i })).toBe('Canes edge the Panthers.')
+    expect(plainNarrative('"Canes edge the Panthers."')).toBe('Canes edge the Panthers.')
+  })
+
+  it('leaves plain text alone, including a short line with no label marker', () => {
+    expect(plainNarrative('Canes edge the Panthers')).toBe('Canes edge the Panthers')
+    expect(plainNarrative('Final: CAR 2-1. Aho scored, and a 58% Corsi night told the story.')).toBe('Final: CAR 2-1. Aho scored, and a 58% Corsi night told the story.')
+    expect(plainNarrative('Period summary text.')).toBe('Period summary text.')
+  })
+
+  it('is empty for no text or labels only', () => {
+    expect(plainNarrative(null)).toBe('')
+    expect(plainNarrative(undefined)).toBe('')
+    expect(plainNarrative('**Summary**\n\n**Caption**\n')).toBe('')
   })
 })
