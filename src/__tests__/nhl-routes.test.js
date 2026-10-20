@@ -4612,3 +4612,63 @@ describe('liveActivityState()', () => {
     expect(final).toMatchObject({ status: 'final', periodLabel: 'SO', strength: null, inIntermission: false })
   })
 })
+
+// The score after a period, and what it means for the result. P3 of
+// BOS @ CAR 2025021237 (5-5 after it; CAR won 6-5 in OT) came back
+// "Boston's efficiency ... ultimately secured the win" (2026-10-05): the
+// prompt had the period's 0-1 and nothing to say the game went on.
+describe('POST /summary/narrative: the score after the period', () => {
+  const periodBody = extra => ({ carGoals: 0, oppGoals: 1, corsiForPct: 58.3, carSOG: 12, oppSOG: 9, goals: [], ...extra })
+  const prompt = async (period, body, env = narrativeEnv()) => {
+    mockFetchWithAI('Period summary text.')
+    const res = await handleNHL(
+      makeRequest(`/summary/narrative?gameId=1&period=${period}&carAbbr=CAR`, { method: 'POST', body }),
+      env, makeCtx(), new URL(`https://example.com/summary/narrative?gameId=1&period=${period}&carAbbr=CAR`)
+    )
+    expect(res.status).toBe(200)
+    return aiPrompt(globalThis.fetch)[0].content
+  }
+
+  it('prints the score after the period and, tied after the third, that the game goes to overtime', async () => {
+    const p = await prompt(3, periodBody({ carScore: 5, oppScore: 5 }))
+    expect(p).toMatch(/Score after this period: CAR 5, BOS 5/)
+    expect(p).toMatch(/tied after this period and continues in overtime: do not say who won/)
+  })
+
+  it('says the game goes on after the first or second period', async () => {
+    const p = await prompt(1, periodBody({ carScore: 2, oppScore: 3 }))
+    expect(p).toMatch(/Score after this period: CAR 2, BOS 3/)
+    expect(p).toMatch(/goes on after this period: do not say it is over or who won/)
+  })
+
+  it('adds no result note after a third period that decided the game, or an overtime goal', async () => {
+    const p3 = await prompt(3, periodBody({ carScore: 1, oppScore: 3 }))
+    expect(p3).toMatch(/Score after this period: CAR 1, BOS 3/)
+    expect(p3).not.toMatch(/do not say/i)
+    const otEnv = makeEnv({ CACHE: makeFakeCache({ 'pbp:1': { ...FINAL_PBP_1, periodDescriptor: { number: 4 } } }) })
+    const ot = await prompt(4, periodBody({ carGoals: 1, oppGoals: 0, carScore: 6, oppScore: 5 }), otEnv)
+    expect(ot).toMatch(/Score after this period: CAR 6, BOS 5/)
+    expect(ot).not.toMatch(/do not say/i)
+  })
+
+  it('leaves the score line out, and says not to assume a result, when the client sent none or no number', async () => {
+    const none = await prompt(3, periodBody())
+    expect(none).not.toMatch(/Score after this period/)
+    expect(none).toMatch(/Do not say the game is over or who won unless the stats show it/)
+    const bad = await prompt(3, periodBody({ carScore: 'five', oppScore: {} }))
+    expect(bad).not.toMatch(/Score after this period/)
+    expect(bad).toMatch(/unless the stats show it/)
+  })
+
+  it('has neither in a full-game prompt, which carries the final', async () => {
+    const env = narrativeEnv()
+    mockFetchWithAI('Game summary text.')
+    await handleNHL(
+      makeRequest('/summary/narrative?gameId=1&period=game&carAbbr=CAR', { method: 'POST', body: { carGoals: 6, oppGoals: 5, carScore: 6, oppScore: 5, goals: [] } }),
+      env, makeCtx(), new URL('https://example.com/summary/narrative?gameId=1&period=game&carAbbr=CAR')
+    )
+    const p = aiPrompt(globalThis.fetch)[0].content
+    expect(p).toMatch(/Final: CAR 6 - 5 BOS/)
+    expect(p).not.toMatch(/Score after this period|do not say/i)
+  })
+})
