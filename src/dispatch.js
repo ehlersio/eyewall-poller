@@ -32,8 +32,19 @@
  * (`dispatch-social-posts.yml:<kind>` for posts), same shape as the
  * /ops/notify records.
  *
+ * nhl-contracts (update-contracts.yml in ehlersio/nhl-contracts, 2026-10-23):
+ * the open contracts dataset's collector runs hourly at :05 all year, and
+ * every 15 minutes from July 1 to 15 (free agency opens July 1 and NHL.com's
+ * Forge lists hold only 25 items, so a busy hour can overflow one). Each slot
+ * has its own marker (`ops:dispatched:update-contracts.yml:<kind>:<HH:MM>:<date>`)
+ * and a short window; `dates` limits the July slots to that span (UTC
+ * MM-DD, inclusive). Entries carry a `repo` so the token must have Actions:
+ * write on that repository too. That workflow keeps a daily GitHub cron as
+ * its own fallback.
+ *
  * Needs GITHUB_DISPATCH_TOKEN (a fine-grained PAT with Actions: write on
- * eyewall-pipeline). Without it this logs once a day and does nothing.
+ * eyewall-pipeline and nhl-contracts). Without it this logs once a day and
+ * does nothing.
  */
 
 import { kvPut } from './shared.js';
@@ -90,7 +101,20 @@ const socialEntries = SOCIAL_SLOTS.flatMap(([kind, ...rest]) => {
   }));
 }).sort((a, b) => a.atUTC.localeCompare(b.atUTC)); // catch-up goes earliest slot first
 
-export const DISPATCH_SCHEDULE = [...DAILY_SCHEDULE, ...socialEntries];
+// update-contracts.yml in ehlersio/nhl-contracts: hourly at :05, plus :20,
+// :35 and :50 from July 1 to 15 (UTC). `dates` is [from, to] as MM-DD.
+export const CONTRACTS_REPO = 'ehlersio/nhl-contracts';
+export const CONTRACTS_WORKFLOW = 'update-contracts.yml';
+const CONTRACTS_JULY = ['07-01', '07-15'];
+const hh = h => String(h).padStart(2, '0');
+const contractsEntries = [
+  ...Array.from({ length: 24 }, (_, h) => ({ atUTC: `${hh(h)}:05`, kind: 'hourly', windowMinutes: 30 })),
+  ...Array.from({ length: 24 }, (_, h) => ['20', '35', '50'].map(mm => ({
+    atUTC: `${hh(h)}:${mm}`, kind: 'july', windowMinutes: 10, dates: CONTRACTS_JULY,
+  }))).flat(),
+].map(e => ({ repo: CONTRACTS_REPO, workflow: CONTRACTS_WORKFLOW, ...e }));
+
+export const DISPATCH_SCHEDULE = [...DAILY_SCHEDULE, ...socialEntries, ...contractsEntries];
 
 const MARKER_TTL = 36 * 3600;
 export const DISPATCH_RETRY_SECONDS = 10 * 60;
@@ -103,17 +127,20 @@ const retryKey = (e, date) => `ops:dispatch:retry:${slotId(e)}:${date}`;
 const spacingKey = workflow => `ops:dispatch:spacing:${workflow}`;
 const healthSource = e => `dispatch-${e.kind ? `${e.workflow}:${e.kind}` : e.workflow}`;
 const label = e => (e.kind ? `${e.workflow} (${e.kind} ${e.atUTC})` : e.workflow);
-const workflowUrl = workflow => `https://github.com/${DISPATCH_REPO}/actions/workflows/${workflow}`;
+const repoOf = e => e.repo || DISPATCH_REPO;
+const workflowUrl = e => `https://github.com/${repoOf(e)}/actions/workflows/${e.workflow}`;
+const dispatchUrl = e => `https://api.github.com/repos/${repoOf(e)}/actions/workflows/${e.workflow}/dispatches`;
 
 const minutesOf = hhmm => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
-const isDue = (e, hhmm, weekday) => {
+const isDue = (e, hhmm, weekday, mmdd) => {
   if (e.days && !e.days.includes(weekday)) return false;
+  if (e.dates && (mmdd < e.dates[0] || mmdd > e.dates[1])) return false;
   if (hhmm < e.atUTC) return false;
   return e.windowMinutes == null || minutesOf(hhmm) - minutesOf(e.atUTC) < e.windowMinutes;
 };
 
 async function record(env, e, status, title, body) {
-  const rec = { status, title, body, url: workflowUrl(e.workflow), at: new Date().toISOString() };
+  const rec = { status, title, body, url: workflowUrl(e), at: new Date().toISOString() };
   await env.CACHE.put(`health:ops:${healthSource(e)}`, JSON.stringify(rec)); // no TTL, as /ops/notify
 }
 
@@ -124,7 +151,8 @@ export async function maybeDispatchWorkflows(env, now = new Date()) {
   const date = iso.slice(0, 10);
   const hhmm = iso.slice(11, 16);
   const weekday = now.getUTCDay();
-  const due = DISPATCH_SCHEDULE.filter(e => isDue(e, hhmm, weekday));
+  const mmdd = iso.slice(5, 10);
+  const due = DISPATCH_SCHEDULE.filter(e => isDue(e, hhmm, weekday, mmdd));
   if (!due.length) return [];
 
   const pending = [];
@@ -155,7 +183,7 @@ export async function maybeDispatchWorkflows(env, now = new Date()) {
     let status = 0;
     let detail = '';
     try {
-      const res = await fetch(`https://api.github.com/repos/${DISPATCH_REPO}/actions/workflows/${workflow}/dispatches`, {
+      const res = await fetch(dispatchUrl(e), {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,

@@ -234,7 +234,7 @@ Set via `wrangler secret put <NAME>`. Never commit values.
 | `OPENROUTER_API_KEY` | AI generation for every narrative/scouting/prediction route (`shared.js`'s `generateText()`) — see [Model provider](#model-provider-openrouter) below |
 | `POLL_SECRET` | Protects `POST /poll` manual trigger and the other secret-gated routes, including `POST /ops/notify` (the pipeline's failure reports). Send it as an `X-Poll-Secret` header; `?secret=` is deprecated — see [Sending `POLL_SECRET`](#sending-poll_secret) |
 | `ADMIN_EMAILS` | Comma-separated allowlist for `GET /admin/health` (news-feed source health). Optional — falls back to a single hardcoded default (`matt@ehlers.io`) if unset. See `shared.js`'s `verifyAdminUser()`. |
-| `GITHUB_DISPATCH_TOKEN` | Fine-grained GitHub PAT with **Actions: write** on `ehlersio/eyewall-pipeline`, used by `dispatch.js` to start the pipeline's daily workflows and social posts (2026-10). Optional: without it the Worker logs once a day and the workflows run on GitHub's own (late) schedule. See [Pipeline scheduling](#pipeline-scheduling) |
+| `GITHUB_DISPATCH_TOKEN` | Fine-grained GitHub PAT with **Actions: write** on `ehlersio/eyewall-pipeline` and `ehlersio/nhl-contracts`, used by `dispatch.js` to start the pipeline's daily workflows, the social posts and the contracts collector (2026-10). Optional: without it the Worker logs once a day and the workflows run on GitHub's own (late) schedule. See [Pipeline scheduling](#pipeline-scheduling) |
 | `SUPABASE_SERVICE_KEY` | Supabase service-role key (the pipeline's `SUPABASE_SERVICE_KEY`), used only by `shared.js`'s `patchGameLog()` to write puck drop and finals into `pwhl_game_log`/`ahl_game_log`/`echl_game_log` (2026-10). Every read still uses the public anon key. Optional: without it the pollers log once per game and skip the write |
 | `VAPID_PRIVATE_KEY` | Web Push VAPID private key |
 | `VAPID_PUBLIC_KEY` | Web Push VAPID public key |
@@ -653,6 +653,15 @@ Since 2026-10-15 the Instagram + Facebook posts (`social-posts.yml`) are dispatc
 - **Spacing.** After a post is dispatched, the next waits 5 minutes (`ops:dispatch:spacing:social-posts.yml`). The workflow's concurrency group keeps one run pending and cancels it when another queues, so slots that come due together go out a few minutes apart, earliest first. Runs take under 3 minutes and scheduled slots are at least 15 minutes apart.
 - **Health.** Each kind's latest attempt is in `health:ops:dispatch-social-posts.yml:<kind>`, so one post's status never overwrites another's on `/admin/health`.
 - **Fallback.** A scheduled run of `social-posts.yml` hours later finds the post already published and exits ("Already published everywhere -- nothing to do"). It needs no skip step of its own.
+
+### nhl-contracts collector
+
+Since 2026-10-23 the Worker also starts `update-contracts.yml` in [`ehlersio/nhl-contracts`](https://github.com/ehlersio/nhl-contracts), the open contracts dataset's collector (NHL.com Forge, ESPN, PuckPedia's Bluesky feed, then a publish to the `contracts` release).
+
+- **Slots.** Hourly at :05 UTC all year (`kind: 'hourly'`, 30-minute window), plus :20, :35 and :50 from July 1 to 15 UTC (`kind: 'july'`, 10-minute window, `dates: ['07-01', '07-15']`): free agency opens July 1 and NHL.com's Forge lists hold only 25 items, so a busy hour can overflow one.
+- **Repository.** Schedule entries carry a `repo`; these go to `https://api.github.com/repos/ehlersio/nhl-contracts/actions/workflows/update-contracts.yml/dispatches` with `{ref: 'main'}`. `GITHUB_DISPATCH_TOKEN` needs Actions: write on that repository as well (a fine-grained PAT lists its repositories explicitly).
+- **Markers and health.** Each slot has its own marker (`ops:dispatched:update-contracts.yml:<kind>:<HH:MM>:<date>`); the latest attempt per kind is in `health:ops:dispatch-update-contracts.yml:<kind>`.
+- **Fallback.** The workflow keeps a daily GitHub cron. Its runs are idempotent, so a dispatch landing next to a cron run only costs a few requests.
 
 ## Finals written by the Worker
 
