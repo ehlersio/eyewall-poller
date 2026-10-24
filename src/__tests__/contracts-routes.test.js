@@ -23,6 +23,8 @@ const AHO = {
 const CAP = { season: '2026-27', cap_ceiling: 104_000_000, cap_floor: 77_000_000, min_salary: 850_000, updated_at: STAMP }
 
 const respond = rows => ({ ok: true, json: async () => rows })
+// Host check by parsed hostname, not substring (CodeQL js/incomplete-url-substring-sanitization).
+const isNhlApi = u => new URL(String(u)).hostname === 'api-web.nhle.com'
 const supabase = (handler) => vi.fn(async (url) => {
   const u = String(url)
   if (u.includes('/rest/v1/')) return handler(u)
@@ -49,7 +51,7 @@ describe('GET /contracts', () => {
     expect(body).toMatchObject({ team: 'CAR', season: '2026-27', asOf: STAMP, rosterKnown: true, unavailable: false })
     expect(body.rows[0]).toMatchObject({ playerId: 8478427, capHit: 9_750_000, position: 'C', onRoster: true, yearsLeft: 5 })
     expect(body.summary).toMatchObject({ rosterCapHit: 9_750_000, capLimits: { ceiling: 104_000_000 } })
-    expect(globalThis.fetch.mock.calls.some(([u]) => String(u).includes('api-web.nhle.com'))).toBe(false)
+    expect(globalThis.fetch.mock.calls.some(([u]) => isNhlApi(u))).toBe(false)
     expect(globalThis.fetch.mock.calls[0][0]).toContain('player_id.in.(8478427)')
     expect(JSON.parse(await env.CACHE.get('nhl:contracts:CAR:2026-27'))).toEqual(body)
     expect(res.headers.get('Cache-Control')).toContain('max-age=3600')
@@ -59,7 +61,7 @@ describe('GET /contracts', () => {
     const env = makeEnv({ CACHE: makeFakeCache({ 'config:season:nhl:override': 20262027 }) })
     globalThis.fetch = vi.fn(async (url) => {
       const u = String(url)
-      if (u.includes('api-web.nhle.com/v1/roster/CAR/current')) return respond(ROSTER)
+      if (isNhlApi(u) && new URL(u).pathname === '/v1/roster/CAR/current') return respond(ROSTER)
       return defaultDb(u)
     })
     const body = await (await call('/contracts?team=CAR', env)).json()
@@ -71,7 +73,7 @@ describe('GET /contracts', () => {
     const env = makeEnv({ CACHE: makeFakeCache({ 'config:season:nhl:override': 20262027 }) })
     globalThis.fetch = vi.fn(async (url) => {
       const u = String(url)
-      if (u.includes('api-web.nhle.com')) return { ok: false, status: 503, text: async () => 'down' }
+      if (isNhlApi(u)) return { ok: false, status: 503, text: async () => 'down' }
       return defaultDb(u)
     })
     const res = await call('/contracts?team=CAR', env)
