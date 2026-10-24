@@ -17,6 +17,7 @@ import { MILESTONE_SPORTS, milestoneScope } from './milestones.js';
 import { buildCallupWatch, nameKey } from './callupWatch.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { fetchTradeTree } from './trades.js';
+import { buildTeamContracts, buildPlayerContracts, buildLeagueSummary, shapeCapLimits, seasonLabel as contractSeasonLabel, safeSeasonLabel, CAP_SELECT } from './contracts.js';
 import { summarizeScratches } from './scratches.js';
 import { summarizeNextGames, isPlayoffOddsStale } from './playoffOdds.js';
 import { summarizeInjuryLeague } from './injuryImpact.js';
@@ -323,6 +324,19 @@ async function sbRowsOrThrow(path) {
 // for an hour (audit 2026-10-06, Worker F2). `path` needs a stable order=
 // so the pages don't overlap. Throws like sbRowsOrThrow(); the same loop
 // as hockeytech.js's sbAllRows() and /nhl/shots below.
+// The 'YYYY-YY' season a contracts route serves: `?season=` when given and
+// well-formed (400 otherwise -- it lands in PostgREST filters), else the
+// live NHL season.
+async function contractsSeason(env, url) {
+  const raw = url.searchParams.get('season');
+  if (raw) {
+    const season = safeSeasonLabel(raw);
+    if (!season) throw new ParamError('invalid season');
+    return season;
+  }
+  return contractSeasonLabel(await resolveNHLSeason(env));
+}
+
 async function sbAllRowsOrThrow(path) {
   const PAGE = 1000;
   const all = [];
@@ -3199,6 +3213,105 @@ async function handleNHLRoutes(request, env, ctx, url) {
         return json({ found: false, root: null, trades: {}, origins: [], truncated: false, unavailable: true });
       }
       return data.found ? data : json(data); // only a found tree is cached
+    });
+  }
+
+  // ── NHL contracts (eyewall-pipeline's nhl_contracts.py, 2026-10) ────────
+  // The open nhl-contracts dataset (github.com/ehlersio/nhl-contracts, CC0)
+  // mirrored nightly into nhl_contracts / nhl_contract_seasons /
+  // nhl_contract_clauses / nhl_contract_gaps / nhl_cap_limits. Builders and
+  // the dataset's quirks (a row's team is the SIGNING team; one contract can
+  // have an id-keyed and a name-keyed row) are in src/contracts.js. Cap
+  // space is not computable from it (no retained salary, buyouts, LTIR), so
+  // nothing here reports one. `season` is 'YYYY-YY' (400 otherwise), default
+  // the live NHL season. 1hr KV; an empty answer (`unavailable: true`, the
+  // tables missing or a team with no rows) and a failed read are not cached.
+
+  // GET /contracts?team=CAR[&season=2026-27]
+  // The team's contracts for the season: everyone on its current NHL roster
+  // (so a player traded in mid-contract is found) plus the deals it signed
+  // whose player is off the roster, one row per player, and the roster
+  // players with no public figure (`missing`, with the dataset's gap reason).
+  // Response: { team, season, asOf, rosterKnown, rows, missing, summary, unavailable }.
+  if (url.pathname === '/contracts' && request.method === 'GET') {
+    const tc = await getTeamConfig(request, env);
+    const season = await contractsSeason(env, url);
+    return cachedJson(env, `nhl:contracts:${tc.abbr}:${season}`, 3600, async () => {
+      let roster = await kvGet(env, rosterKey(tc.abbr));
+      if (!roster) {
+        try {
+          roster = await nhlGet(`${NHL_BASE}/roster/${tc.abbr}/current`);
+          await kvPut(env, rosterKey(tc.abbr), roster, ROSTER_TTL);
+        } catch (e) {
+          console.warn(`Contracts roster ${tc.abbr}: ${e.message}`);
+          roster = null; // team-signed rows only, flagged rosterKnown: false
+        }
+      }
+      let data;
+      try {
+        data = await buildTeamContracts({ get: sbRowsOrThrow, getAll: sbAllRowsOrThrow, team: tc.abbr, season, roster });
+      } catch (e) {
+        console.warn(`Contracts ${tc.abbr}: ${e.message}`);
+        return json({ team: tc.abbr, season, asOf: null, rosterKnown: !!roster, rows: [], missing: [], summary: null, unavailable: true }, { maxAge: 0 });
+      }
+      return data.unavailable || !data.rosterKnown ? json(data, { maxAge: 0 }) : data;
+    });
+  }
+
+  // GET /contracts/player/:id[?season=2026-27]
+  // Every contract the dataset has for the player (newest first, with season
+  // rows and clauses) and `current`, the one covering the season.
+  // Response: { playerId, season, asOf, current, history, unavailable }.
+  if (url.pathname.startsWith('/contracts/player/') && request.method === 'GET') {
+    const playerId = sbParam(url.pathname.slice('/contracts/player/'.length), { type: 'int', name: 'playerId' });
+    if (!playerId) return badRequest('invalid playerId');
+    const season = await contractsSeason(env, url);
+    return cachedJson(env, `nhl:contracts:player:${playerId}:${season}`, 3600, async () => {
+      let data;
+      try {
+        data = await buildPlayerContracts({ get: sbRowsOrThrow, playerId, season });
+      } catch (e) {
+        console.warn(`Contracts player ${playerId}: ${e.message}`);
+        return json({ playerId: Number(playerId), season, asOf: null, current: null, history: [], unavailable: true }, { maxAge: 0 });
+      }
+      return data.unavailable ? json(data, { maxAge: 0 }) : data;
+    });
+  }
+
+  // GET /contracts/summary[?season=2026-27]
+  // Every team's contracts for the season, by SIGNING team (`basis`), with
+  // cap-hit totals and expiring counts -- a league table, not a cap-space
+  // calculator. Response: { season, basis, asOf, capLimits, teams, unavailable }.
+  if (url.pathname === '/contracts/summary' && request.method === 'GET') {
+    const season = await contractsSeason(env, url);
+    return cachedJson(env, `nhl:contracts:summary:${season}`, 3600, async () => {
+      let data;
+      try {
+        data = await buildLeagueSummary({ get: sbRowsOrThrow, getAll: sbAllRowsOrThrow, season });
+      } catch (e) {
+        console.warn(`Contracts summary: ${e.message}`);
+        return json({ season, basis: 'signing_team', asOf: null, capLimits: null, teams: [], unavailable: true }, { maxAge: 0 });
+      }
+      return data.unavailable ? json(data, { maxAge: 0 }) : data;
+    });
+  }
+
+  // GET /config/cap
+  // Salary cap ceiling / floor / minimum salary per season the NHL has
+  // announced (nhl_cap_limits; 2026-27 only today, nothing projected) and the
+  // live season's label. Response: { current, seasons: { 'YYYY-YY': { ceiling, floor, minSalary } } }.
+  if (url.pathname === '/config/cap' && request.method === 'GET') {
+    const current = contractSeasonLabel(await resolveNHLSeason(env));
+    return cachedJson(env, 'nhl:config:cap', 3600 * 24, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(`nhl_cap_limits?select=${CAP_SELECT}&order=season`);
+      } catch (e) {
+        console.warn(`Cap limits: ${e.message}`);
+        return json({ current, seasons: {}, unavailable: true }, { maxAge: 0 });
+      }
+      const data = shapeCapLimits(rows, current);
+      return Object.keys(data.seasons).length ? data : json({ ...data, unavailable: true }, { maxAge: 0 });
     });
   }
 
