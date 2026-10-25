@@ -33,6 +33,43 @@ export const CONTRACT_SELECT = [
   'expiry_type', 'expiry_type_derived', 'is_current', 'years_left', 'n_sources', 'best_tier',
   'conflicts', 'flags', 'dataset_updated_at',
 ].join(',');
+// Added by the pipeline after the base columns (2026-10): `bought_out` and
+// `end_season_signed` (the contract's original last season; `end_season`
+// is already the last PAID season of a bought-out deal). PostgREST answers
+// 400 for a select naming a column that does not exist, and this Worker can
+// deploy before that migration runs, so every nhl_contracts read goes
+// through readContracts(): extended select first, base select on failure.
+export const CONTRACT_SELECT_EXTRA = 'bought_out,end_season_signed';
+// null = not known yet, false = a read with the extra columns failed and the
+// base retry worked (remembered for this isolate's lifetime; a redeploy or a
+// new isolate tries the extra columns again).
+let extendedColumnsAvailable = null;
+
+export function contractSelect() {
+  return extendedColumnsAvailable === false ? CONTRACT_SELECT : `${CONTRACT_SELECT},${CONTRACT_SELECT_EXTRA}`;
+}
+
+export function _resetContractColumnsForTests() {
+  extendedColumnsAvailable = null;
+}
+
+// `getter(path)` is the injected get/getAll; `pathAfterSelect` is the rest of
+// the query (`&player_id=eq.1&order=...`). One retry with the base select;
+// if that fails too the error is not about the columns, so it is rethrown
+// and nothing is remembered.
+export async function readContracts(getter, pathAfterSelect) {
+  const select = contractSelect();
+  try {
+    return await getter(`nhl_contracts?select=${select}${pathAfterSelect}`);
+  } catch (err) {
+    if (select === CONTRACT_SELECT) throw err;
+    const rows = await getter(`nhl_contracts?select=${CONTRACT_SELECT}${pathAfterSelect}`);
+    extendedColumnsAvailable = false;
+    console.warn(`contracts: ${CONTRACT_SELECT_EXTRA} not readable (${err.message}); using the base columns until the pipeline migration has run`);
+    return rows;
+  }
+}
+
 export const SEASON_SELECT = [
   'contract_key', 'player_id', 'team', 'season', 'cap_hit_usd', 'aav_usd', 'base_salary_usd',
   'signing_bonus_usd', 'performance_bonus_usd', 'total_salary_usd', 'minors_salary_usd', 'one_way',
@@ -189,6 +226,10 @@ export function shapeContract(contract, { season, seasonRows = [], clauseRows = 
     official: OFFICIAL_TIERS.has(contract.best_tier),
     sources: contract.n_sources ?? null,
     conflicts: contract.conflicts || null,
+    // Bought out: `expiresAfter` is then the last paid season and
+    // `endSeasonSigned` the season the deal was signed to run through.
+    boughtOut: !!contract.bought_out,
+    endSeasonSigned: contract.end_season_signed || null,
     clauses: clausesFor(keySet, clauseRows),
   };
 }
@@ -321,7 +362,7 @@ export async function buildTeamContracts({ get, getAll, team, season, roster }) 
   const rosterIds = players.map(p => p.id);
   const spanFilter = `start_season=lte.${season}&end_season=gte.${season}`;
   const scope = rosterIds.length ? `or=(team.eq.${team},player_id.${inList(rosterIds)})` : `team=eq.${team}`;
-  const contracts = await getAll(`nhl_contracts?select=${CONTRACT_SELECT}&${scope}&${spanFilter}&order=contract_key`);
+  const contracts = await readContracts(getAll, `&${scope}&${spanFilter}&order=contract_key`);
 
   const byPlayer = new Map();
   for (const r of contracts) {
@@ -409,7 +450,7 @@ export async function buildTeamContracts({ get, getAll, team, season, roster }) 
 // chosen row for `season` (shapeContract), or null.
 export async function buildPlayerContracts({ get, playerId, season }) {
   const [contracts, seasonRows, clauseRows] = await Promise.all([
-    get(`nhl_contracts?select=${CONTRACT_SELECT}&player_id=eq.${playerId}&order=start_season.desc.nullslast,signed_at.desc`),
+    readContracts(get, `&player_id=eq.${playerId}&order=start_season.desc.nullslast,signed_at.desc`),
     get(`nhl_contract_seasons?select=${SEASON_SELECT}&player_id=eq.${playerId}&order=season`),
     get(`nhl_contract_clauses?select=${CLAUSE_SELECT}&player_id=eq.${playerId}&order=id`),
   ]);
@@ -463,7 +504,7 @@ export async function buildLeaguePlayers({ get, getAll, season, rosters = {} }) 
   }
 
   const [contracts, seasonRows, capRows] = await Promise.all([
-    getAll(`nhl_contracts?select=${CONTRACT_SELECT}&start_season=lte.${season}&end_season=gte.${season}&order=contract_key`),
+    readContracts(getAll, `&start_season=lte.${season}&end_season=gte.${season}&order=contract_key`),
     getAll(`nhl_contract_seasons?select=${SEASON_SELECT}&season=eq.${season}&order=id`),
     get(`nhl_cap_limits?select=${CAP_SELECT}&order=season`),
   ]);
@@ -502,6 +543,7 @@ export async function buildLeaguePlayers({ get, getAll, season, rosters = {} }) 
       aav: null, totalValue: null, termYears: null, startSeason: null, expiresAfter: null, yearsLeft: null,
       isCurrent: false, expiryType: null, expiryTypeDerived: false, expiryStatus: null, contractType: null,
       oneWay: null, signedAt: null, tier: null, official: false, sources: null, conflicts: null,
+      boughtOut: false, endSeasonSigned: null,
       currentTeam: on.team, position: on.position, onRoster: true, alternates: 0,
     });
   }
@@ -585,7 +627,7 @@ export async function buildLeagueRosterSummary({ get, getAll, season, rosters = 
 // (/contracts) is the one that follows the real roster.
 export async function buildLeagueSummary({ getAll, get, season }) {
   const [contracts, seasonRows, capRows] = await Promise.all([
-    getAll(`nhl_contracts?select=${CONTRACT_SELECT}&start_season=lte.${season}&end_season=gte.${season}&order=contract_key`),
+    readContracts(getAll, `&start_season=lte.${season}&end_season=gte.${season}&order=contract_key`),
     getAll(`nhl_contract_seasons?select=${SEASON_SELECT}&season=eq.${season}&order=id`),
     get(`nhl_cap_limits?select=${CAP_SELECT}&order=season`),
   ]);
