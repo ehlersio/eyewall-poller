@@ -19,10 +19,13 @@
 //   sources, id-keyed), and the season's cap hit comes from any of the
 //   player's season rows for that season (`seasonCapHit`), best tier first,
 //   since the id-keyed row often has no season breakdown.
-// - cap space is not computable: no retained salary, buyouts or LTIR, and
-//   coverage is partial (`nhl_contract_gaps` says who has no public
-//   figure). The team summary gives `rosterCapHit` (the sum over roster
-//   players with a figure) and the cap limits; the app labels it as such.
+// - cap space is not computable exactly. nhl_dead_cap (2026-10-25) carries
+//   retained salary and buyouts, so the team summary gives `rosterCapHit`
+//   (the sum over roster players with a figure), `deadCap` and
+//   `capSpaceEstimate` = ceiling - roster cap hit - dead cap, with
+//   ESTIMATE_NOTES saying what it leaves out (LTIR, bonus overages,
+//   recapture, partial coverage: `nhl_contract_gaps` says who has no public
+//   figure). The app labels it an estimate, never cap space.
 
 export const CONTRACT_SELECT = [
   'contract_key', 'player_id', 'player_name', 'team', 'signed_at', 'contract_type', 'term_years',
@@ -38,6 +41,11 @@ export const SEASON_SELECT = [
 export const CLAUSE_SELECT = 'contract_key,player_id,kind,season_from,season_to,list_size,list_type,best_tier';
 export const GAP_SELECT = 'player_id,player_name,team,gap,status,last_contract_end';
 export const CAP_SELECT = 'season,cap_ceiling,cap_floor,min_salary,updated_at';
+export const DEAD_CAP_SELECT = 'team,kind,player_name,player_id,counterparty,season,cap_hit_usd,pct,contract_key,event_date,best_tier,flags';
+// What a cap-space estimate built from these tables leaves out (nhl_dead_cap
+// carries retained salary and buyouts only, from public posts and archived
+// pages). The app shows the estimate with these caveats, never as "cap space".
+export const ESTIMATE_NOTES = ['no_ltir', 'no_bonus_overages', 'no_recapture', 'partial_coverage'];
 
 // Dataset tiers, best first. A-C are official sources (club release,
 // NHL.com, ESPN wire); D-E are reported (PuckPedia posts, archived
@@ -185,6 +193,63 @@ export function shapeContract(contract, { season, seasonRows = [], clauseRows = 
   };
 }
 
+// One nhl_dead_cap row as the app sees it: a cap charge that is not a roster
+// contract -- 'retained' salary on a traded player or a 'buyout' charge --
+// for `season`, carried by `team`.
+export function shapeDeadCap(row) {
+  return {
+    team: row.team,
+    kind: row.kind,
+    playerName: row.player_name,
+    playerId: row.player_id ?? null,
+    counterparty: row.counterparty || null,
+    season: row.season,
+    capHit: row.cap_hit_usd ?? null,
+    pct: row.pct ?? null,
+    contractKey: row.contract_key || null,
+    eventDate: row.event_date || null,
+    tier: row.best_tier || null,
+    flags: row.flags ? String(row.flags).split(';').filter(Boolean) : [],
+  };
+}
+
+// { total, retained, buyouts, count } over shaped dead-cap rows (null charges
+// count as rows but add nothing).
+export function summarizeDeadCap(rows) {
+  const out = { total: 0, retained: 0, buyouts: 0, count: 0 };
+  for (const r of rows || []) {
+    out.count += 1;
+    if (r.capHit == null) continue;
+    out.total += r.capHit;
+    if (r.kind === 'retained') out.retained += r.capHit;
+    else if (r.kind === 'buyout') out.buyouts += r.capHit;
+  }
+  return out;
+}
+
+// The dead-cap rows for `season` (one team, or every team), shaped and cap
+// hit descending; null when the table cannot be read (the migration not run
+// yet, a transient error), so a route answers without an estimate rather
+// than failing. The caller says `deadCapKnown: false` then.
+export async function readDeadCap(get, season, team = null) {
+  const scope = team ? `&team=eq.${team}` : '';
+  try {
+    const rows = await get(`nhl_dead_cap?select=${DEAD_CAP_SELECT}&season=eq.${season}${scope}&order=cap_hit_usd.desc.nullslast`);
+    return (rows || []).map(shapeDeadCap);
+  } catch (e) {
+    console.warn(`Dead cap unreadable for ${team || 'league'} ${season}: ${e.message}`);
+    return null;
+  }
+}
+
+// ceiling - roster cap hit - dead cap, or null when any part is unknown. An
+// ESTIMATE (see ESTIMATE_NOTES): LTIR relief, bonus overages and recapture
+// are not in the dataset, and not every retention or buyout is captured.
+export function capSpaceEstimate(ceiling, rosterCapHit, deadCapTotal) {
+  if (!(ceiling > 0) || rosterCapHit == null || deadCapTotal == null) return null;
+  return ceiling - rosterCapHit - deadCapTotal;
+}
+
 // Roster payload (/roster/{team}/current) -> [{ id, name, position }]
 export function rosterPlayers(roster) {
   const out = [];
@@ -306,23 +371,34 @@ export async function buildTeamContracts({ get, getAll, team, season, roster }) 
 
   const rosterRows = rows.filter(r => r.onRoster);
   const withFigure = rosterRows.filter(r => r.capHit != null);
+  const deadCapRows = await readDeadCap(get, season, team);
+  const deadCap = deadCapRows ? summarizeDeadCap(deadCapRows) : null;
+  const capLimits = capLimitsFor(capRows, season);
+  const rosterCapHit = withFigure.reduce((s, r) => s + r.capHit, 0);
+  const rosterKnown = rosterIds.length > 0;
+  const estimate = rosterKnown ? capSpaceEstimate(capLimits?.ceiling, rosterCapHit, deadCap?.total) : null;
   const summary = {
-    rosterCapHit: withFigure.reduce((s, r) => s + r.capHit, 0),
+    rosterCapHit,
     rosterCount: players.length,
     rosterWithFigure: withFigure.length,
     rosterWithoutFigure: players.length - withFigure.length,
     offRosterCount: rows.length - rosterRows.length,
-    capLimits: capLimitsFor(capRows, season),
-    expiring: expiringCounts(rosterIds.length ? rosterRows : rows),
+    capLimits,
+    expiring: expiringCounts(rosterKnown ? rosterRows : rows),
+    deadCap,
+    capSpaceEstimate: estimate,
+    estimateNotes: estimate != null ? ESTIMATE_NOTES : null,
   };
 
   return {
     team,
     season,
     asOf: latestStamp(contracts),
-    rosterKnown: rosterIds.length > 0,
+    rosterKnown,
     rows,
     missing,
+    deadCap: deadCapRows || [],
+    deadCapKnown: deadCapRows != null,
     summary,
     unavailable: rows.length === 0,
   };
@@ -462,6 +538,12 @@ export async function buildLeagueRosterSummary({ get, getAll, season, rosters = 
     if (!roster) continue;
     teams.set(abbr, { team: abbr, rosterCount: 0, rosterWithFigure: 0, rosterCapHit: 0, offRosterCount: 0, expiring: { ufa: 0, rfa: 0, unknown: 0 } });
   }
+  const deadCapRows = await readDeadCap(get, season);
+  const deadByTeam = new Map();
+  for (const r of deadCapRows || []) {
+    if (!deadByTeam.has(r.team)) deadByTeam.set(r.team, []);
+    deadByTeam.get(r.team).push(r);
+  }
   for (const p of league.players) {
     if (p.onRoster && p.currentTeam && teams.has(p.currentTeam)) {
       const t = teams.get(p.currentTeam);
@@ -479,12 +561,18 @@ export async function buildLeagueRosterSummary({ get, getAll, season, rosters = 
       teams.get(p.team).offRosterCount += 1;
     }
   }
+  for (const t of teams.values()) {
+    t.deadCap = deadCapRows ? summarizeDeadCap(deadByTeam.get(t.team)).total : null;
+    t.capSpaceEstimate = capSpaceEstimate(league.capLimits?.ceiling, t.rosterCapHit, t.deadCap);
+  }
   return {
     season,
     basis: 'roster',
     asOf: league.asOf,
     capLimits: league.capLimits,
     teamsKnown: league.teamsKnown,
+    deadCapKnown: deadCapRows != null,
+    estimateNotes: deadCapRows ? ESTIMATE_NOTES : null,
     teams: [...teams.values()].sort((a, b) => b.rosterCapHit - a.rosterCapHit || a.team.localeCompare(b.team)),
     unavailable: league.unavailable,
   };
