@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest'
 import {
   buildTeamContracts, buildPlayerContracts, buildLeagueSummary, pickContract, seasonCapHit,
   seasonLabel, safeSeasonLabel, yearsLeftFor, coversSeason, shapeCapLimits, capLimitsFor, rosterPlayers,
+  shapeDeadCap, summarizeDeadCap, readDeadCap, capSpaceEstimate, ESTIMATE_NOTES,
 } from '../contracts.js'
 
 const STAMP = '2026-10-24T12:08:21+00:00'
@@ -67,13 +68,29 @@ const ROSTER = {
 }
 
 // Fake Supabase: answers from the arrays above by table and filter.
-function fakeDb({ contracts = CONTRACTS, seasons = SEASONS, clauses = CLAUSES, gaps = GAPS, caps = CAPS } = {}) {
+// nhl_dead_cap rows for the season under test: a CAR retention (the trade
+// post names the acquirer) and a CAR buyout charge; a null charge row too.
+const DEAD_CAP = [
+  { team: 'CAR', kind: 'retained', player_name: 'Retained Forward', player_id: 8470001, counterparty: 'TOR', season: '2026-27', cap_hit_usd: 1_500_000, pct: 50, contract_key: null, event_date: '2026-03-05', best_tier: 'D', flags: 'derived:charge_from_pct' },
+  { team: 'CAR', kind: 'buyout', player_name: 'Bought Out', player_id: null, counterparty: null, season: '2026-27', cap_hit_usd: 1_100_000, pct: null, contract_key: null, event_date: null, best_tier: 'E', flags: 'team_page_dead_cap' },
+  { team: 'CAR', kind: 'retained', player_name: 'No Figure', player_id: null, counterparty: null, season: '2026-27', cap_hit_usd: null, pct: 25, contract_key: null, event_date: null, best_tier: 'D', flags: 'charge_unknown' },
+  { team: 'TOR', kind: 'buyout', player_name: 'Toronto Buyout', player_id: null, counterparty: null, season: '2026-27', cap_hit_usd: 2_000_000, pct: null, contract_key: null, event_date: null, best_tier: 'E', flags: '' },
+  { team: 'CAR', kind: 'buyout', player_name: 'Last Year', player_id: null, counterparty: null, season: '2025-26', cap_hit_usd: 900_000, pct: null, contract_key: null, event_date: null, best_tier: 'E', flags: '' },
+]
+
+function fakeDb({ contracts = CONTRACTS, seasons = SEASONS, clauses = CLAUSES, gaps = GAPS, caps = CAPS, deadCap = DEAD_CAP } = {}) {
   const calls = []
   const ids = path => (path.match(/player_id=in\.\(([^)]*)\)/) || path.match(/player_id\.in\.\(([^)]*)\)/))?.[1]?.split(',').map(Number) || null
   const eqId = path => Number(path.match(/player_id=eq\.(\d+)/)?.[1]) || null
   const get = async (path) => {
     calls.push(path)
     if (path.startsWith('nhl_cap_limits?')) return caps
+    if (path.startsWith('nhl_dead_cap?')) {
+      if (deadCap === 'missing') throw new Error('relation "public.nhl_dead_cap" does not exist')
+      const season = path.match(/season=eq\.([\d-]+)/)?.[1]
+      const team = path.match(/team=eq\.([A-Z]+)/)?.[1]
+      return deadCap.filter(r => r.season === season && (!team || r.team === team))
+    }
     if (path.startsWith('nhl_contract_gaps?')) return gaps.filter(g => path.includes(`team=eq.${g.team}`))
     if (path.startsWith('nhl_contract_seasons?')) {
       const season = path.match(/season=eq\.([\d-]+)/)?.[1]
@@ -197,8 +214,11 @@ describe('buildTeamContracts', () => {
       offRosterCount: 1,
       capLimits: { ceiling: 104_000_000, floor: 77_000_000, minSalary: 850_000 },
       expiring: { ufa: 0, rfa: 1, unknown: 0 }, // Reilly expires too but is off the roster
+      deadCap: { total: 2_600_000, retained: 1_500_000, buyouts: 1_100_000, count: 3 },
+      capSpaceEstimate: 104_000_000 - (9_750_000 + 6_396_063 + 2_000_000) - 2_600_000,
+      estimateNotes: ESTIMATE_NOTES,
     })
-    expect(out.summary).not.toHaveProperty('space') // not computable from this dataset
+    expect(out.summary).not.toHaveProperty('space') // never "cap space": an estimate with caveats
   })
 
   it('asks for a different season: span filter, season rows and years left follow it', async () => {
@@ -298,5 +318,64 @@ describe('cap limits and roster shaping', () => {
       { id: 2, name: 'G K', position: 'G' },
     ])
     expect(rosterPlayers(null)).toEqual([])
+  })
+})
+
+
+describe('dead cap and the cap-space estimate', () => {
+  it('shapes a row and sums charges by kind, null charges counted but adding nothing', () => {
+    const rows = DEAD_CAP.filter(r => r.team === 'CAR' && r.season === '2026-27').map(shapeDeadCap)
+    expect(rows[0]).toEqual({
+      team: 'CAR', kind: 'retained', playerName: 'Retained Forward', playerId: 8470001, counterparty: 'TOR', season: '2026-27',
+      capHit: 1_500_000, pct: 50, contractKey: null, eventDate: '2026-03-05', tier: 'D', flags: ['derived:charge_from_pct'],
+    })
+    expect(summarizeDeadCap(rows)).toEqual({ total: 2_600_000, retained: 1_500_000, buyouts: 1_100_000, count: 3 })
+    expect(summarizeDeadCap([])).toEqual({ total: 0, retained: 0, buyouts: 0, count: 0 })
+    expect(summarizeDeadCap(undefined).total).toBe(0)
+  })
+
+  it('capSpaceEstimate needs every part', () => {
+    expect(capSpaceEstimate(104_000_000, 88_000_000, 2_600_000)).toBe(13_400_000)
+    expect(capSpaceEstimate(null, 88_000_000, 0)).toBeNull()
+    expect(capSpaceEstimate(104_000_000, null, 0)).toBeNull()
+    expect(capSpaceEstimate(104_000_000, 88_000_000, null)).toBeNull()
+  })
+
+  it('readDeadCap scopes by season and team, and returns null when the table cannot be read', async () => {
+    const db = fakeDb()
+    const rows = await readDeadCap(db.get, '2026-27', 'CAR')
+    expect(rows.map(r => r.playerName)).toEqual(['Retained Forward', 'Bought Out', 'No Figure'])
+    expect(db.calls.at(-1)).toContain('nhl_dead_cap?')
+    expect(db.calls.at(-1)).toContain('season=eq.2026-27&team=eq.CAR')
+    expect((await readDeadCap(db.get, '2026-27')).map(r => r.team)).toEqual(['CAR', 'CAR', 'CAR', 'TOR'])
+    expect(await readDeadCap(fakeDb({ deadCap: 'missing' }).get, '2026-27', 'CAR')).toBeNull()
+  })
+
+  it('the team payload carries the rows, the totals and the estimate with its caveats', async () => {
+    const out = await buildTeamContracts({ ...fakeDb(), team: 'CAR', season: SEASON, roster: ROSTER })
+    expect(out.deadCapKnown).toBe(true)
+    expect(out.deadCap.map(r => r.kind)).toEqual(['retained', 'buyout', 'retained'])
+    expect(out.summary.deadCap).toEqual({ total: 2_600_000, retained: 1_500_000, buyouts: 1_100_000, count: 3 })
+    expect(out.summary.capSpaceEstimate).toBe(104_000_000 - out.summary.rosterCapHit - 2_600_000)
+    expect(out.summary.estimateNotes).toEqual(ESTIMATE_NOTES)
+    expect(ESTIMATE_NOTES).toContain('no_ltir')
+  })
+
+  it('without the table the team payload still answers, with no estimate', async () => {
+    const out = await buildTeamContracts({ ...fakeDb({ deadCap: 'missing' }), team: 'CAR', season: SEASON, roster: ROSTER })
+    expect(out.deadCapKnown).toBe(false)
+    expect(out.deadCap).toEqual([])
+    expect(out.summary.deadCap).toBeNull()
+    expect(out.summary.capSpaceEstimate).toBeNull()
+    expect(out.summary.estimateNotes).toBeNull()
+    expect(out.unavailable).toBe(false)
+  })
+
+  it('no estimate without a roster or a ceiling', async () => {
+    const noRoster = await buildTeamContracts({ ...fakeDb(), team: 'CAR', season: SEASON, roster: null })
+    expect(noRoster.summary.deadCap.total).toBe(2_600_000)
+    expect(noRoster.summary.capSpaceEstimate).toBeNull()
+    const noCap = await buildTeamContracts({ ...fakeDb({ caps: [] }), team: 'CAR', season: SEASON, roster: ROSTER })
+    expect(noCap.summary.capSpaceEstimate).toBeNull()
   })
 })

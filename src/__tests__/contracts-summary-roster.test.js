@@ -32,9 +32,17 @@ const ROSTERS = {
   TOR: { forwards: [player(3, 'Matthews'), player(2, 'Traded')], defensemen: [], goalies: [] },
   BUF: null,
 }
-function fakeDb({ contracts = CONTRACTS } = {}) {
+const DEAD_CAP = [
+  { team: 'CAR', kind: 'buyout', player_name: 'Bought Out', player_id: null, counterparty: null, season: '2026-27', cap_hit_usd: 1_100_000, pct: null, contract_key: null, event_date: null, best_tier: 'E', flags: '' },
+  { team: 'TOR', kind: 'retained', player_name: 'Retained', player_id: null, counterparty: 'CAR', season: '2026-27', cap_hit_usd: 500_000, pct: 25, contract_key: null, event_date: null, best_tier: 'D', flags: '' },
+]
+function fakeDb({ contracts = CONTRACTS, deadCap = DEAD_CAP } = {}) {
   const get = async (path) => {
     if (path.startsWith('nhl_cap_limits?')) return [CAP]
+    if (path.startsWith('nhl_dead_cap?')) {
+      if (deadCap === 'missing') throw new Error('relation does not exist')
+      return deadCap
+    }
     if (path.startsWith('nhl_contract_seasons?')) return []
     if (path.startsWith('nhl_contracts?')) return contracts
     throw new Error(`unexpected path ${path}`)
@@ -51,6 +59,19 @@ describe('buildLeagueRosterSummary', () => {
     expect(tor).toMatchObject({ rosterCount: 2, rosterWithFigure: 2, rosterCapHit: 15_250_000, offRosterCount: 0, expiring: { ufa: 1, rfa: 0, unknown: 0 } })
     // CAR: Aho (figure), Jarvis (row, no figure), Unsigned (no row); Nadeau off roster, signed by CAR
     expect(car).toMatchObject({ rosterCount: 3, rosterWithFigure: 1, rosterCapHit: 9_750_000, offRosterCount: 1, expiring: { ufa: 0, rfa: 0, unknown: 0 } })
+  })
+
+  it('adds each team\'s dead cap and a cap-space estimate, or neither while the table is unreadable', async () => {
+    const out = await buildLeagueRosterSummary({ ...fakeDb(), season: '2026-27', rosters: ROSTERS })
+    expect(out.deadCapKnown).toBe(true)
+    expect(out.estimateNotes).toContain('no_ltir')
+    const [tor, car] = out.teams
+    expect(tor).toMatchObject({ deadCap: 500_000, capSpaceEstimate: 104_000_000 - 15_250_000 - 500_000 })
+    expect(car).toMatchObject({ deadCap: 1_100_000, capSpaceEstimate: 104_000_000 - 9_750_000 - 1_100_000 })
+    const none = await buildLeagueRosterSummary({ ...fakeDb({ deadCap: 'missing' }), season: '2026-27', rosters: ROSTERS })
+    expect(none.deadCapKnown).toBe(false)
+    expect(none.estimateNotes).toBeNull()
+    expect(none.teams.map(t => [t.deadCap, t.capSpaceEstimate])).toEqual([[null, null], [null, null]])
   })
 
   it('lists a known roster with nothing signed, skips unknown rosters, and is unavailable without contracts', async () => {
