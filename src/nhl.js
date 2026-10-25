@@ -17,7 +17,7 @@ import { MILESTONE_SPORTS, milestoneScope } from './milestones.js';
 import { buildCallupWatch, nameKey } from './callupWatch.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { fetchTradeTree } from './trades.js';
-import { buildTeamContracts, buildPlayerContracts, buildLeagueSummary, buildLeaguePlayers, shapeCapLimits, seasonLabel as contractSeasonLabel, safeSeasonLabel, CAP_SELECT } from './contracts.js';
+import { buildTeamContracts, buildPlayerContracts, buildLeagueSummary, buildLeaguePlayers, buildLeagueRosterSummary, shapeCapLimits, seasonLabel as contractSeasonLabel, safeSeasonLabel, CAP_SELECT } from './contracts.js';
 import { summarizeScratches } from './scratches.js';
 import { summarizeNextGames, isPlayoffOddsStale } from './playoffOdds.js';
 import { summarizeInjuryLeague } from './injuryImpact.js';
@@ -335,6 +335,29 @@ async function contractsSeason(env, url) {
     return season;
   }
   return contractSeasonLabel(await resolveNHLSeason(env));
+}
+
+// Every NHL team's current roster for the league-wide contracts routes
+// (/contracts/players, /contracts/summary?basis=roster): KV roster:{ABBR},
+// fetched from the NHL and cached (ROSTER_TTL) when cold, null for a team
+// whose roster could not be fetched. The caller counts the nulls
+// (`teamsKnown`) and does not cache its answer while one is missing.
+async function loadAllRosters(env) {
+  const rosters = {};
+  await Promise.all(Object.keys(TEAM_CONFIGS).map(async abbr => {
+    let roster = await kvGet(env, rosterKey(abbr));
+    if (!roster) {
+      try {
+        roster = await nhlGet(`${NHL_BASE}/roster/${abbr}/current`);
+        await kvPut(env, rosterKey(abbr), roster, ROSTER_TTL);
+      } catch (e) {
+        console.warn(`Contracts roster ${abbr}: ${e.message}`);
+        roster = null;
+      }
+    }
+    rosters[abbr] = roster;
+  }));
+  return rosters;
 }
 
 async function sbAllRowsOrThrow(path) {
@@ -3278,12 +3301,32 @@ async function handleNHLRoutes(request, env, ctx, url) {
     });
   }
 
-  // GET /contracts/summary[?season=2026-27]
-  // Every team's contracts for the season, by SIGNING team (`basis`), with
-  // cap-hit totals and expiring counts -- a league table, not a cap-space
-  // calculator. Response: { season, basis, asOf, capLimits, teams, unavailable }.
+  // GET /contracts/summary[?season=2026-27][&basis=roster]
+  // Every team's contracts for the season. Default `basis` 'signing_team':
+  // the deals each team signed, with cap-hit totals and expiring counts (a
+  // player traded mid-contract counts for the team that signed him).
+  // `basis=roster`: each team's ROSTER cap hit, the Team page's number, from
+  // the 32 current rosters joined to the dataset (buildLeagueRosterSummary;
+  // not cached while a roster is missing, teamsKnown < 32). Neither is a
+  // cap-space calculator. Response: { season, basis, asOf, capLimits,
+  // [teamsKnown,] teams, unavailable }.
   if (url.pathname === '/contracts/summary' && request.method === 'GET') {
     const season = await contractsSeason(env, url);
+    if (url.searchParams.get('basis') === 'roster') {
+      return cachedJson(env, `nhl:contracts:summary:roster:${season}`, 3600, async () => {
+        const teams = Object.keys(TEAM_CONFIGS);
+        const rosters = await loadAllRosters(env);
+        let data;
+        try {
+          data = await buildLeagueRosterSummary({ get: sbRowsOrThrow, getAll: sbAllRowsOrThrow, season, rosters });
+        } catch (e) {
+          console.warn(`Contracts roster summary: ${e.message}`);
+          const teamsKnown = Object.values(rosters).filter(Boolean).length;
+          return json({ season, basis: 'roster', asOf: null, capLimits: null, teamsKnown, teams: [], unavailable: true }, { maxAge: 0 });
+        }
+        return data.unavailable || data.teamsKnown < teams.length ? json(data, { maxAge: 0 }) : data;
+      });
+    }
     return cachedJson(env, `nhl:contracts:summary:${season}`, 3600, async () => {
       let data;
       try {
@@ -3310,20 +3353,7 @@ async function handleNHLRoutes(request, env, ctx, url) {
     const season = await contractsSeason(env, url);
     return cachedJson(env, `nhl:contracts:players:${season}`, 3600, async () => {
       const teams = Object.keys(TEAM_CONFIGS);
-      const rosters = {};
-      await Promise.all(teams.map(async abbr => {
-        let roster = await kvGet(env, rosterKey(abbr));
-        if (!roster) {
-          try {
-            roster = await nhlGet(`${NHL_BASE}/roster/${abbr}/current`);
-            await kvPut(env, rosterKey(abbr), roster, ROSTER_TTL);
-          } catch (e) {
-            console.warn(`Contracts players roster ${abbr}: ${e.message}`);
-            roster = null;
-          }
-        }
-        rosters[abbr] = roster;
-      }));
+      const rosters = await loadAllRosters(env);
       let data;
       try {
         data = await buildLeaguePlayers({ get: sbRowsOrThrow, getAll: sbAllRowsOrThrow, season, rosters });
