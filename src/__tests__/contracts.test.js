@@ -8,11 +8,12 @@
 // CapFriendly) with different figures, and only the E row has a season
 // breakdown.
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   buildTeamContracts, buildPlayerContracts, buildLeagueSummary, pickContract, seasonCapHit,
   seasonLabel, safeSeasonLabel, yearsLeftFor, coversSeason, shapeCapLimits, capLimitsFor, rosterPlayers,
   shapeDeadCap, summarizeDeadCap, readDeadCap, capSpaceEstimate, ESTIMATE_NOTES,
+  shapeContract, readContracts, contractSelect, _resetContractColumnsForTests, CONTRACT_SELECT, CONTRACT_SELECT_EXTRA,
 } from '../contracts.js'
 
 const STAMP = '2026-10-24T12:08:21+00:00'
@@ -377,5 +378,64 @@ describe('dead cap and the cap-space estimate', () => {
     expect(noRoster.summary.capSpaceEstimate).toBeNull()
     const noCap = await buildTeamContracts({ ...fakeDb({ caps: [] }), team: 'CAR', season: SEASON, roster: ROSTER })
     expect(noCap.summary.capSpaceEstimate).toBeNull()
+  })
+})
+
+// bought_out / end_season_signed (2026-10): passed through for the player
+// history ("bought out, paid through 2024-25"), and read tolerantly because
+// the Worker can deploy before the pipeline migration adds the columns
+// (PostgREST answers 400 for an unknown column in select=).
+describe('bought-out columns', () => {
+  beforeEach(() => { _resetContractColumnsForTests() })
+
+  it('shapeContract carries boughtOut and endSeasonSigned', () => {
+    const bought = shapeContract(contract('x|CAR|2019-07', 1, 'X', 'CAR', {
+      end_season: '2024-25', bought_out: true, end_season_signed: '2026-27',
+    }), { season: null })
+    expect(bought).toMatchObject({ boughtOut: true, expiresAfter: '2024-25', endSeasonSigned: '2026-27' })
+    // Rows read before the migration have neither column.
+    expect(shapeContract(AHO, { season: SEASON })).toMatchObject({ boughtOut: false, endSeasonSigned: null })
+  })
+
+  it('reads the extra columns while they exist', async () => {
+    expect(contractSelect()).toBe(`${CONTRACT_SELECT},${CONTRACT_SELECT_EXTRA}`)
+    const paths = []
+    const rows = await readContracts(async p => { paths.push(p); return [AHO] }, '&player_id=eq.8478427')
+    expect(rows).toEqual([AHO])
+    expect(paths).toEqual([`nhl_contracts?select=${CONTRACT_SELECT},${CONTRACT_SELECT_EXTRA}&player_id=eq.8478427`])
+  })
+
+  it('falls back to the base select once and remembers', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const paths = []
+    const getter = async p => {
+      paths.push(p)
+      if (p.includes('bought_out')) throw new Error('Supabase 400: ' + p)
+      return [AHO]
+    }
+    expect(await readContracts(getter, '&team=eq.CAR')).toEqual([AHO])
+    expect(paths).toHaveLength(2)
+    expect(paths[0]).toContain('bought_out,end_season_signed')
+    expect(paths[1]).toBe(`nhl_contracts?select=${CONTRACT_SELECT}&team=eq.CAR`)
+    expect(contractSelect()).toBe(CONTRACT_SELECT)
+
+    await readContracts(getter, '&team=eq.TOR')
+    expect(paths).toHaveLength(3) // no extended attempt, no retry
+    expect(paths[2]).toBe(`nhl_contracts?select=${CONTRACT_SELECT}&team=eq.TOR`)
+    expect(warn).toHaveBeenCalledTimes(1)
+    warn.mockRestore()
+  })
+
+  it('rethrows and remembers nothing when the base read fails too', async () => {
+    const getter = vi.fn(async p => { throw new Error('Supabase 503: ' + p) })
+    await expect(readContracts(getter, '&team=eq.CAR')).rejects.toThrow('Supabase 503')
+    expect(getter).toHaveBeenCalledTimes(2)
+    expect(contractSelect()).toBe(`${CONTRACT_SELECT},${CONTRACT_SELECT_EXTRA}`)
+  })
+
+  it('the builders read through the wrapper', async () => {
+    const db = fakeDb()
+    await buildPlayerContracts({ get: db.get, playerId: 8478427, season: SEASON })
+    expect(db.calls.find(c => c.startsWith('nhl_contracts?'))).toContain(`select=${CONTRACT_SELECT},${CONTRACT_SELECT_EXTRA}&player_id=eq.8478427`)
   })
 })
