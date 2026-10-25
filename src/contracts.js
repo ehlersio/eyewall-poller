@@ -362,6 +362,89 @@ export async function buildPlayerContracts({ get, playerId, season }) {
   };
 }
 
+// GET /contracts/players: every NHL player's contract for `season` in one
+// payload, for league-wide surfaces (the contract-value leaderboard: points
+// and WAR per $M need every skater's cap hit at once, not 32 team calls).
+//   rosters  { ABBR: /roster/{team}/current payload | null } for every team
+//            (null when a roster could not be fetched; `teamsKnown` counts
+//            the rest, and players of an unknown roster show onRoster false)
+// One row per player who either has a contract covering the season or is
+// on an NHL roster today: the contract is chosen as /contracts does
+// (pickContract, the roster team preferred when the player is on one), the
+// cap hit from the season rows (seasonCapHit), and `currentTeam` /
+// `position` / `onRoster` come from the rosters, `team` staying the SIGNING
+// team. Roster players with no contract row carry nulls (the app shows
+// "no public figure"). Clauses are left out to keep the payload small; the
+// player route has them. Cap hit descending, figures before nulls.
+// Returns { season, basis: 'roster', asOf, capLimits, teamsKnown, players, unavailable }.
+export async function buildLeaguePlayers({ get, getAll, season, rosters = {} }) {
+  const rosterOf = new Map(); // playerId -> { team, name, position }
+  let teamsKnown = 0;
+  for (const [team, roster] of Object.entries(rosters)) {
+    if (!roster) continue;
+    teamsKnown += 1;
+    for (const p of rosterPlayers(roster)) rosterOf.set(p.id, { team, name: p.name, position: p.position });
+  }
+
+  const [contracts, seasonRows, capRows] = await Promise.all([
+    getAll(`nhl_contracts?select=${CONTRACT_SELECT}&start_season=lte.${season}&end_season=gte.${season}&order=contract_key`),
+    getAll(`nhl_contract_seasons?select=${SEASON_SELECT}&season=eq.${season}&order=id`),
+    get(`nhl_cap_limits?select=${CAP_SELECT}&order=season`),
+  ]);
+
+  const byPlayer = new Map();
+  for (const r of contracts) {
+    if (r.player_id == null) continue;
+    if (!byPlayer.has(r.player_id)) byPlayer.set(r.player_id, []);
+    byPlayer.get(r.player_id).push(r);
+  }
+  const seasonsByPlayer = new Map();
+  for (const r of seasonRows) {
+    if (!seasonsByPlayer.has(r.player_id)) seasonsByPlayer.set(r.player_id, []);
+    seasonsByPlayer.get(r.player_id).push(r);
+  }
+
+  const players = [];
+  for (const [playerId, playerRows] of byPlayer) {
+    const on = rosterOf.get(playerId) || null;
+    const contract = pickContract(playerRows, on?.team || null);
+    const shaped = shapeContract(contract, { season, seasonRows: seasonsByPlayer.get(playerId) || [], clauseRows: [] });
+    delete shaped.clauses;
+    players.push({
+      ...shaped,
+      name: on?.name || shaped.name,
+      currentTeam: on?.team || null,
+      position: on?.position || null,
+      onRoster: !!on,
+      alternates: playerRows.length - 1,
+    });
+  }
+  for (const [playerId, on] of rosterOf) {
+    if (byPlayer.has(playerId)) continue;
+    players.push({
+      contractKey: null, playerId, name: on.name, team: null, capHit: null, capHitSource: null, capHitTier: null,
+      aav: null, totalValue: null, termYears: null, startSeason: null, expiresAfter: null, yearsLeft: null,
+      isCurrent: false, expiryType: null, expiryTypeDerived: false, expiryStatus: null, contractType: null,
+      oneWay: null, signedAt: null, tier: null, official: false, sources: null, conflicts: null,
+      currentTeam: on.team, position: on.position, onRoster: true, alternates: 0,
+    });
+  }
+  players.sort((a, b) => {
+    if ((a.capHit == null) !== (b.capHit == null)) return a.capHit == null ? 1 : -1;
+    return (b.capHit || 0) - (a.capHit || 0) || a.playerId - b.playerId;
+  });
+
+  return {
+    season,
+    basis: 'roster',
+    asOf: latestStamp(contracts),
+    capLimits: capLimitsFor(capRows, season),
+    teamsKnown,
+    players,
+    unavailable: contracts.length === 0,
+  };
+}
+
 // GET /contracts/summary: every team's contracts for `season`, grouped by
 // the SIGNING team (the dataset has no "current team"), so a player traded
 // mid-contract counts for the team that signed him. Good enough for a
