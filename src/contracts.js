@@ -445,6 +445,51 @@ export async function buildLeaguePlayers({ get, getAll, season, rosters = {} }) 
   };
 }
 
+// GET /contracts/summary?basis=roster: every team's ROSTER cap hit for
+// `season`, the number the Team page's Cap tab shows (/contracts'
+// summary.rosterCapHit), for all 32 teams at once. Built on
+// buildLeaguePlayers' roster join: a player counts for the team whose NHL
+// roster he is on today, whoever signed him; `rosterCount` is the roster
+// size, `rosterWithFigure` how many have a public cap hit, `expiring` the
+// roster deals ending after the season, `offRosterCount` the deals the
+// team signed whose player is on no NHL roster (minors, loans), by
+// signing team. Still not cap space (no retained salary, buyouts, LTIR).
+// Returns { season, basis: 'roster', asOf, capLimits, teamsKnown, teams, unavailable }.
+export async function buildLeagueRosterSummary({ get, getAll, season, rosters = {} }) {
+  const league = await buildLeaguePlayers({ get, getAll, season, rosters });
+  const teams = new Map();
+  for (const [abbr, roster] of Object.entries(rosters)) {
+    if (!roster) continue;
+    teams.set(abbr, { team: abbr, rosterCount: 0, rosterWithFigure: 0, rosterCapHit: 0, offRosterCount: 0, expiring: { ufa: 0, rfa: 0, unknown: 0 } });
+  }
+  for (const p of league.players) {
+    if (p.onRoster && p.currentTeam && teams.has(p.currentTeam)) {
+      const t = teams.get(p.currentTeam);
+      t.rosterCount += 1;
+      if (p.capHit != null) {
+        t.rosterWithFigure += 1;
+        t.rosterCapHit += p.capHit;
+      }
+      if (p.contractKey && p.yearsLeft === 0) {
+        if (p.expiryType === 'UFA') t.expiring.ufa += 1;
+        else if (p.expiryType === 'RFA') t.expiring.rfa += 1;
+        else t.expiring.unknown += 1;
+      }
+    } else if (!p.onRoster && p.team && teams.has(p.team)) {
+      teams.get(p.team).offRosterCount += 1;
+    }
+  }
+  return {
+    season,
+    basis: 'roster',
+    asOf: league.asOf,
+    capLimits: league.capLimits,
+    teamsKnown: league.teamsKnown,
+    teams: [...teams.values()].sort((a, b) => b.rosterCapHit - a.rosterCapHit || a.team.localeCompare(b.team)),
+    unavailable: league.unavailable,
+  };
+}
+
 // GET /contracts/summary: every team's contracts for `season`, grouped by
 // the SIGNING team (the dataset has no "current team"), so a player traded
 // mid-contract counts for the team that signed him. Good enough for a
