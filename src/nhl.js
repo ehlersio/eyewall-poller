@@ -17,7 +17,7 @@ import { MILESTONE_SPORTS, milestoneScope } from './milestones.js';
 import { buildCallupWatch, nameKey } from './callupWatch.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { fetchTradeTree } from './trades.js';
-import { buildTeamContracts, buildPlayerContracts, buildLeagueSummary, shapeCapLimits, seasonLabel as contractSeasonLabel, safeSeasonLabel, CAP_SELECT } from './contracts.js';
+import { buildTeamContracts, buildPlayerContracts, buildLeagueSummary, buildLeaguePlayers, shapeCapLimits, seasonLabel as contractSeasonLabel, safeSeasonLabel, CAP_SELECT } from './contracts.js';
 import { summarizeScratches } from './scratches.js';
 import { summarizeNextGames, isPlayoffOddsStale } from './playoffOdds.js';
 import { summarizeInjuryLeague } from './injuryImpact.js';
@@ -3293,6 +3293,46 @@ async function handleNHLRoutes(request, env, ctx, url) {
         return json({ season, basis: 'signing_team', asOf: null, capLimits: null, teams: [], unavailable: true }, { maxAge: 0 });
       }
       return data.unavailable ? json(data, { maxAge: 0 }) : data;
+    });
+  }
+
+  // GET /contracts/players[?season=2026-27]
+  // Every NHL player's contract for the season in one payload (the league
+  // contract-value leaderboard needs every skater's cap hit at once): the
+  // 32 rosters (KV `roster:{ABBR}`, fetched and cached if cold) joined to
+  // the dataset, `currentTeam`/`position`/`onRoster` from the roster and
+  // `team` the signing team, cap hit descending. No clauses (see
+  // /contracts/player/:id). Response: { season, basis: 'roster', asOf,
+  // capLimits, teamsKnown, players, unavailable }. Not cached while a roster
+  // is missing (teamsKnown < 32), so a transient roster failure never serves
+  // "off the roster" for an hour.
+  if (url.pathname === '/contracts/players' && request.method === 'GET') {
+    const season = await contractsSeason(env, url);
+    return cachedJson(env, `nhl:contracts:players:${season}`, 3600, async () => {
+      const teams = Object.keys(TEAM_CONFIGS);
+      const rosters = {};
+      await Promise.all(teams.map(async abbr => {
+        let roster = await kvGet(env, rosterKey(abbr));
+        if (!roster) {
+          try {
+            roster = await nhlGet(`${NHL_BASE}/roster/${abbr}/current`);
+            await kvPut(env, rosterKey(abbr), roster, ROSTER_TTL);
+          } catch (e) {
+            console.warn(`Contracts players roster ${abbr}: ${e.message}`);
+            roster = null;
+          }
+        }
+        rosters[abbr] = roster;
+      }));
+      let data;
+      try {
+        data = await buildLeaguePlayers({ get: sbRowsOrThrow, getAll: sbAllRowsOrThrow, season, rosters });
+      } catch (e) {
+        console.warn(`Contracts players: ${e.message}`);
+        const teamsKnown = Object.values(rosters).filter(Boolean).length;
+        return json({ season, basis: 'roster', asOf: null, capLimits: null, teamsKnown, players: [], unavailable: true }, { maxAge: 0 });
+      }
+      return data.unavailable || data.teamsKnown < teams.length ? json(data, { maxAge: 0 }) : data;
     });
   }
 
