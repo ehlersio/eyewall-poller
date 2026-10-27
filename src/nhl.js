@@ -2528,7 +2528,7 @@ export async function refreshPPUnits(env, { force = false, season, gameType = '2
 
 // shot_events' player-id columns and the name each gets on /nhl/shots.
 // Assists (goals) and the blocker (blocked shots) since 2026-10 -- see
-// eyewall-pipeline docs/shot_events_assists_blocker.sql.
+// eyewall-pipeline docs/sql/shot_events_assists_blocker.sql.
 const SHOT_PLAYER_COLUMNS = [
   ['player_id', 'shooter_name'],
   ['goalie_id', 'goalie_name'],
@@ -2821,7 +2821,7 @@ async function handleNHLRoutes(request, env, ctx, url) {
   // shot_events holds a season's preseason and playoff games as well as its
   // regular season. /player-shots, /goalie-shots and /xg-trend read one game
   // type (game_type, a computed field on game_id -- eyewall-pipeline's
-  // docs/game_type_column.sql): regular season unless gameType=3. Preseason
+  // docs/sql/game_type_column.sql): regular season unless gameType=3. Preseason
   // is never offered. Until 2026-09 they read all three together.
   if (url.pathname === '/player-shots') {
     const playerId = sbParam(url.searchParams.get('playerId'), { type: 'int', name: 'playerId' });
@@ -3050,7 +3050,7 @@ async function handleNHLRoutes(request, env, ctx, url) {
   // teams' worth -- the user's and the opponent's -- fetched separately.
   // injury_type/injury_side/injury_detail/return_date come from ESPN's
   // per-entry `details` object (eyewall-pipeline's
-  // docs/session_injury_details_history.sql) -- any of the four can be null.
+  // docs/sql/session_injury_details_history.sql) -- any of the four can be null.
   if (url.pathname === '/injuries') {
     const team   = sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' })?.toUpperCase() || DEFAULT_TEAM_ABBR;
     return cachedJson(env, `nhl:injuries:${team}`, 3600, async () => {
@@ -3749,7 +3749,7 @@ Only reference the two teams named above and the numbers given -- no player name
     const gameId = sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' });
     if (!gameId) return badRequest('gameId required');
     // One row per (game_id, locale) since eyewall-pipeline's
-    // docs/session_locale_predictions.sql -- without the filter, limit=1
+    // docs/sql/session_locale_predictions.sql -- without the filter, limit=1
     // would hand back whichever language Postgres returned first.
     const locale = requestLocale(url);
 
