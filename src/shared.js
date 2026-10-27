@@ -92,7 +92,7 @@ export async function verifyAdminUser(request, env) {
 
 // Derive 'pre' | 'live' | 'final' from a pwhl_game_log/ahl_game_log row.
 // game_status_code (HockeyTech's numeric GameStatus, added Phase 6 --
-// see eyewall-pipeline's docs/live_score_refresh_ddl.sql) is preferred
+// see eyewall-pipeline's docs/sql/live_score_refresh_ddl.sql) is preferred
 // when present: confirmed live that a not-yet-started game's game_state
 // string is literally its scheduled clock time ("7:00PM"), not a state
 // word, so string-matching alone can't reliably tell "scheduled" apart

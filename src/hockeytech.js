@@ -1291,7 +1291,7 @@ ${tone} Write in plain text, no markdown. 1-2 sentences max.`;
     // ?season=, the most recent regular season (or ?seasonType=).
     //
     // No row (not enough games yet), or the tables not created yet (owner
-    // migration docs/2026-10-07_hockeytech_percentiles.sql in eyewall-
+    // migration docs/sql/2026-10-07_hockeytech_percentiles.sql in eyewall-
     // pipeline), both answer 200 with null percentiles -- the same "not
     // enough data yet" convention as the PWHL routes. The missing-table
     // answer isn't KV-cached, so the data shows as soon as it lands.
