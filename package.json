@@ -14,7 +14,7 @@
     "@eslint/js": "^10.0.1",
     "eslint": "^10.13.0",
     "vitest": "^5.0.5",
-    "wrangler": "^4.152.0"
+    "wrangler": "^4.153.0"
   },
   "allowScripts": {
     "workerd@1.20260925.1": true
