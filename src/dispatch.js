@@ -51,12 +51,11 @@ import { kvPut } from './shared.js';
 
 export const DISPATCH_REPO = 'ehlersio/eyewall-pipeline';
 export const DAILY_SCHEDULE = [
-  { workflow: 'nightly.yml',          atUTC: '07:00' },
-  { workflow: 'pwhl-nightly.yml',     atUTC: '07:20' },
-  { workflow: 'ahl-nightly.yml',      atUTC: '07:40' },
-  { workflow: 'echl-nightly.yml',     atUTC: '08:00' },
-  { workflow: 'moneypuck-ingest.yml', atUTC: '10:00' },
-  { workflow: 'ai_pipeline.yml',      atUTC: '14:00' },
+  { workflow: 'nightly.yml',       atUTC: '07:00' },
+  { workflow: 'pwhl-nightly.yml',  atUTC: '07:20' },
+  { workflow: 'ahl-nightly.yml',   atUTC: '07:40' },
+  { workflow: 'echl-nightly.yml',  atUTC: '08:00' },
+  { workflow: 'ai_pipeline.yml',   atUTC: '14:00' },
 ];
 
 // social-posts.yml, from the schedule comment at the top of that workflow

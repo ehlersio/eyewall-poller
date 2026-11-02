@@ -51,7 +51,7 @@ describe('maybeDispatchWorkflows', () => {
     })
 
     expect(await run(env, at('2026-10-07T07:39:00Z'))).toEqual(['pwhl-nightly.yml'])
-    expect(await run(env, at('2026-10-07T13:59:00Z'))).toEqual(['ahl-nightly.yml', 'echl-nightly.yml', 'moneypuck-ingest.yml'])
+    expect(await run(env, at('2026-10-07T13:59:00Z'))).toEqual(['ahl-nightly.yml', 'echl-nightly.yml'])
     expect(await run(env, at('2026-10-07T14:00:00Z'))).toEqual(['ai_pipeline.yml'])
     expect(dispatchedWorkflows()).toEqual(DAILY_SCHEDULE.map(e => e.workflow))
   })
