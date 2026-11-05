@@ -17,7 +17,8 @@
  * KV namespace binding: CACHE
  */
 
-import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews } from './nhl.js';
+import { handleNHL, poll, refreshPPUnits, TEAM_CONFIGS, fetchNews, loadAllRosters } from './nhl.js';
+import { rosterPlayers } from './contracts.js';
 import { MILESTONE_SPORTS, milestoneScope } from './milestones.js';
 import { handlePWHL, pollPWHL, PWHL_TEAM_CODES, fetchPWHLNews } from './pwhl.js';
 import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_IDS } from './ahl.js';
@@ -310,7 +311,27 @@ async function routeRequest(request, env, ctx) {
       if (pageError) return sbError(pageError);
     }
 
+    // Current NHL rosters (the NHL's /roster/{team}/current, KV roster:{ABBR}
+    // for an hour) come first: they're the only source of a player's team
+    // today. Season rows only exist once a player has played this season,
+    // so a goalie who signed elsewhere and hasn't dressed yet (Andersen to
+    // EDM, 2026-11) had no team, and a traded player's row can lag the
+    // trade by a nightly run or carry both teams ("MTL,NSH"). players.team
+    // is NOT used: it keeps the last roster a player was ever on and is
+    // never cleared, so a retired player still shows his old team. A
+    // player on no current roster (minors, unsigned, retired) falls through
+    // to his season row, then to null.
+    const rosters = await loadAllRosters(env);
+    const rosterTeamByPlayer = {};
+    let rostersMissing = 0;
+    for (const [abbr, roster] of Object.entries(rosters)) {
+      if (!roster) { rostersMissing += 1; continue; }
+      for (const rp of rosterPlayers(roster)) rosterTeamByPlayer[rp.id] = abbr;
+    }
+
     const nhlIndex = nhlPlayers.map(p => {
+      const rosterTeam = rosterTeamByPlayer[p.id];
+      if (rosterTeam) return { id: p.id, name: p.name, team: rosterTeam, position: p.position, sport: 'nhl' };
       const liveTeam = teamByPlayer[p.id];
       if (liveTeam) return { id: p.id, name: p.name, team: liveTeam, position: p.position, sport: 'nhl' };
       const priorTeam = priorTeamByPlayer[p.id];
@@ -365,8 +386,12 @@ async function routeRequest(request, env, ctx) {
       }));
 
     const index = [...nhlIndex, ...pwhlIndex, ...ahlIndex, ...echlIndex];
-    await kvPut(env, kvKey, index, 21600); // 6hr
-    return json(index, { maxAge: 21600 });
+    // A team whose roster couldn't be fetched leaves its players on their
+    // season rows (or null), so that index is only kept for 15 minutes
+    // instead of 6 hours; the rosters that did load stay in KV meanwhile.
+    const ttl = rostersMissing ? 900 : 21600;
+    await kvPut(env, kvKey, index, ttl);
+    return json(index, { maxAge: ttl });
   }
 
   // GET /trivia/today?sport=nhl&team=CAR (team optional — omit for the
