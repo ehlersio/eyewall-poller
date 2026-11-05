@@ -522,7 +522,7 @@ describe('POST /cache/bust', () => {
 })
 
 describe('GET /players-search-index', () => {
-  function mockSupabaseFetch({ players, teamRows, pwhlRows, ahlRows = [], echlRows = [] }) {
+  function mockSupabaseFetch({ players, teamRows, goalieRows = [], pwhlRows, ahlRows = [], echlRows = [] }) {
     globalThis.fetch = vi.fn((url) => {
       const u = String(url)
       if (u.includes('/rest/v1/players?')) {
@@ -530,6 +530,9 @@ describe('GET /players-search-index', () => {
       }
       if (u.includes('/rest/v1/player_seasons?')) {
         return Promise.resolve({ ok: true, json: async () => teamRows })
+      }
+      if (u.includes('/rest/v1/goalie_seasons?')) {
+        return Promise.resolve({ ok: true, json: async () => goalieRows })
       }
       if (u.includes('/rest/v1/pwhl_players?')) {
         return Promise.resolve({ ok: true, json: async () => pwhlRows })
@@ -616,6 +619,7 @@ describe('GET /players-search-index', () => {
       const [start, end] = rangeOf(opts)
       if (u.includes('/rest/v1/players?')) return Promise.resolve({ ok: true, json: async () => [] })
       if (u.includes('/rest/v1/player_seasons?')) return Promise.resolve({ ok: true, json: async () => [] })
+      if (u.includes('/rest/v1/goalie_seasons?')) return Promise.resolve({ ok: true, json: async () => [] })
       if (u.includes('/rest/v1/pwhl_players?')) return Promise.resolve({ ok: true, json: async () => [] })
       if (u.includes('/rest/v1/ahl_players?')) return Promise.resolve({ ok: true, json: async () => ahlAll.slice(start, end) })
       if (u.includes('/rest/v1/echl_players?')) return Promise.resolve({ ok: true, json: async () => echlAll.slice(start, end) })
@@ -656,13 +660,114 @@ describe('GET /players-search-index', () => {
     expect(res.status).toBe(502)
   })
 
+  // Goalies' season rows live in goalie_seasons, not player_seasons. The
+  // route read only player_seasons until 2026-11, so production listed all
+  // 204 NHL goalies (Kochetkov, Shesterkin, Andersen...) with team: null.
+  describe('NHL goalies (goalie_seasons)', () => {
+    it('gives a goalie his current-season team from goalie_seasons', async () => {
+      mockSupabaseFetch({
+        players: [
+          { id: 8478427, name: 'Sebastian Aho', position: 'C' },
+          { id: 8481611, name: 'Pyotr Kochetkov', position: 'G' },
+          { id: 8478048, name: 'Igor Shesterkin', position: 'G' },
+        ],
+        teamRows: [{ player_id: 8478427, team: 'CAR', updated_at: '2026-10-04T12:56:48Z' }],
+        goalieRows: [
+          { player_id: 8481611, team: 'CAR', updated_at: '2026-10-04T12:56:48Z' },
+          { player_id: 8478048, team: 'NYR', updated_at: '2026-09-30T13:09:41Z' },
+        ],
+        pwhlRows: [],
+      })
+
+      const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual([
+        { id: 8478427, name: 'Sebastian Aho', team: 'CAR', position: 'C', sport: 'nhl' },
+        { id: 8481611, name: 'Pyotr Kochetkov', team: 'CAR', position: 'G', sport: 'nhl' },
+        { id: 8478048, name: 'Igor Shesterkin', team: 'NYR', position: 'G', sport: 'nhl' },
+      ])
+      const goalieUrl = globalThis.fetch.mock.calls.map(([u]) => String(u)).find(u => u.includes('/rest/v1/goalie_seasons?'))
+      expect(goalieUrl).toContain('season=eq.20252026')
+      expect(goalieUrl).toContain('game_type=eq.2')
+    })
+
+    it('takes a traded goalie\'s most recently updated stint, whatever order the rows come back in', async () => {
+      mockSupabaseFetch({
+        players: [{ id: 8475883, name: 'Frederik Andersen', position: 'G' }],
+        teamRows: [],
+        goalieRows: [
+          { player_id: 8475883, team: 'CAR', updated_at: '2026-01-01T00:00:00Z' },
+          { player_id: 8475883, team: 'UTA', updated_at: '2026-03-01T00:00:00Z' },
+        ],
+        pwhlRows: [],
+      })
+
+      const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+
+      expect((await res.json())[0].team).toBe('UTA')
+    })
+
+    it('does not fall back to last season when only goalies have live-season rows', async () => {
+      mockSupabaseFetch({
+        players: [{ id: 8481611, name: 'Pyotr Kochetkov', position: 'G' }],
+        teamRows: [],
+        goalieRows: [{ player_id: 8481611, team: 'CAR', updated_at: '2026-10-04T12:56:48Z' }],
+        pwhlRows: [],
+      })
+
+      const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+
+      expect(await res.json()).toEqual([
+        { id: 8481611, name: 'Pyotr Kochetkov', team: 'CAR', position: 'G', sport: 'nhl' },
+      ])
+      expect(globalThis.fetch.mock.calls.some(([u]) => String(u).includes('season=eq.20242025'))).toBe(false)
+    })
+
+    it('pages player_seasons past the 1000-row cap', async () => {
+      const players = Array.from({ length: 1200 }, (_, i) => ({ id: i + 1, name: `Skater ${i + 1}`, position: 'C' }))
+      const seasonRows = players.map(p => ({ player_id: p.id, team: 'CAR', updated_at: '2026-10-01T00:00:00Z' }))
+      globalThis.fetch = vi.fn((url, opts) => {
+        const u = String(url)
+        const [start, end] = (opts?.headers?.Range || '0-999').split('-').map(Number)
+        if (u.includes('/rest/v1/players?')) return Promise.resolve({ ok: true, json: async () => players.slice(start, end + 1) })
+        if (u.includes('/rest/v1/player_seasons?')) return Promise.resolve({ ok: true, json: async () => seasonRows.slice(start, end + 1) })
+        return Promise.resolve({ ok: true, json: async () => [] })
+      })
+
+      const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+      const nhl = (await res.json()).filter(p => p.sport === 'nhl')
+
+      expect(nhl).toHaveLength(1200)
+      expect(nhl.every(p => p.team === 'CAR')).toBe(true)
+      // A tie-broken order, so Range pages over rows sharing one
+      // updated_at can't skip or repeat a row.
+      const seasonUrl = globalThis.fetch.mock.calls.map(([u]) => String(u)).find(u => u.includes('/rest/v1/player_seasons?'))
+      expect(seasonUrl).toContain('order=updated_at.desc,player_id.asc,team.asc')
+    })
+
+    it('returns 502 when goalie_seasons fails, rather than caching an index with no goalie teams', async () => {
+      globalThis.fetch = vi.fn((url) => {
+        const u = String(url)
+        if (u.includes('/rest/v1/goalie_seasons?')) return Promise.resolve({ ok: false, status: 500 })
+        return Promise.resolve({ ok: true, json: async () => [] })
+      })
+      const env = makeEnv()
+
+      const res = await worker.fetch(makeRequest('/players-search-index'), env, makeCtx())
+
+      expect(res.status).toBe(502)
+      expect(await env.CACHE.get('players-search-index')).toBeNull()
+    })
+  })
+
   // Session 66: the live season (mocked here as 20252026, per the module
   // mock above) can be flipped ahead of any real player_seasons rows
   // existing for it (schedule released, season hasn't started) -- these
   // cover the one-season-back fallback that kicks in when that season's
   // player_seasons query comes back completely empty.
   describe('current-season player_seasons is empty (season flipped ahead of real data)', () => {
-    function mockSupabaseFetchWithPriorSeason({ players, priorTeamRows, pwhlRows }) {
+    function mockSupabaseFetchWithPriorSeason({ players, priorTeamRows, priorGoalieRows = [], pwhlRows }) {
       globalThis.fetch = vi.fn((url) => {
         const u = String(url)
         if (u.includes('/rest/v1/players?')) {
@@ -672,7 +777,8 @@ describe('GET /players-search-index', () => {
           return Promise.resolve({ ok: true, json: async () => [] }) // live season: no rows yet
         }
         if (u.includes('season=eq.20242025')) {
-          return Promise.resolve({ ok: true, json: async () => priorTeamRows }) // one season back
+          const rows = u.includes('/rest/v1/goalie_seasons?') ? priorGoalieRows : priorTeamRows
+          return Promise.resolve({ ok: true, json: async () => rows }) // one season back
         }
         if (u.includes('/rest/v1/pwhl_players?')) {
           return Promise.resolve({ ok: true, json: async () => pwhlRows })
@@ -700,6 +806,22 @@ describe('GET /players-search-index', () => {
       // wrong player's row or the wrong season entirely.
       expect(body).toEqual([
         { id: 8478402, name: 'Connor McDavid', team: 'EDM', teamStale: true, teamSeason: '20242025', position: 'C', sport: 'nhl' },
+      ])
+    })
+
+    it('falls back to a goalie\'s prior-season goalie_seasons team too', async () => {
+      mockSupabaseFetchWithPriorSeason({
+        players: [{ id: 8478048, name: 'Igor Shesterkin', position: 'G' }],
+        priorTeamRows: [],
+        priorGoalieRows: [{ player_id: 8478048, team: 'NYR', updated_at: '2026-04-01T00:00:00Z' }],
+        pwhlRows: [],
+      })
+
+      const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual([
+        { id: 8478048, name: 'Igor Shesterkin', team: 'NYR', teamStale: true, teamSeason: '20242025', position: 'G', sport: 'nhl' },
       ])
     })
 
