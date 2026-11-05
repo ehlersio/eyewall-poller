@@ -268,12 +268,22 @@ async function routeRequest(request, env, ctx) {
 
     const nhlSeason = String(await resolveNHLSeason(env));
 
+    // Skaters' season rows live in player_seasons, goalies' in
+    // goalie_seasons. Reading only player_seasons (before 2026-11) left
+    // every NHL goalie -- all 204 -- with team: null in search. Both tables
+    // are read for the same season and game type, and a player's team is
+    // his most recently updated row across the two (a traded player has
+    // one row per team stint). Both are paged: player_seasons had 940
+    // regular-season rows for 2025-26, so the 1000-row cap is close. The
+    // order has player_id/team tie-breakers because Range paging over a
+    // non-unique order (many rows share one batch's updated_at) can skip
+    // or repeat rows between pages.
     async function fetchTeamByPlayer(season) {
-      const res = await fetch(
-        `${SB_URL}/rest/v1/player_seasons?season=eq.${season}&game_type=eq.2&select=player_id,team,updated_at&order=updated_at.desc`,
-        { headers: sbH }
-      );
-      const rows = res.ok ? await res.json() : [];
+      const query = `?season=eq.${season}&game_type=eq.2&select=player_id,team,updated_at&order=updated_at.desc,player_id.asc,team.asc`;
+      const skaterRows = await fetchAllRows(`player_seasons${query}`);
+      const goalieRows = await fetchAllRows(`goalie_seasons${query}`);
+      const rows = [...skaterRows, ...goalieRows]
+        .sort((a, b) => String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? '')));
       const byPlayer = {};
       for (const row of rows) {
         if (!(row.player_id in byPlayer)) byPlayer[row.player_id] = row.team; // first hit = most recently updated
@@ -282,8 +292,12 @@ async function routeRequest(request, env, ctx) {
     }
 
     const teamByPlayer = await fetchTeamByPlayer(nhlSeason);
+    // A failed read used to be treated as "no rows", which dropped every
+    // NHL team (or swapped in last season's) and cached that for 6 hours.
+    if (pageError) return sbError(pageError);
 
-    // Only reached when the live season has zero player_seasons rows at all
+    // Only reached when the live season has zero player_seasons and
+    // goalie_seasons rows at all
     // (season flipped ahead of real games existing, per the note above) —
     // if the live season has real data, per-player misses are a separate,
     // rarer thing (e.g. a brand-new call-up) that this fallback intentionally
@@ -293,6 +307,7 @@ async function routeRequest(request, env, ctx) {
     if (Object.keys(teamByPlayer).length === 0) {
       priorSeason = String(Number(nhlSeason) - 10001); // 20262027 -> 20252026
       priorTeamByPlayer = await fetchTeamByPlayer(priorSeason);
+      if (pageError) return sbError(pageError);
     }
 
     const nhlIndex = nhlPlayers.map(p => {
