@@ -338,11 +338,12 @@ async function contractsSeason(env, url) {
 }
 
 // Every NHL team's current roster for the league-wide contracts routes
-// (/contracts/players, /contracts/summary?basis=roster): KV roster:{ABBR},
+// (/contracts/players, /contracts/summary?basis=roster) and
+// /players-search-index's current-team lookup (worker.js): KV roster:{ABBR},
 // fetched from the NHL and cached (ROSTER_TTL) when cold, null for a team
 // whose roster could not be fetched. The caller counts the nulls
 // (`teamsKnown`) and does not cache its answer while one is missing.
-async function loadAllRosters(env) {
+export async function loadAllRosters(env) {
   const rosters = {};
   await Promise.all(Object.keys(TEAM_CONFIGS).map(async abbr => {
     let roster = await kvGet(env, rosterKey(abbr));

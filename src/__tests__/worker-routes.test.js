@@ -32,6 +32,8 @@ vi.mock('../nhl.js', async () => {
     poll: vi.fn(),
     refreshPPUnits: vi.fn(),
     TEAM_CONFIGS: actual.TEAM_CONFIGS,
+    // No current rosters unless a test supplies them.
+    loadAllRosters: vi.fn().mockResolvedValue({}),
   }
 })
 vi.mock('../pwhl.js', async () => {
@@ -44,7 +46,7 @@ vi.mock('../pwhl.js', async () => {
 })
 
 import worker, { isProtectedKvKey } from '../worker.js'
-import { handleNHL } from '../nhl.js'
+import { handleNHL, loadAllRosters } from '../nhl.js'
 import { handlePWHL } from '../pwhl.js'
 import { getSeasonsConfig, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons } from '../seasons.js'
 import { makeEnv, makeCtx, makeRequest, makeFakeCache } from './route-harness.js'
@@ -758,6 +760,91 @@ describe('GET /players-search-index', () => {
 
       expect(res.status).toBe(502)
       expect(await env.CACHE.get('players-search-index')).toBeNull()
+    })
+  })
+
+  // Season rows only exist once a player has played this season, and a
+  // traded player's row can lag the trade or name both teams. The NHL's
+  // current rosters are the source of a player's team today.
+  describe('current NHL rosters', () => {
+    const goalie = (id, first, last) => ({ id, firstName: { default: first }, lastName: { default: last }, positionCode: 'G' })
+    const skater = (id, first, last) => ({ id, firstName: { default: first }, lastName: { default: last }, positionCode: 'D' })
+    const roster = ({ defensemen = [], goalies = [] }) => ({ forwards: [], defensemen, goalies })
+
+    it('gives a goalie with no season row yet his current roster team', async () => {
+      loadAllRosters.mockResolvedValueOnce({ EDM: roster({ goalies: [goalie(8475883, 'Frederik', 'Andersen')] }), CAR: roster({}) })
+      mockSupabaseFetch({
+        players: [
+          { id: 8475883, name: 'Frederik Andersen', position: 'G' },
+          { id: 8470594, name: 'Marc-Andre Fleury', position: 'G' }, // on no roster, no row: stays null
+        ],
+        teamRows: [{ player_id: 8478427, team: 'CAR', updated_at: '2026-10-04T12:56:48Z' }],
+        pwhlRows: [],
+      })
+
+      const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+
+      expect(await res.json()).toEqual([
+        { id: 8475883, name: 'Frederik Andersen', team: 'EDM', position: 'G', sport: 'nhl' },
+        { id: 8470594, name: 'Marc-Andre Fleury', team: null, position: 'G', sport: 'nhl' },
+      ])
+    })
+
+    it('prefers the current roster over a lagging or two-team season row', async () => {
+      loadAllRosters.mockResolvedValueOnce({
+        NSH: roster({ defensemen: [skater(8481593, 'Jayden', 'Struble')] }),
+        MIN: roster({ defensemen: [skater(8482160, 'Cameron', 'Crotty')] }),
+      })
+      mockSupabaseFetch({
+        players: [
+          { id: 8481593, name: 'Jayden Struble', position: 'D' },
+          { id: 8482160, name: 'Cameron Crotty', position: 'D' },
+        ],
+        teamRows: [
+          { player_id: 8481593, team: 'MTL,NSH', updated_at: '2026-11-04T00:00:00Z' },
+          { player_id: 8482160, team: 'OTT', updated_at: '2026-11-04T00:00:00Z' },
+        ],
+        pwhlRows: [],
+      })
+
+      const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+
+      expect((await res.json()).map(p => p.team)).toEqual(['NSH', 'MIN'])
+    })
+
+    it('uses the current roster ahead of last season\'s stale fallback', async () => {
+      loadAllRosters.mockResolvedValueOnce({ TOR: roster({ defensemen: [skater(8478402, 'Moved', 'Player')] }) })
+      globalThis.fetch = vi.fn((url) => {
+        const u = String(url)
+        if (u.includes('/rest/v1/players?')) return Promise.resolve({ ok: true, json: async () => [{ id: 8478402, name: 'Moved Player', position: 'D' }] })
+        if (u.includes('season=eq.20242025') && u.includes('/rest/v1/player_seasons?')) {
+          return Promise.resolve({ ok: true, json: async () => [{ player_id: 8478402, team: 'EDM', updated_at: '2026-04-01T00:00:00Z' }] })
+        }
+        return Promise.resolve({ ok: true, json: async () => [] })
+      })
+
+      const res = await worker.fetch(makeRequest('/players-search-index'), makeEnv(), makeCtx())
+
+      expect(await res.json()).toEqual([
+        { id: 8478402, name: 'Moved Player', team: 'TOR', position: 'D', sport: 'nhl' },
+      ])
+    })
+
+    it('keeps the index for 15 minutes, not 6 hours, when a roster could not be fetched', async () => {
+      loadAllRosters.mockResolvedValueOnce({ EDM: null, CAR: roster({}) })
+      mockSupabaseFetch({
+        players: [{ id: 8475883, name: 'Frederik Andersen', position: 'G' }],
+        teamRows: [],
+        pwhlRows: [],
+      })
+      const puts = []
+      const env = makeEnv({ CACHE: { async get() { return null }, async put(key, value, opts) { puts.push({ key, opts }) } } })
+
+      const res = await worker.fetch(makeRequest('/players-search-index'), env, makeCtx())
+
+      expect(res.status).toBe(200)
+      expect(puts).toEqual([{ key: 'players-search-index', opts: { expirationTtl: 900 } }])
+      expect(res.headers.get('Cache-Control')).toContain('max-age=900')
     })
   })
 
