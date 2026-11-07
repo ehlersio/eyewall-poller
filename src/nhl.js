@@ -24,6 +24,7 @@ import { summarizeInjuryLeague } from './injuryImpact.js';
 import { summarizeStarters } from './probableStarters.js';
 import { summarizeProjectedLines } from './projectedLines.js';
 import { summarizeTeamNeeds } from './teamNeeds.js';
+import { summarizeTradeFit } from './tradeFit.js';
 import { summarizeScorecard } from './scorecard.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
@@ -4761,6 +4762,45 @@ async function divisionOdds(env, team, latest) {
 
       const data = { team, ...summarizeTeamNeeds(rows) };
       return data.slots.length ? data : json(data); // an empty result isn't cached
+    });
+  }
+
+  // ── Trade fit — which teams a player fits, in tiers with reasons ──────────────
+  // GET /trade-fit?player=8480023
+  // From eyewall-pipeline's trade_fit.py (nightly, after team_needs): for a
+  // player in the trade fit population (rated, 10+ GP / 5+ goalies, current
+  // non-ELC contract), every other team ranked into strong / possible /
+  // long_shot on need (team_needs slots), window (a rental needs a 50%+
+  // playoff-odds buyer) and cap (the /contracts space estimate, no LTIR),
+  // with structured reasons the app translates. A fit, not a prediction.
+  // Response: { player, teams, generatedAt } -- see summarizeTradeFit(),
+  // src/tradeFit.js. A player outside the population, or any player outside
+  // the season window (before the first projection, after the deadline) ->
+  // player null, teams []. 1hr KV; neither a failed read (`unavailable:
+  // true`) nor an empty result is cached. `player` must be an integer id.
+  if (url.pathname === '/trade-fit') {
+    const playerId = sbParam(url.searchParams.get('player'), { type: 'int', name: 'player' });
+    if (!playerId) return badRequest('player required');
+    return cachedJson(env, `nhl:trade-fit:${playerId}`, 3600, async () => {
+      let playerRows, fitRows;
+      try {
+        [playerRows, fitRows] = await Promise.all([
+          sbRowsOrThrow(
+            `trade_fit_players?select=player_id,season,team,name,position,shoots,rating,rating_basis,games_played,` +
+            `cap_hit,years_left,expires_after,expiry_type,expiry_type_derived,rental,clause_kind,clause_list_size,generated_at` +
+            `&player_id=eq.${playerId}`
+          ),
+          sbRowsOrThrow(
+            `trade_fit?select=team,tier,rank,slot,gap,need_met,window_met,cap_state,reasons` +
+            `&player_id=eq.${playerId}&order=rank.asc`
+          ),
+        ]);
+      } catch {
+        return json({ ...summarizeTradeFit(null, []), unavailable: true });
+      }
+
+      const data = summarizeTradeFit(playerRows[0], fitRows);
+      return data.player ? data : json(data); // an empty result isn't cached
     });
   }
 
