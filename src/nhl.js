@@ -25,6 +25,7 @@ import { summarizeStarters } from './probableStarters.js';
 import { summarizeProjectedLines } from './projectedLines.js';
 import { summarizeTeamNeeds } from './teamNeeds.js';
 import { summarizeTradeFit } from './tradeFit.js';
+import { summarizeCandidacy, summarizeBoard } from './tradeCandidacy.js';
 import { summarizeScorecard } from './scorecard.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
@@ -41,6 +42,11 @@ const NHL_BASE   = 'https://api-web.nhle.com/v1';
 // team data that has nothing to do with the season.
 
 const DEFAULT_TEAM_ABBR = 'CAR';
+// trade_candidacy columns the routes read; model_p is left out on purpose (see
+// /trade-candidacy below).
+const CANDIDACY_COLUMNS =
+  'player_id,season,team,name,position,games_played,tier,rank,signals,cap_hit,years_left,' +
+  'expiry_type,expiry_type_derived,extended,clause_kind,clause_list_size,as_of,deadline,generated_at';
 
 export const TEAM_CONFIGS = {
   // keywords: short names/nicknames used by beat writers and BR/Athletic article titles.
@@ -4801,6 +4807,62 @@ async function divisionOdds(env, team, latest) {
 
       const data = summarizeTradeFit(playerRows[0], fitRows);
       return data.player ? data : json(data); // an empty result isn't cached
+    });
+  }
+
+  // ── Trade candidacy — candidate signals and a tier, Jan 1 to the deadline ─────
+  // GET /trade-candidacy?player=8480023
+  // GET /trade-candidacy/board[?fit=CAR]
+  // From eyewall-pipeline's trade_candidacy.py (nightly, after trade_fit): each
+  // player's signals (expiring, team outside a playoff spot, ice time down)
+  // and a tier, 'several' | 'some', from the frozen backtest model. The
+  // model's number is never returned: the backtest didn't calibrate well
+  // enough to show a percentage. Only tiered players with at least one
+  // signal are served. The table is empty outside Jan 1 - the trade deadline.
+  // /trade-candidacy -> { player, asOf, deadline, generatedAt }, player null
+  // when untiered or out of window (summarizeCandidacy(), src/tradeCandidacy.js).
+  // /trade-candidacy/board -> { players, asOf, deadline, generatedAt, fitTeam },
+  // ranked; with ?fit=TEAM each player carries `fit`, that team's trade fit
+  // tier for him or null (summarizeBoard()). 1hr KV; neither a failed read
+  // (`unavailable: true`) nor an empty result is cached. `player` must be an
+  // integer and `fit` 2-3 letters.
+  if (url.pathname === '/trade-candidacy') {
+    const playerId = sbParam(url.searchParams.get('player'), { type: 'int', name: 'player' });
+    if (!playerId) return badRequest('player required');
+    return cachedJson(env, `nhl:trade-candidacy:${playerId}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `trade_candidacy?select=${CANDIDACY_COLUMNS}&player_id=eq.${playerId}`
+        );
+      } catch {
+        return json({ ...summarizeCandidacy(null), unavailable: true });
+      }
+      const data = summarizeCandidacy(rows[0]);
+      return data.player ? data : json(data); // an empty result isn't cached
+    });
+  }
+
+  if (url.pathname === '/trade-candidacy/board') {
+    const rawFit = url.searchParams.get('fit');
+    const fitTeam = rawFit ? sbParam(rawFit, { type: 'abbr', name: 'fit' }).toUpperCase() : null;
+    if (fitTeam && !/^[A-Z]{2,3}$/.test(fitTeam)) return badRequest('invalid fit');
+    return cachedJson(env, `nhl:trade-candidacy-board:${fitTeam || 'all'}`, 3600, async () => {
+      let rows, fitRows;
+      try {
+        [rows, fitRows] = await Promise.all([
+          sbRowsOrThrow(
+            `trade_candidacy?select=${CANDIDACY_COLUMNS}&tier=not.is.null&order=rank.asc`
+          ),
+          fitTeam
+            ? sbRowsOrThrow(`trade_fit?select=player_id,tier&team=eq.${fitTeam}`)
+            : Promise.resolve(null),
+        ]);
+      } catch {
+        return json({ ...summarizeBoard([], null, fitTeam), unavailable: true });
+      }
+      const data = summarizeBoard(rows, fitRows, fitTeam);
+      return data.players.length ? data : json(data); // an empty result isn't cached
     });
   }
 
