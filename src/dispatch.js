@@ -27,6 +27,18 @@
  * a few minutes apart instead. A fallback run finds the post already in
  * social_posts and exits.
  *
+ * The marker lives in KV, which can take up to about a minute to show a new
+ * key to a tick running at another Cloudflare location, so a slot with a
+ * window could be dispatched twice (the collector's 13:05 slot was, 26 s
+ * apart, on 2026-10-25). Before dispatching an entry without `inputs`, the
+ * Worker asks GitHub for a run of that workflow created since the slot
+ * opened, looking back at most RECENT_RUN_MINUTES (a run from hours ago,
+ * such as a manual one, doesn't stand in for the slot). Finding one writes
+ * the marker instead of dispatching. If GitHub can't answer, the dispatch
+ * goes ahead as before. Social posts skip this check: their runs don't say
+ * which kind they are, and several kinds share the workflow (the workflow
+ * itself skips a kind that already posted).
+ *
  * A failed dispatch is retried after DISPATCH_RETRY_SECONDS rather than
  * every minute. Each attempt is recorded in `health:ops:dispatch-<workflow>`
  * (`dispatch-social-posts.yml:<kind>` for posts), same shape as the
@@ -117,6 +129,7 @@ export const DISPATCH_SCHEDULE = [...DAILY_SCHEDULE, ...socialEntries, ...contra
 
 const MARKER_TTL = 36 * 3600;
 export const DISPATCH_RETRY_SECONDS = 10 * 60;
+export const RECENT_RUN_MINUTES = 10;
 
 // The six daily workflows keep their original keys (`<workflow>:<date>`);
 // a post's keys add its kind and slot.
@@ -129,6 +142,14 @@ const label = e => (e.kind ? `${e.workflow} (${e.kind} ${e.atUTC})` : e.workflow
 const repoOf = e => e.repo || DISPATCH_REPO;
 const workflowUrl = e => `https://github.com/${repoOf(e)}/actions/workflows/${e.workflow}`;
 const dispatchUrl = e => `https://api.github.com/repos/${repoOf(e)}/actions/workflows/${e.workflow}/dispatches`;
+const runsUrl = (e, since) => `https://api.github.com/repos/${repoOf(e)}/actions/workflows/${e.workflow}/runs`
+  + `?created=${encodeURIComponent(`>=${since}`)}&per_page=1`;
+const githubHeaders = token => ({
+  Authorization: `Bearer ${token}`,
+  Accept: 'application/vnd.github+json',
+  'X-GitHub-Api-Version': '2022-11-28',
+  'User-Agent': 'eyewall-poller',
+});
 
 const minutesOf = hhmm => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
 const isDue = (e, hhmm, weekday, mmdd) => {
@@ -137,6 +158,21 @@ const isDue = (e, hhmm, weekday, mmdd) => {
   if (hhmm < e.atUTC) return false;
   return e.windowMinutes == null || minutesOf(hhmm) - minutesOf(e.atUTC) < e.windowMinutes;
 };
+
+// The id of a run of e's workflow created since `since` (ISO, seconds), or
+// null: none, or GitHub didn't answer (the caller dispatches either way).
+async function recentRunId(env, e, since) {
+  try {
+    const res = await fetch(runsUrl(e, since), { headers: githubHeaders(env.GITHUB_DISPATCH_TOKEN) });
+    if (res.status !== 200) return null;
+    const body = await res.json();
+    return body?.workflow_runs?.[0]?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const isoSeconds = d => d.toISOString().slice(0, 19) + 'Z';
 
 async function record(env, e, status, title, body) {
   const rec = { status, title, body, url: workflowUrl(e), at: new Date().toISOString() };
@@ -179,18 +215,23 @@ export async function maybeDispatchWorkflows(env, now = new Date()) {
       if (spaced.has(workflow)) continue;
       if (await env.CACHE.get(spacingKey(workflow))) { spaced.add(workflow); continue; }
     }
+    if (!e.inputs) {
+      const slotStart = new Date(`${date}T${e.atUTC}:00Z`);
+      const lookback = new Date(now.getTime() - RECENT_RUN_MINUTES * 60_000);
+      const since = isoSeconds(slotStart > lookback ? slotStart : lookback);
+      const runId = await recentRunId(env, e, since);
+      if (runId != null) {
+        await kvPut(env, markerKey(e, date), iso, MARKER_TTL);
+        console.log(`[dispatch] ${label(e)}: run ${runId} already created since ${since}; not dispatching again`);
+        continue;
+      }
+    }
     let status = 0;
     let detail = '';
     try {
       const res = await fetch(dispatchUrl(e), {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          'User-Agent': 'eyewall-poller',
-          'Content-Type': 'application/json',
-        },
+        headers: { ...githubHeaders(env.GITHUB_DISPATCH_TOKEN), 'Content-Type': 'application/json' },
         body: JSON.stringify(e.inputs ? { ref: 'main', inputs: e.inputs } : { ref: 'main' }),
       });
       status = res.status;

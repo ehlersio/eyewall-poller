@@ -3,7 +3,7 @@
 // (dispatch.js, 2026-10) because GitHub's own cron runs them 3-7 hours late.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { maybeDispatchWorkflows, DISPATCH_SCHEDULE, DAILY_SCHEDULE, DISPATCH_RETRY_SECONDS, CONTRACTS_WORKFLOW } from '../dispatch.js'
+import { maybeDispatchWorkflows, DISPATCH_SCHEDULE, DAILY_SCHEDULE, DISPATCH_RETRY_SECONDS, CONTRACTS_WORKFLOW, RECENT_RUN_MINUTES } from '../dispatch.js'
 import { makeEnv } from './route-harness.js'
 
 const at = iso => new Date(iso)
@@ -323,5 +323,86 @@ describe('maybeDispatchWorkflows: nhl-contracts collector', () => {
     await maybeDispatchWorkflows(env, at('2026-10-24T07:00:00Z'))
     expect(dispatchCalls().map(([u]) => String(u))).toContain(
       'https://api.github.com/repos/ehlersio/eyewall-pipeline/actions/workflows/nightly.yml/dispatches')
+  })
+})
+
+// KV can take up to about a minute to show a new marker at another
+// Cloudflare location, so the collector's 13:05 slot went out twice on
+// 2026-10-25 (runs 40196037420 at 13:05:35 and 40196070592 at 13:06:01).
+// Before dispatching, the Worker asks GitHub for a run created since the slot.
+describe('maybeDispatchWorkflows: a run GitHub already has stands in for the marker', () => {
+  const runsCalls = () => globalThis.fetch.mock.calls.filter(([u]) => String(u).includes('/runs?'))
+  const contractsDispatches = () => allDispatchCalls().filter(([u]) => String(u).includes('nhl-contracts'))
+  const contractsOnly = list => list.filter(w => w.startsWith(`${CONTRACTS_WORKFLOW}:`))
+  // GitHub has a run of `repoPart`'s workflow; every other request gets the default 204.
+  const githubHas = (repoPart, id) => globalThis.fetch.mockImplementation(async url => (
+    String(url).includes('/runs?') && String(url).includes(repoPart)
+      ? { status: 200, json: async () => ({ total_count: 1, workflow_runs: [{ id }] }) }
+      : { status: 204, text: async () => '' }))
+  const forget = (env, key) => env.CACHE.delete(key) // the marker not visible yet at this location
+
+  it('replays 2026-10-25 13:05: the second tick finds the first run and does not dispatch', async () => {
+    const env = envWithToken()
+    expect(contractsOnly(await maybeDispatchWorkflows(env, at('2026-10-25T13:05:35Z')))).toEqual([`${CONTRACTS_WORKFLOW}:hourly`])
+    const marker = 'ops:dispatched:update-contracts.yml:hourly:13:05:2026-10-25'
+    await forget(env, marker)
+    githubHas('nhl-contracts', 40196037420)
+
+    expect(contractsOnly(await maybeDispatchWorkflows(env, at('2026-10-25T13:06:01Z')))).toEqual([])
+    expect(contractsDispatches()).toHaveLength(1)
+    expect(JSON.parse(await env.CACHE.get(marker))).toBe('2026-10-25T13:06:01.000Z')
+    expect(console.log.mock.calls.some(([m]) => m.includes('run 40196037420 already created since 2026-10-25T13:05:00Z'))).toBe(true)
+  })
+
+  it('asks for runs of that workflow created since the slot opened, with the dispatch token', async () => {
+    const env = envWithToken()
+    await maybeDispatchWorkflows(env, at('2026-10-25T13:05:35Z'))
+    const [url, opts] = runsCalls().find(([u]) => String(u).includes('nhl-contracts'))
+    const u = new URL(url)
+    expect(u.origin + u.pathname).toBe('https://api.github.com/repos/ehlersio/nhl-contracts/actions/workflows/update-contracts.yml/runs')
+    expect(u.searchParams.get('created')).toBe('>=2026-10-25T13:05:00Z')
+    expect(u.searchParams.get('per_page')).toBe('1')
+    expect(opts.headers).toMatchObject({ Authorization: 'Bearer ghp_test', 'User-Agent': 'eyewall-poller' })
+    expect(opts.method).toBeUndefined() // a GET
+  })
+
+  it(`looks back at most ${RECENT_RUN_MINUTES} minutes, so an older run (a manual one) does not count`, async () => {
+    const env = envWithToken()
+    await maybeDispatchWorkflows(env, at('2026-10-25T13:30:00Z'))
+    const [url] = runsCalls().find(([u]) => String(u).includes('nhl-contracts'))
+    expect(new URL(url).searchParams.get('created')).toBe('>=2026-10-25T13:20:00Z')
+    // the daily nightly, hours after its 07:00 slot, looks back 10 minutes too
+    const [nightly] = runsCalls().find(([u]) => String(u).includes('nightly.yml/runs'))
+    expect(new URL(nightly).searchParams.get('created')).toBe('>=2026-10-25T13:20:00Z')
+  })
+
+  it('the daily pipeline workflows are checked the same way', async () => {
+    const env = envWithToken()
+    githubHas('eyewall-pipeline/actions/workflows/nightly.yml', 41000000001)
+    expect(await run(env, at('2026-10-25T07:01:00Z'))).toEqual([])
+    expect(dispatchedWorkflows()).toEqual([])
+    expect(JSON.parse(await env.CACHE.get('ops:dispatched:nightly.yml:2026-10-25'))).toBe('2026-10-25T07:01:00.000Z')
+  })
+
+  it('dispatches as before when GitHub cannot say', async () => {
+    for (const answer of [
+      async () => ({ status: 500, json: async () => ({}) }),
+      async () => { throw new Error('network down') },
+      async () => ({ status: 200, json: async () => ({ total_count: 0, workflow_runs: [] }) }),
+      async () => ({ status: 200, json: async () => { throw new SyntaxError('bad json') } }),
+    ]) {
+      globalThis.fetch.mockReset()
+      globalThis.fetch.mockImplementation(async url => (
+        String(url).includes('/runs?') ? answer() : { status: 204, text: async () => '' }))
+      const env = envWithToken()
+      expect(contractsOnly(await maybeDispatchWorkflows(env, at('2026-10-25T13:05:35Z')))).toEqual([`${CONTRACTS_WORKFLOW}:hourly`])
+    }
+  })
+
+  it('social posts are not checked: their runs do not say which kind they are', async () => {
+    const env = envWithToken()
+    githubHas('social-posts.yml', 41000000002)
+    expect(await run(env, at('2026-10-07T15:30:00Z'))).toContain(`${SOCIAL}:winners`)
+    expect(runsCalls().some(([u]) => String(u).includes('social-posts.yml'))).toBe(false)
   })
 })
