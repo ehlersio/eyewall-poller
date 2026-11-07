@@ -30,12 +30,25 @@ function shapePlayer(r) {
 const TIERS = new Set(['several', 'some']);
 const shown = r => r && TIERS.has(r.tier) && Array.isArray(r.signals) && r.signals.length > 0;
 
-// One trade_candidacy row (or null) -> { player, asOf, deadline, generatedAt }.
-// player is null when the row is missing or untiered: the app hides the section.
-export function summarizeCandidacy(row) {
-  if (!shown(row)) return { player: null, asOf: null, deadline: null, generatedAt: null };
+// The player's EyeWall AI paragraph (eyewall-pipeline ai_trade_candidacy.py
+// -> trade_candidacy_ai, trade fit scope §5.5), or null: none written, an
+// empty one, or one from another season than the candidacy row.
+function shapeAi(aiRow, row) {
+  const text = typeof aiRow?.paragraph === 'string' ? aiRow.paragraph.trim() : '';
+  if (!text || aiRow.season !== row.season) return null;
+  return { text, generatedAt: aiRow.generated_at ?? null };
+}
+
+// One trade_candidacy row (or null), plus its trade_candidacy_ai row for the
+// request's locale (or null) -> { player, ai, asOf, deadline, generatedAt }.
+// player is null when the row is missing or untiered: the app hides the
+// section. ai is the paragraph ({ text, generatedAt }) or null, and always
+// null without a player.
+export function summarizeCandidacy(row, aiRow = null) {
+  if (!shown(row)) return { player: null, ai: null, asOf: null, deadline: null, generatedAt: null };
   return {
     player: shapePlayer(row),
+    ai: shapeAi(aiRow, row),
     asOf: row.as_of ?? null,
     deadline: row.deadline ?? null,
     generatedAt: row.generated_at ?? null,
