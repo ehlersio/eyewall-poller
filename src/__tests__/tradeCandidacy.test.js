@@ -26,10 +26,29 @@ describe('summarizeCandidacy', () => {
   })
 
   it('hides untiered players, players without a signal, and missing rows', () => {
-    const empty = { player: null, asOf: null, deadline: null, generatedAt: null }
+    const empty = { player: null, ai: null, asOf: null, deadline: null, generatedAt: null }
     expect(summarizeCandidacy(row(1, null, { tier: null }))).toEqual(empty)
     expect(summarizeCandidacy(row(1, 1, { signals: [] }))).toEqual(empty)
     expect(summarizeCandidacy(undefined)).toEqual(empty)
+  })
+})
+
+describe('summarizeCandidacy: the EyeWall AI paragraph', () => {
+  const ai = (extra = {}) => ({ paragraph: '  Player 1 has several signals.  ', season: 20262027, generated_at: '2027-01-15T09:00:00Z', ...extra })
+
+  it('attaches the paragraph, trimmed, with when it was written', () => {
+    expect(summarizeCandidacy(row(1, 3), ai()).ai).toEqual({ text: 'Player 1 has several signals.', generatedAt: '2027-01-15T09:00:00Z' })
+  })
+
+  it('is null without a row, when empty, or from another season', () => {
+    expect(summarizeCandidacy(row(1, 3)).ai).toBeNull()
+    expect(summarizeCandidacy(row(1, 3), ai({ paragraph: '   ' })).ai).toBeNull()
+    expect(summarizeCandidacy(row(1, 3), ai({ paragraph: null })).ai).toBeNull()
+    expect(summarizeCandidacy(row(1, 3), ai({ season: 20252026 })).ai).toBeNull()
+  })
+
+  it('is never shown for a player who has no section', () => {
+    expect(summarizeCandidacy(row(1, null, { tier: null }), ai()).ai).toBeNull()
   })
 })
 

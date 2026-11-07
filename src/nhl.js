@@ -4811,7 +4811,7 @@ async function divisionOdds(env, team, latest) {
   }
 
   // ── Trade candidacy — candidate signals and a tier, Jan 1 to the deadline ─────
-  // GET /trade-candidacy?player=8480023
+  // GET /trade-candidacy?player=8480023[&locale=fr]
   // GET /trade-candidacy/board[?fit=CAR]
   // From eyewall-pipeline's trade_candidacy.py (nightly, after trade_fit): each
   // player's signals (expiring, team outside a playoff spot, ice time down)
@@ -4819,8 +4819,13 @@ async function divisionOdds(env, team, latest) {
   // model's number is never returned: the backtest didn't calibrate well
   // enough to show a percentage. Only tiered players with at least one
   // signal are served. The table is empty outside Jan 1 - the trade deadline.
-  // /trade-candidacy -> { player, asOf, deadline, generatedAt }, player null
+  // /trade-candidacy -> { player, ai, asOf, deadline, generatedAt }, player null
   // when untiered or out of window (summarizeCandidacy(), src/tradeCandidacy.js).
+  // ai: the player's EyeWall AI paragraph in the request's locale, { text,
+  // generatedAt } or null (eyewall-pipeline ai_trade_candidacy.py ->
+  // trade_candidacy_ai, written from his signals, clause and trade fit
+  // reasons only). A failed paragraph read (the table may not exist yet)
+  // serves the signals with ai null, uncached.
   // /trade-candidacy/board -> { players, asOf, deadline, generatedAt, fitTeam },
   // ranked; with ?fit=TEAM each player carries `fit`, that team's trade fit
   // tier for him or null (summarizeBoard()). 1hr KV; neither a failed read
@@ -4829,17 +4834,22 @@ async function divisionOdds(env, team, latest) {
   if (url.pathname === '/trade-candidacy') {
     const playerId = sbParam(url.searchParams.get('player'), { type: 'int', name: 'player' });
     if (!playerId) return badRequest('player required');
-    return cachedJson(env, `nhl:trade-candidacy:${playerId}`, 3600, async () => {
-      let rows;
+    const locale = requestLocale(url);
+    return cachedJson(env, `nhl:trade-candidacy:${playerId}${localeKeySuffix(locale)}`, 3600, async () => {
+      let rows, aiRows;
       try {
-        rows = await sbRowsOrThrow(
-          `trade_candidacy?select=${CANDIDACY_COLUMNS}&player_id=eq.${playerId}`
-        );
+        [rows, aiRows] = await Promise.all([
+          sbRowsOrThrow(`trade_candidacy?select=${CANDIDACY_COLUMNS}&player_id=eq.${playerId}`),
+          sbRowsOrThrow(
+            `trade_candidacy_ai?select=paragraph,season,generated_at&player_id=eq.${playerId}&locale=eq.${locale}`
+          ).catch(() => null),
+        ]);
       } catch {
         return json({ ...summarizeCandidacy(null), unavailable: true });
       }
-      const data = summarizeCandidacy(rows[0]);
-      return data.player ? data : json(data); // an empty result isn't cached
+      const data = summarizeCandidacy(rows[0], aiRows?.[0]);
+      // Neither an empty result nor one whose paragraph read failed is cached.
+      return data.player && aiRows ? data : json(data);
     });
   }
 

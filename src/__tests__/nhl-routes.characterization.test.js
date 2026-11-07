@@ -174,6 +174,8 @@ function supabaseRows(table, params) {
       ]
     case 'trade_candidacy':
       return [{ player_id: PLAYER_ID, season: SEASON, team: 'CAR', name: 'Sebastian Aho', position: 'C', games_played: 40, tier: 'some', rank: 12, signals: [{ code: 'toi_down', pct: -0.12, recent_toi: 1050, season_toi: 1190 }], cap_hit: 9750000, years_left: 5, expiry_type: null, expiry_type_derived: false, extended: false, clause_kind: 'NMC', clause_list_size: null, as_of: '2026-01-15', deadline: '2026-03-06', generated_at: '2026-01-15T08:00:00Z' }]
+    case 'trade_candidacy_ai':
+      return [{ paragraph: 'Sebastian Aho has some of the signals that came before past deadline trades: his ice time is down.', season: SEASON, generated_at: '2026-01-15T09:00:00Z' }]
     case 'prediction_scorecard':
       return [{ model: 'game_winner', kind: 'live', period: '2025-26', status: 'ok', n: 500, accuracy: 0.58, brier: 0.24, log_loss: 0.67, baseline: 0.5, calibration: [], recent: [], note: null, updated_at: '2026-01-15T08:00:00Z' }]
     case 'team_elo_ratings':
@@ -417,6 +419,8 @@ const ROUTES = [
   { name: 'trade-fit',                       path: `/trade-fit?player=${PLAYER_ID}`, missing: '/trade-fit?player=abc' },
   { name: 'trade-fit (not in the population)', path: `/trade-fit?player=${PLAYER_ID}`, overrides: { trade_fit_players: [], trade_fit: [] }, notCached: true },
   { name: 'trade-candidacy',                 path: `/trade-candidacy?player=${PLAYER_ID}`, missing: '/trade-candidacy?player=abc' },
+  { name: 'trade-candidacy (fr)',            path: `/trade-candidacy?player=${PLAYER_ID}&locale=fr` },
+  { name: 'trade-candidacy (no paragraph)',  path: `/trade-candidacy?player=${PLAYER_ID}`, overrides: { trade_candidacy_ai: [] } },
   { name: 'trade-candidacy (untiered or out of window)', path: `/trade-candidacy?player=${PLAYER_ID}`, overrides: { trade_candidacy: [] }, notCached: true },
   { name: 'trade-candidacy/board',           path: '/trade-candidacy/board' },
   { name: 'trade-candidacy/board (fit)',     path: '/trade-candidacy/board?fit=det', missing: '/trade-candidacy/board?fit=d!t' },
@@ -592,5 +596,22 @@ describe('push subscriptions', () => {
     const unsubIos = await callRoute(env, '/push/unsubscribe', { method: 'POST', body: { token } })
     const unsubWeb = await callRoute(env, '/push/unsubscribe', { method: 'POST', body: { endpoint } })
     expect({ web, ios, afterSubscribe, unsubIos, unsubWeb, kvWrites }).toMatchSnapshot()
+  })
+})
+
+// The paragraph's own read failing (before the owner runs its SQL, the table
+// doesn't exist) still serves the signals, with ai null and nothing cached.
+describe('trade-candidacy paragraph read failing on its own', () => {
+  it('serves the candidacy without a paragraph, uncached', async () => {
+    installUpstream()
+    const upstream = globalThis.fetch
+    globalThis.fetch = vi.fn(async (input) =>
+      String(input).includes('/rest/v1/trade_candidacy_ai') ? { ...FAILED, status: 404 } : upstream(input))
+    const { env, kvWrites } = makeRecordingEnv()
+    const res = await callRoute(env, `/trade-candidacy?player=${PLAYER_ID}`)
+    expect(res.status).toBe(200)
+    expect(res.body.player.tier).toBe('some')
+    expect(res.body.ai).toBeNull()
+    expect(kvWrites).toEqual([])
   })
 })
