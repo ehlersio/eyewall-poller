@@ -160,6 +160,11 @@ function supabaseRows(table, params) {
         { unit_type: 'F', rank: 1, player_ids: [8478427, 8480039, 8481708], names: ['Sebastian Aho', 'Andrei Svechnikov', 'Seth Jarvis'], positions: ['C', 'L', 'R'], filled_ids: [], basis: 'last_game', basis_game_id: GAME_ID - 1, basis_games: 1, generated_at: '2026-01-15T08:00:00Z' },
         { unit_type: 'D', rank: 1, player_ids: [8476958, 8479402], names: ['Jaccob Slavin', 'Jalen Chatfield'], positions: ['D', 'D'], filled_ids: [8479402], basis: 'last_game', basis_game_id: GAME_ID - 1, basis_games: 1, generated_at: '2026-01-15T08:00:00Z' },
       ]
+    case 'team_needs':
+      return [
+        { season: SEASON, slot: 'D_TOP4', players: [{ id: 8476958, name: 'Jaccob Slavin', pos: 'D', shoots: 'L', rating: 0.5, rating_basis: 'last_season', gp: 18, filled: false }], n_players: 1, n_rated: 1, strength: 0.5, weakest_id: 8476958, weakest_rating: 0.5, league_rank: 15, league_teams: 32, need: false, right_shots: 0, basis: 'last_game', basis_game_id: GAME_ID - 1, generated_at: '2026-01-15T08:00:00Z' },
+        { season: SEASON, slot: 'G_1A', players: [{ id: GOALIE_ID, name: 'Pyotr Kochetkov', pos: 'G', shoots: 'L', rating: 0.7, rating_basis: 'season', gp: 30, filled: false, games_started: 30 }], n_players: 1, n_rated: 1, strength: 0.7, weakest_id: GOALIE_ID, weakest_rating: 0.7, league_rank: 1, league_teams: 32, need: false, right_shots: null, basis: 'goalie_starts', basis_game_id: null, generated_at: '2026-01-15T08:00:00Z' },
+      ]
     case 'prediction_scorecard':
       return [{ model: 'game_winner', kind: 'live', period: '2025-26', status: 'ok', n: 500, accuracy: 0.58, brier: 0.24, log_loss: 0.67, baseline: 0.5, calibration: [], recent: [], note: null, updated_at: '2026-01-15T08:00:00Z' }]
     case 'team_elo_ratings':
@@ -399,6 +404,8 @@ const ROUTES = [
   { name: 'probable-starters (not in the window yet)', path: `/probable-starters?game=${GAME_ID}`, overrides: { goalie_start_probs: [] }, notCached: true },
   { name: 'projected-lines',                 path: '/projected-lines?team=car', missing: '/projected-lines?team=CAROLINA' },
   { name: 'projected-lines (no projection yet)', path: '/projected-lines?team=CAR', overrides: { projected_lines: [] }, notCached: true },
+  { name: 'team-needs',                      path: '/team-needs?team=car', missing: '/team-needs?team=CAROLINA' },
+  { name: 'team-needs (no rows yet)',        path: '/team-needs?team=CAR', overrides: { team_needs: [] }, notCached: true },
   { name: 'scorecard',                       path: '/scorecard' },
   { name: 'scorecard (empty table)',         path: '/scorecard', overrides: { prediction_scorecard: [] }, notCached: true },
   { name: 'elo/ratings',                     path: '/elo/ratings' },
