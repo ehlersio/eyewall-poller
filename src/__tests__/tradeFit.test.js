@@ -38,6 +38,16 @@ describe('summarizeTradeFit', () => {
     expect(summarizeTradeFit(undefined, undefined)).toEqual({ player: null, teams: [], generatedAt: null })
   })
 
+  it('passes the phase and rights through, in season by default', () => {
+    expect(summarizeTradeFit(playerRow, []).player).toMatchObject({ phase: 'in_season', rights: false })
+    const off = summarizeTradeFit({ ...playerRow, season: 20272028, phase: 'offseason', rights: true, cap_hit: null, years_left: null }, [
+      fit('DET', 1, { tier: 'possible', window_met: false, cap_state: 'unknown', reasons: [{ code: 'window_rights', expiry_type: 'UFA' }, { code: 'cap_unannounced', season: '2027-28' }] }),
+    ])
+    expect(off.player).toMatchObject({ season: 20272028, phase: 'offseason', rights: true, capHit: null })
+    expect(off.teams[0].reasons.map(r => r.code)).toEqual(['window_rights', 'cap_unannounced'])
+    expect(summarizeTradeFit({ ...playerRow, phase: 'something' }, []).player.phase).toBe('in_season')
+  })
+
   it('tolerates missing reasons', () => {
     expect(summarizeTradeFit(playerRow, [fit('DET', 1, { reasons: null })]).teams[0].reasons).toEqual([])
   })
