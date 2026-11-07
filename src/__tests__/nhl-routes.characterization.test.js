@@ -172,6 +172,8 @@ function supabaseRows(table, params) {
         { team: 'DET', tier: 'strong', rank: 1, slot: 'F_TOP6_C', gap: 0.4, need_met: true, window_met: true, cap_state: 'fits', reasons: [{ code: 'need_upgrade', slot: 'F_TOP6_C', gap: 0.4, slot_need: true }, { code: 'window_term', expires_after: '2031-32' }, { code: 'cap_fits', space: 12000000, known: 23, roster: 23 }] },
         { team: 'BOS', tier: 'long_shot', rank: 2, slot: null, gap: null, need_met: false, window_met: true, cap_state: 'needs_salary', reasons: [{ code: 'need_none', slot: 'F_BOT6_C' }] },
       ]
+    case 'trade_candidacy':
+      return [{ player_id: PLAYER_ID, season: SEASON, team: 'CAR', name: 'Sebastian Aho', position: 'C', games_played: 40, tier: 'some', rank: 12, signals: [{ code: 'toi_down', pct: -0.12, recent_toi: 1050, season_toi: 1190 }], cap_hit: 9750000, years_left: 5, expiry_type: null, expiry_type_derived: false, extended: false, clause_kind: 'NMC', clause_list_size: null, as_of: '2026-01-15', deadline: '2026-03-06', generated_at: '2026-01-15T08:00:00Z' }]
     case 'prediction_scorecard':
       return [{ model: 'game_winner', kind: 'live', period: '2025-26', status: 'ok', n: 500, accuracy: 0.58, brier: 0.24, log_loss: 0.67, baseline: 0.5, calibration: [], recent: [], note: null, updated_at: '2026-01-15T08:00:00Z' }]
     case 'team_elo_ratings':
@@ -414,6 +416,11 @@ const ROUTES = [
   { name: 'team-needs',                      path: '/team-needs?team=car', missing: '/team-needs?team=CAROLINA' },
   { name: 'trade-fit',                       path: `/trade-fit?player=${PLAYER_ID}`, missing: '/trade-fit?player=abc' },
   { name: 'trade-fit (not in the population)', path: `/trade-fit?player=${PLAYER_ID}`, overrides: { trade_fit_players: [], trade_fit: [] }, notCached: true },
+  { name: 'trade-candidacy',                 path: `/trade-candidacy?player=${PLAYER_ID}`, missing: '/trade-candidacy?player=abc' },
+  { name: 'trade-candidacy (untiered or out of window)', path: `/trade-candidacy?player=${PLAYER_ID}`, overrides: { trade_candidacy: [] }, notCached: true },
+  { name: 'trade-candidacy/board',           path: '/trade-candidacy/board' },
+  { name: 'trade-candidacy/board (fit)',     path: '/trade-candidacy/board?fit=det', missing: '/trade-candidacy/board?fit=d!t' },
+  { name: 'trade-candidacy/board (empty)',   path: '/trade-candidacy/board', overrides: { trade_candidacy: [] }, notCached: true },
   { name: 'team-needs (no rows yet)',        path: '/team-needs?team=CAR', overrides: { team_needs: [] }, notCached: true },
   { name: 'scorecard',                       path: '/scorecard' },
   { name: 'scorecard (empty table)',         path: '/scorecard', overrides: { prediction_scorecard: [] }, notCached: true },
