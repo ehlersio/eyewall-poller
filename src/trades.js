@@ -16,7 +16,7 @@
 export const TREE_MAX_DEPTH = 5;
 export const TREE_MAX_TRADES = 30;
 
-const TRADE_SELECT = 'trade_id,tx_date,teams,via,descriptions';
+const TRADE_SELECT = 'trade_id,tx_date,teams,via,descriptions,date_status,source_url';
 const ASSET_SELECT = [
   'trade_id', 'idx', 'from_team', 'to_team', 'asset_type', 'player_name', 'player_id', 'position',
   'rights', 'pick_year', 'pick_round', 'pick_conditional', 'pick_overall', 'pick_original_team',
@@ -68,13 +68,18 @@ export function shapeAsset(row) {
   return asset;
 }
 
-// One trades row + its trade_assets rows -> { id, date, teams, via,
-// descriptions, sides: [{ team, received: [asset] }] }, sides in `teams` order.
+// One trades row + its trade_assets rows -> { id, date, dateStatus,
+// sourceUrl, teams, via, descriptions, sides: [{ team, received: [asset] }] },
+// sides in `teams` order. dateStatus: null, or 'espn_early' when every side's
+// date is ESPN's unconfirmed early-window date (trade_trees.py); sourceUrl:
+// the citation behind a Wikipedia-sourced or corrected side, else null.
 export function shapeTrade(trade, assetRows) {
   const rows = [...(assetRows || [])].sort((a, b) => a.idx - b.idx);
   return {
     id: trade.trade_id,
     date: trade.tx_date,
+    dateStatus: trade.date_status || null,
+    sourceUrl: trade.source_url || null,
     teams: trade.teams || [],
     via: trade.via || [],
     descriptions: trade.descriptions || [],
@@ -127,6 +132,7 @@ export async function fetchTradeTree(txId, get, { maxDepth = TREE_MAX_DEPTH, max
     .map(t => ({
       id: t.trade_id,
       date: t.tx_date,
+      dateStatus: t.date_status || null,
       teams: t.teams || [],
       assets: (incoming || []).filter(a => a.trade_id === t.trade_id).map(shapeAsset),
     }))

@@ -2852,7 +2852,9 @@ async function handleNHLRoutes(request, env, ctx, url) {
   //                                    trades naming it that it has no entry for
   // GET /transactions?scope=league  -- league-wide recent moves
   // Proxies eyewall-pipeline's nhl_transactions table (transactions.py, from
-  // ESPN's NHL transactions feed -- the NHL API has none). ESPN posts each side
+  // ESPN's NHL transactions feed -- the NHL API has none -- plus the trades
+  // wiki_trades.py adds from Wikipedia's cited lists, and its date
+  // corrections / flags; see provenance() in src/transactions.js). ESPN posts each side
   // of a trade as its own entry, so pairTransactions() (src/transactions.js)
   // merges the two halves into one { kind: 'trade' } item before responding.
   // 1hr KV cache, same class as /injuries. Unlike /injuries, a Supabase read
@@ -2868,7 +2870,7 @@ async function handleNHLRoutes(request, env, ctx, url) {
     const focusTeam = scope === 'team' ? team : null;
     const kvKey  = scope === 'league' ? 'nhl:transactions:league' : `nhl:transactions:team:${team}`;
     return cachedJson(env, kvKey, 3600, async () => {
-      const select = 'id,tx_date,team,description,categories,primary_category,counterparties';
+      const select = 'id,tx_date,team,description,categories,primary_category,counterparties,source,source_url,date_status';
       const filter = scope === 'team' ? `&or=(team.eq.${team},counterparties.cs.%7B${team}%7D)` : '';
       let rows;
       try {

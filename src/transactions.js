@@ -1,7 +1,8 @@
 // src/transactions.js
 // Pure helpers for GET /transactions (nhl.js), which proxies
 // eyewall-pipeline's nhl_transactions table (transactions.py, ESPN's NHL
-// transactions feed). No imports, so the Vitest suite can test the pairing
+// transactions feed, plus the trades wiki_trades.py adds from Wikipedia's
+// cited season lists where ESPN has none). No imports, so the Vitest suite can test the pairing
 // logic directly without the route harness.
 //
 // Why pairing is needed: ESPN posts each side of a trade as its own entry,
@@ -27,8 +28,25 @@ function isTrade(row) {
   return Array.isArray(row.categories) && row.categories.includes('trade');
 }
 
+// Where a row and its date come from (eyewall-pipeline's wiki_trades.py),
+// only when there's something to say, so plain ESPN rows are unchanged:
+//   source: 'wikipedia'  -- a trade ESPN's feed doesn't have, written from
+//                           Wikipedia's cited season list
+//   sourceUrl            -- that citation (NHL.com, a team site, media), or
+//                           the one behind a corrected ESPN date
+//   dateStatus: 'corrected'  -- ESPN's date replaced by the cited one
+//               'espn_early' -- ESPN's date from its known early window
+//                               (2021-01 .. 2024-06, ~5 days early), unconfirmed
+export function provenance(row) {
+  const out = {};
+  if (row.source && row.source !== 'espn') out.source = row.source;
+  if (row.source_url) out.sourceUrl = row.source_url;
+  if (row.date_status) out.dateStatus = row.date_status;
+  return out;
+}
+
 function side(row) {
-  return { team: row.team, description: row.description };
+  return { team: row.team, description: row.description, ...provenance(row) };
 }
 
 // Newest first; ties broken by id (higher = ingested later) so output order
@@ -67,9 +85,13 @@ export function pairTransactions(rows, { windowDays = 2, focusTeam = null } = {}
         used.add(partner.id);
         let sides = [side(row), side(partner)];
         if (focusTeam && sides[1].team === focusTeam) sides = [sides[1], sides[0]];
-        items.push({
-          kind: 'trade', ids: [row.id, partner.id], date: row.tx_date, teams: sides.map(s => s.team), sides,
-        });
+        // the date from a half whose date isn't an unconfirmed ESPN one
+        const dated = [row, partner].find(r => r.date_status !== 'espn_early') || row;
+        const item = {
+          kind: 'trade', ids: [row.id, partner.id], date: dated.tx_date, teams: sides.map(s => s.team), sides,
+        };
+        if (row.date_status === 'espn_early' && partner.date_status === 'espn_early') item.dateStatus = 'espn_early';
+        items.push(item);
         continue;
       }
     }
@@ -83,6 +105,7 @@ export function pairTransactions(rows, { windowDays = 2, focusTeam = null } = {}
       categories: row.categories || [],
       counterparties,
       description: row.description,
+      ...provenance(row),
     });
   }
   return items;

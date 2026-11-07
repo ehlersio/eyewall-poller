@@ -73,3 +73,33 @@ describe('pairTransactions', () => {
     expect(pairTransactions([{ id: 5, tx_date: '2026-01-01', team: 'CAR', description: 'x' }])[0].category).toBe('other')
   })
 })
+
+describe('provenance (eyewall-pipeline wiki_trades.py)', () => {
+  const WIKI_PHI = {
+    ...PHI_HALF, id: 7, source: 'wikipedia', source_url: 'https://www.nhl.com/news/x', date_status: null,
+    description: 'Acquired Philip Tomasino from the Pittsburgh Penguins for Yegor Zamula.',
+  }
+
+  it('passes source, citation and date status through, only when set', () => {
+    const [item] = pairTransactions([{ ...PIT_HALF, source: 'espn', source_url: null, date_status: null }, WIKI_PHI])
+    const phi = item.sides.find(s => s.team === 'PHI')
+    expect(phi).toEqual({ team: 'PHI', description: WIKI_PHI.description, source: 'wikipedia', sourceUrl: 'https://www.nhl.com/news/x' })
+    expect(item.sides.find(s => s.team === 'PIT')).toEqual({ team: 'PIT', description: PIT_HALF.description })
+    expect(item.dateStatus).toBeUndefined()
+  })
+
+  it('dates a pair from the half that is not an unconfirmed ESPN date', () => {
+    const early = { ...PIT_HALF, tx_date: '2023-02-23', date_status: 'espn_early' }
+    const corrected = { ...PHI_HALF, tx_date: '2023-02-24', date_status: 'corrected', source_url: 'u' }
+    const [item] = pairTransactions([early, corrected])
+    expect(item.date).toBe('2023-02-24')
+    expect(item.dateStatus).toBeUndefined()
+    const [both] = pairTransactions([early, { ...PHI_HALF, tx_date: '2023-02-23', date_status: 'espn_early' }])
+    expect(both.dateStatus).toBe('espn_early')
+  })
+
+  it('flags a single move from the early window', () => {
+    const [move] = pairTransactions([{ ...RECALL, date_status: 'espn_early' }])
+    expect(move.dateStatus).toBe('espn_early')
+  })
+})
