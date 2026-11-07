@@ -7850,6 +7850,7 @@ exports[`trades/tree > NHL API and AI unavailable 1`] = `
           },
         ],
         "date": "2024-06-28",
+        "dateStatus": null,
         "id": "aaaabbbbccccdddd",
         "teams": [
           "CAR",
@@ -7861,6 +7862,7 @@ exports[`trades/tree > NHL API and AI unavailable 1`] = `
     "trades": {
       "0123456789abcdef": {
         "date": "2025-07-01",
+        "dateStatus": null,
         "descriptions": [
           "Acquired F A from BOS for a 2026 2nd.",
         ],
@@ -7907,6 +7909,7 @@ exports[`trades/tree > NHL API and AI unavailable 1`] = `
             "team": "BOS",
           },
         ],
+        "sourceUrl": null,
         "teams": [
           "CAR",
           "BOS",
@@ -7915,6 +7918,7 @@ exports[`trades/tree > NHL API and AI unavailable 1`] = `
       },
       "fedcba9876543210": {
         "date": "2026-01-05",
+        "dateStatus": null,
         "descriptions": [
           "Traded the 2026 2nd to TOR.",
         ],
@@ -7950,6 +7954,7 @@ exports[`trades/tree > NHL API and AI unavailable 1`] = `
             "team": "TOR",
           },
         ],
+        "sourceUrl": null,
         "teams": [
           "BOS",
           "TOR",
@@ -8023,6 +8028,7 @@ exports[`trades/tree > response, upstream requests and KV writes; repeat call 1`
           },
         ],
         "date": "2024-06-28",
+        "dateStatus": null,
         "id": "aaaabbbbccccdddd",
         "teams": [
           "CAR",
@@ -8034,6 +8040,7 @@ exports[`trades/tree > response, upstream requests and KV writes; repeat call 1`
     "trades": {
       "0123456789abcdef": {
         "date": "2025-07-01",
+        "dateStatus": null,
         "descriptions": [
           "Acquired F A from BOS for a 2026 2nd.",
         ],
@@ -8080,6 +8087,7 @@ exports[`trades/tree > response, upstream requests and KV writes; repeat call 1`
             "team": "BOS",
           },
         ],
+        "sourceUrl": null,
         "teams": [
           "CAR",
           "BOS",
@@ -8088,6 +8096,7 @@ exports[`trades/tree > response, upstream requests and KV writes; repeat call 1`
       },
       "fedcba9876543210": {
         "date": "2026-01-05",
+        "dateStatus": null,
         "descriptions": [
           "Traded the 2026 2nd to TOR.",
         ],
@@ -8123,6 +8132,7 @@ exports[`trades/tree > response, upstream requests and KV writes; repeat call 1`
             "team": "TOR",
           },
         ],
+        "sourceUrl": null,
         "teams": [
           "BOS",
           "TOR",
@@ -8141,13 +8151,13 @@ exports[`trades/tree > response, upstream requests and KV writes; repeat call 1`
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trades?select=trade_id,tx_date,teams,via,descriptions&source_tx_ids=cs.%7B501%7D&limit=1",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trades?select=trade_id,tx_date,teams,via,descriptions,date_status,source_url&source_tx_ids=cs.%7B501%7D&limit=1",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trade_assets?select=trade_id,idx,from_team,to_team,asset_type,player_name,player_id,position,rights,pick_year,pick_round,pick_conditional,pick_overall,pick_original_team,pick_raw,pairing_uncertain,resolved_year,resolved_overall,drafted_player_name,drafted_player_id,pick_note,next_trade_id&trade_id=in.(0123456789abcdef)&order=trade_id,idx",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trades?select=trade_id,tx_date,teams,via,descriptions&trade_id=in.(fedcba9876543210)",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trades?select=trade_id,tx_date,teams,via,descriptions,date_status,source_url&trade_id=in.(fedcba9876543210)",
     },
     {
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trade_assets?select=trade_id,idx,from_team,to_team,asset_type,player_name,player_id,position,rights,pick_year,pick_round,pick_conditional,pick_overall,pick_original_team,pick_raw,pairing_uncertain,resolved_year,resolved_overall,drafted_player_name,drafted_player_id,pick_note,next_trade_id&trade_id=in.(fedcba9876543210)&order=trade_id,idx",
@@ -8156,7 +8166,7 @@ exports[`trades/tree > response, upstream requests and KV writes; repeat call 1`
       "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trade_assets?select=trade_id,idx,from_team,to_team,asset_type,player_name,player_id,position,rights,pick_year,pick_round,pick_conditional,pick_overall,pick_original_team,pick_raw,pairing_uncertain,resolved_year,resolved_overall,drafted_player_name,drafted_player_id,pick_note,next_trade_id&next_trade_id=eq.0123456789abcdef",
     },
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trades?select=trade_id,tx_date,teams,via,descriptions&trade_id=in.(aaaabbbbccccdddd)",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/trades?select=trade_id,tx_date,teams,via,descriptions,date_status,source_url&trade_id=in.(aaaabbbbccccdddd)",
     },
   ],
 }
@@ -8257,7 +8267,7 @@ exports[`transactions (league) > response, upstream requests and KV writes; repe
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/nhl_transactions?select=id,tx_date,team,description,categories,primary_category,counterparties&order=tx_date.desc,id.desc&limit=150",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/nhl_transactions?select=id,tx_date,team,description,categories,primary_category,counterparties,source,source_url,date_status&order=tx_date.desc,id.desc&limit=150",
     },
   ],
 }
@@ -8368,7 +8378,7 @@ exports[`transactions (team) > response, upstream requests and KV writes; repeat
   "status": 200,
   "upstream": [
     {
-      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/nhl_transactions?select=id,tx_date,team,description,categories,primary_category,counterparties&or=(team.eq.CAR,counterparties.cs.%7BCAR%7D)&order=tx_date.desc,id.desc&limit=150",
+      "url": "https://mqgasjzywoibdgxjjkux.supabase.co/rest/v1/nhl_transactions?select=id,tx_date,team,description,categories,primary_category,counterparties,source,source_url,date_status&or=(team.eq.CAR,counterparties.cs.%7BCAR%7D)&order=tx_date.desc,id.desc&limit=150",
     },
   ],
 }

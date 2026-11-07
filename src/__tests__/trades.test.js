@@ -66,6 +66,12 @@ describe('shapeAsset / shapeTrade', () => {
     expect(shapeAsset(ASSETS[7])).toEqual({ type: 'future_considerations', from: 'BUF', to: 'NYR', next: null })
   })
 
+  it('carries the date status and citation (eyewall-pipeline wiki_trades.py)', () => {
+    expect(shapeTrade(TRADES[T1], [])).toMatchObject({ dateStatus: null, sourceUrl: null })
+    const early = { ...TRADES[T1], date_status: 'espn_early', source_url: 'https://www.nhl.com/news/x' }
+    expect(shapeTrade(early, [])).toMatchObject({ dateStatus: 'espn_early', sourceUrl: 'https://www.nhl.com/news/x' })
+  })
+
   it('splits assets into one side per team, in idx order', () => {
     const t = shapeTrade(TRADES[T1], [ASSETS[2], ASSETS[0], ASSETS[3], ASSETS[1]])
     expect(t.sides.map(s => s.team)).toEqual(['NYR', 'VAN'])
@@ -90,7 +96,7 @@ describe('fetchTradeTree', () => {
   it('loads origins: the trades that brought in what the root sent out', async () => {
     const { get } = fakeGet()
     const tree = await fetchTradeTree('42', get)
-    expect(tree.origins).toEqual([{ id: T0, date: '2024-06-28', teams: ['NYR', 'SJS'], assets: [shapeAsset(ASSETS[8])] }])
+    expect(tree.origins).toEqual([{ id: T0, date: '2024-06-28', dateStatus: null, teams: ['NYR', 'SJS'], assets: [shapeAsset(ASSETS[8])] }])
   })
 
   it('stops at the depth / size limits and says so', async () => {
