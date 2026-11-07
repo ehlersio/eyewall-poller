@@ -4780,9 +4780,12 @@ async function divisionOdds(env, team, latest) {
   // playoff-odds buyer) and cap (the /contracts space estimate, no LTIR),
   // with structured reasons the app translates. A fit, not a prediction.
   // Response: { player, teams, generatedAt } -- see summarizeTradeFit(),
-  // src/tradeFit.js. A player outside the population, or any player outside
-  // the season window (before the first projection, after the deadline) ->
-  // player null, teams []. 1hr KV; neither a failed read (`unavailable:
+  // src/tradeFit.js. player.phase: 'in_season' through the deadline, then
+  // 'offseason' (the fit is for next season, player.season: signed rosters,
+  // next season's cap, Elo or next season's odds; trade fit Phase 2b), and
+  // player.rights for a pending UFA/RFA's rights-only fit until June 30. A
+  // player outside the population, or before a season's first projection
+  // with no offseason on -> player null, teams []. 1hr KV; neither a failed read (`unavailable:
   // true`) nor an empty result is cached. `player` must be an integer id.
   if (url.pathname === '/trade-fit') {
     const playerId = sbParam(url.searchParams.get('player'), { type: 'int', name: 'player' });
@@ -4793,7 +4796,7 @@ async function divisionOdds(env, team, latest) {
         [playerRows, fitRows] = await Promise.all([
           sbRowsOrThrow(
             `trade_fit_players?select=player_id,season,team,name,position,shoots,rating,rating_basis,games_played,` +
-            `cap_hit,years_left,expires_after,expiry_type,expiry_type_derived,rental,clause_kind,clause_list_size,generated_at` +
+            `cap_hit,years_left,expires_after,expiry_type,expiry_type_derived,rental,clause_kind,clause_list_size,phase,rights,generated_at` +
             `&player_id=eq.${playerId}`
           ),
           sbRowsOrThrow(

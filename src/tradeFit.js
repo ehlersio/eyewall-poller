@@ -3,7 +3,11 @@
 // __tests__/tradeFit.test.js.
 
 // trade_fit_players row (or null) + trade_fit rows for one player ->
-// { player, teams, generatedAt }. `player` is null when the player isn't in
+// { player, teams, generatedAt }. player.phase is 'in_season' (this season,
+// through the deadline) or 'offseason' (the day after the deadline until
+// next season's first projection: the fit is for next season, player.season,
+// with its signed rosters, cap and contenders); player.rights marks a pending
+// UFA/RFA whose rights only could be traded (until June 30, no cap hit). `player` is null when the player isn't in
 // the population (unrated, ELC, too few games, out of season), and then
 // `teams` is empty: the app hides the section. teams are ranked 1..31:
 // { team, tier: 'strong'|'possible'|'long_shot', rank, slot, gap, needMet,
@@ -29,6 +33,8 @@ export function summarizeTradeFit(playerRow, fitRows) {
     expiryTypeDerived: !!p.expiry_type_derived,
     rental: !!p.rental,
     clause: p.clause_kind ? { kind: p.clause_kind, listSize: p.clause_list_size ?? null } : null,
+    phase: p.phase === 'offseason' ? 'offseason' : 'in_season',
+    rights: !!p.rights,
   };
   const teams = (fitRows || [])
     .map(r => ({
