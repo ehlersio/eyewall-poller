@@ -165,6 +165,13 @@ function supabaseRows(table, params) {
         { season: SEASON, slot: 'D_TOP4', players: [{ id: 8476958, name: 'Jaccob Slavin', pos: 'D', shoots: 'L', rating: 0.5, rating_basis: 'last_season', gp: 18, filled: false }], n_players: 1, n_rated: 1, strength: 0.5, weakest_id: 8476958, weakest_rating: 0.5, league_rank: 15, league_teams: 32, need: false, right_shots: 0, basis: 'last_game', basis_game_id: GAME_ID - 1, generated_at: '2026-01-15T08:00:00Z' },
         { season: SEASON, slot: 'G_1A', players: [{ id: GOALIE_ID, name: 'Pyotr Kochetkov', pos: 'G', shoots: 'L', rating: 0.7, rating_basis: 'season', gp: 30, filled: false, games_started: 30 }], n_players: 1, n_rated: 1, strength: 0.7, weakest_id: GOALIE_ID, weakest_rating: 0.7, league_rank: 1, league_teams: 32, need: false, right_shots: null, basis: 'goalie_starts', basis_game_id: null, generated_at: '2026-01-15T08:00:00Z' },
       ]
+    case 'trade_fit_players':
+      return [{ player_id: PLAYER_ID, season: SEASON, team: 'CAR', name: 'Sebastian Aho', position: 'C', shoots: 'L', rating: 0.69, rating_basis: 'season', games_played: 40, cap_hit: 9750000, years_left: 5, expires_after: '2031-32', expiry_type: 'UFA', expiry_type_derived: false, rental: false, clause_kind: 'NMC', clause_list_size: null, generated_at: '2026-01-15T08:00:00Z' }]
+    case 'trade_fit':
+      return [
+        { team: 'DET', tier: 'strong', rank: 1, slot: 'F_TOP6_C', gap: 0.4, need_met: true, window_met: true, cap_state: 'fits', reasons: [{ code: 'need_upgrade', slot: 'F_TOP6_C', gap: 0.4, slot_need: true }, { code: 'window_term', expires_after: '2031-32' }, { code: 'cap_fits', space: 12000000, known: 23, roster: 23 }] },
+        { team: 'BOS', tier: 'long_shot', rank: 2, slot: null, gap: null, need_met: false, window_met: true, cap_state: 'needs_salary', reasons: [{ code: 'need_none', slot: 'F_BOT6_C' }] },
+      ]
     case 'prediction_scorecard':
       return [{ model: 'game_winner', kind: 'live', period: '2025-26', status: 'ok', n: 500, accuracy: 0.58, brier: 0.24, log_loss: 0.67, baseline: 0.5, calibration: [], recent: [], note: null, updated_at: '2026-01-15T08:00:00Z' }]
     case 'team_elo_ratings':
@@ -405,6 +412,8 @@ const ROUTES = [
   { name: 'projected-lines',                 path: '/projected-lines?team=car', missing: '/projected-lines?team=CAROLINA' },
   { name: 'projected-lines (no projection yet)', path: '/projected-lines?team=CAR', overrides: { projected_lines: [] }, notCached: true },
   { name: 'team-needs',                      path: '/team-needs?team=car', missing: '/team-needs?team=CAROLINA' },
+  { name: 'trade-fit',                       path: `/trade-fit?player=${PLAYER_ID}`, missing: '/trade-fit?player=abc' },
+  { name: 'trade-fit (not in the population)', path: `/trade-fit?player=${PLAYER_ID}`, overrides: { trade_fit_players: [], trade_fit: [] }, notCached: true },
   { name: 'team-needs (no rows yet)',        path: '/team-needs?team=CAR', overrides: { team_needs: [] }, notCached: true },
   { name: 'scorecard',                       path: '/scorecard' },
   { name: 'scorecard (empty table)',         path: '/scorecard', overrides: { prediction_scorecard: [] }, notCached: true },
