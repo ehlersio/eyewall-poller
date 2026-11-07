@@ -167,6 +167,11 @@ function supabaseRows(table, params) {
       ]
     case 'trade_fit_players':
       return [{ player_id: PLAYER_ID, season: SEASON, team: 'CAR', name: 'Sebastian Aho', position: 'C', shoots: 'L', rating: 0.69, rating_basis: 'season', games_played: 40, cap_hit: 9750000, years_left: 5, expires_after: '2031-32', expiry_type: 'UFA', expiry_type_derived: false, rental: false, clause_kind: 'NMC', clause_list_size: null, phase: 'in_season', rights: false, generated_at: '2026-01-15T08:00:00Z' }]
+    case 'nhl_contract_clause_status':
+      return [
+        { contract_key: '8478427|CAR|2023-07', season: '2025-26', status: 'clause', basis: 'source' },
+        { contract_key: 'sebastian aho|CAR|2023-07', season: '2025-26', status: 'none', basis: 'capfriendly_2024' },
+      ]
     case 'trade_fit':
       return [
         { team: 'DET', tier: 'strong', rank: 1, slot: 'F_TOP6_C', gap: 0.4, need_met: true, window_met: true, cap_state: 'fits', reasons: [{ code: 'need_upgrade', slot: 'F_TOP6_C', gap: 0.4, slot_need: true }, { code: 'window_term', expires_after: '2031-32' }, { code: 'cap_fits', space: 12000000, known: 23, roster: 23 }] },

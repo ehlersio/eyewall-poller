@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
-  buildTeamContracts, buildPlayerContracts, buildLeagueSummary, pickContract, seasonCapHit,
+  buildTeamContracts, buildPlayerContracts, buildLeagueSummary, pickContract, seasonCapHit, clauseStatusFor,
   seasonLabel, safeSeasonLabel, yearsLeftFor, coversSeason, shapeCapLimits, capLimitsFor, rosterPlayers,
   shapeDeadCap, summarizeDeadCap, readDeadCap, capSpaceEstimate, ESTIMATE_NOTES,
   shapeContract, readContracts, contractSelect, _resetContractColumnsForTests, CONTRACT_SELECT, CONTRACT_SELECT_EXTRA,
@@ -79,7 +79,7 @@ const DEAD_CAP = [
   { team: 'CAR', kind: 'buyout', player_name: 'Last Year', player_id: null, counterparty: null, season: '2025-26', cap_hit_usd: 900_000, pct: null, contract_key: null, event_date: null, best_tier: 'E', flags: '' },
 ]
 
-function fakeDb({ contracts = CONTRACTS, seasons = SEASONS, clauses = CLAUSES, gaps = GAPS, caps = CAPS, deadCap = DEAD_CAP } = {}) {
+function fakeDb({ contracts = CONTRACTS, seasons = SEASONS, clauses = CLAUSES, gaps = GAPS, caps = CAPS, deadCap = DEAD_CAP, clauseStatus = [] } = {}) {
   const calls = []
   const ids = path => (path.match(/player_id=in\.\(([^)]*)\)/) || path.match(/player_id\.in\.\(([^)]*)\)/))?.[1]?.split(',').map(Number) || null
   const eqId = path => Number(path.match(/player_id=eq\.(\d+)/)?.[1]) || null
@@ -91,6 +91,10 @@ function fakeDb({ contracts = CONTRACTS, seasons = SEASONS, clauses = CLAUSES, g
       const season = path.match(/season=eq\.([\d-]+)/)?.[1]
       const team = path.match(/team=eq\.([A-Z]+)/)?.[1]
       return deadCap.filter(r => r.season === season && (!team || r.team === team))
+    }
+    if (path.startsWith('nhl_contract_clause_status?')) {
+      if (clauseStatus === 'missing') throw new Error('relation "public.nhl_contract_clause_status" does not exist')
+      return clauseStatus.filter(r => eqId(path) === r.player_id)
     }
     if (path.startsWith('nhl_contract_gaps?')) return gaps.filter(g => path.includes(`team=eq.${g.team}`))
     if (path.startsWith('nhl_contract_seasons?')) {
@@ -437,5 +441,47 @@ describe('bought-out columns', () => {
     const db = fakeDb()
     await buildPlayerContracts({ get: db.get, playerId: 8478427, season: SEASON })
     expect(db.calls.find(c => c.startsWith('nhl_contracts?'))).toContain(`select=${CONTRACT_SELECT},${CONTRACT_SELECT_EXTRA}&player_id=eq.8478427`)
+  })
+})
+
+
+describe('clause status', () => {
+  const row = (key, season, status, basis = null) => ({ contract_key: key, season, status, basis, player_id: 8476958 })
+
+  it('clauseStatusFor picks the most settled answer for the season, optionally within the given keys', () => {
+    const rows = [
+      row('a', '2026-27', 'unknown'), row('b', '2026-27', 'none_likely', 'breakdown_without_clause'),
+      row('c', '2026-27', 'none', 'capfriendly_2024'), row('a', '2027-28', 'clause', 'source'),
+    ]
+    expect(clauseStatusFor(rows, '2026-27')).toEqual({ status: 'none', basis: 'capfriendly_2024' })
+    expect(clauseStatusFor(rows, '2026-27', new Set(['a', 'b']))).toEqual({ status: 'none_likely', basis: 'breakdown_without_clause' })
+    expect(clauseStatusFor(rows, '2027-28')).toEqual({ status: 'clause', basis: 'source' })
+    expect(clauseStatusFor(rows, '2030-31')).toBeNull()
+    expect(clauseStatusFor([row('a', '2026-27', 'something_new')], '2026-27')).toBeNull()
+    expect(clauseStatusFor(null, '2026-27')).toBeNull()
+  })
+
+  it('the player route puts it on current and on each history season row', async () => {
+    const clauseStatus = [
+      row('8476958|CAR|2024-07', SEASON, 'none', 'stated'),
+      row('jaccob slavin|CAR|2024-07', SEASON, 'clause', 'source'),
+      row('jaccob slavin|CAR|2024-07', '2027-28', 'none_likely', 'breakdown_without_clause'),
+    ]
+    const out = await buildPlayerContracts({ get: fakeDb({ clauseStatus }).get, playerId: '8476958', season: SEASON })
+    expect(out.clauseStatusKnown).toBe(true)
+    // both keys cover the season, and the clause wins
+    expect(out.current.clauseStatus).toEqual({ status: 'clause', basis: 'source' })
+    const seasons = out.history[1].seasons
+    expect(seasons.map(s => s.clauseStatus)).toEqual([
+      { status: 'clause', basis: 'source' },
+      { status: 'none_likely', basis: 'breakdown_without_clause' },
+    ])
+  })
+
+  it('a failed status read leaves clauseStatus null and says so', async () => {
+    const out = await buildPlayerContracts({ get: fakeDb({ clauseStatus: 'missing' }).get, playerId: '8476958', season: SEASON })
+    expect(out.clauseStatusKnown).toBe(false)
+    expect(out.current.clauseStatus).toBeNull()
+    expect(out.unavailable).toBe(false)
   })
 })

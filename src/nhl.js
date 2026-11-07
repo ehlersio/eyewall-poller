@@ -17,7 +17,7 @@ import { MILESTONE_SPORTS, milestoneScope } from './milestones.js';
 import { buildCallupWatch, nameKey } from './callupWatch.js';
 import { pairTransactions, TRANSACTIONS_LIMIT } from './transactions.js';
 import { fetchTradeTree } from './trades.js';
-import { buildTeamContracts, buildPlayerContracts, buildLeagueSummary, buildLeaguePlayers, buildLeagueRosterSummary, shapeCapLimits, seasonLabel as contractSeasonLabel, safeSeasonLabel, CAP_SELECT } from './contracts.js';
+import { buildTeamContracts, buildPlayerContracts, buildLeagueSummary, buildLeaguePlayers, buildLeagueRosterSummary, shapeCapLimits, seasonLabel as contractSeasonLabel, safeSeasonLabel, CAP_SELECT, CLAUSE_STATUS_SELECT } from './contracts.js';
 import { summarizeScratches } from './scratches.js';
 import { summarizeNextGames, isPlayoffOddsStale } from './playoffOdds.js';
 import { summarizeInjuryLeague } from './injuryImpact.js';
@@ -320,6 +320,14 @@ async function standingsWithFetch(env, ctx) {
 // the status and path, and several routes pass it through in their 502) --
 // unlike shared.js's sbRows(), which takes a full URL and returns the 502
 // Response instead.
+// A player's nhl_contract_clause_status rows, or null when the read fails
+// (the table arrived 2026-11-07 with an owner SQL; until it exists the trade
+// routes serve clauseStatus null, uncached).
+function clauseStatusRows(playerId) {
+  return sbRowsOrThrow(`nhl_contract_clause_status?select=${CLAUSE_STATUS_SELECT}&player_id=eq.${playerId}`)
+    .catch(() => null);
+}
+
 async function sbRowsOrThrow(path) {
   const r = await fetch(`${SB_URL}/rest/v1/${path}`, { headers: sbHeaders() });
   if (!r.ok) throw new Error(`Supabase ${r.status}: ${path}`);
@@ -2979,7 +2987,8 @@ async function handleNHLRoutes(request, env, ctx, url) {
         console.warn(`Contracts player ${playerId}: ${e.message}`);
         return json({ playerId: Number(playerId), season, asOf: null, current: null, history: [], unavailable: true }, { maxAge: 0 });
       }
-      return data.unavailable ? json(data, { maxAge: 0 }) : data;
+      // Not cached without clause status either (its table may not exist yet).
+      return data.unavailable || !data.clauseStatusKnown ? json(data, { maxAge: 0 }) : data;
     });
   }
 
@@ -4791,9 +4800,9 @@ async function divisionOdds(env, team, latest) {
     const playerId = sbParam(url.searchParams.get('player'), { type: 'int', name: 'player' });
     if (!playerId) return badRequest('player required');
     return cachedJson(env, `nhl:trade-fit:${playerId}`, 3600, async () => {
-      let playerRows, fitRows;
+      let playerRows, fitRows, statusRows;
       try {
-        [playerRows, fitRows] = await Promise.all([
+        [playerRows, fitRows, statusRows] = await Promise.all([
           sbRowsOrThrow(
             `trade_fit_players?select=player_id,season,team,name,position,shoots,rating,rating_basis,games_played,` +
             `cap_hit,years_left,expires_after,expiry_type,expiry_type_derived,rental,clause_kind,clause_list_size,phase,rights,generated_at` +
@@ -4803,13 +4812,15 @@ async function divisionOdds(env, team, latest) {
             `trade_fit?select=team,tier,rank,slot,gap,need_met,window_met,cap_state,reasons` +
             `&player_id=eq.${playerId}&order=rank.asc`
           ),
+          clauseStatusRows(playerId),
         ]);
       } catch {
         return json({ ...summarizeTradeFit(null, []), unavailable: true });
       }
 
-      const data = summarizeTradeFit(playerRows[0], fitRows);
-      return data.player ? data : json(data); // an empty result isn't cached
+      const data = summarizeTradeFit(playerRows[0], fitRows, statusRows);
+      // Neither an empty result nor one whose clause status read failed is cached.
+      return data.player && statusRows ? data : json(data);
     });
   }
 
@@ -4839,20 +4850,21 @@ async function divisionOdds(env, team, latest) {
     if (!playerId) return badRequest('player required');
     const locale = requestLocale(url);
     return cachedJson(env, `nhl:trade-candidacy:${playerId}${localeKeySuffix(locale)}`, 3600, async () => {
-      let rows, aiRows;
+      let rows, aiRows, statusRows;
       try {
-        [rows, aiRows] = await Promise.all([
+        [rows, aiRows, statusRows] = await Promise.all([
           sbRowsOrThrow(`trade_candidacy?select=${CANDIDACY_COLUMNS}&player_id=eq.${playerId}`),
           sbRowsOrThrow(
             `trade_candidacy_ai?select=paragraph,season,generated_at&player_id=eq.${playerId}&locale=eq.${locale}`
           ).catch(() => null),
+          clauseStatusRows(playerId),
         ]);
       } catch {
         return json({ ...summarizeCandidacy(null), unavailable: true });
       }
-      const data = summarizeCandidacy(rows[0], aiRows?.[0]);
-      // Neither an empty result nor one whose paragraph read failed is cached.
-      return data.player && aiRows ? data : json(data);
+      const data = summarizeCandidacy(rows[0], aiRows?.[0], statusRows);
+      // Neither an empty result nor one whose paragraph or clause status read failed is cached.
+      return data.player && aiRows && statusRows ? data : json(data);
     });
   }
 
