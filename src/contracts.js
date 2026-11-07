@@ -76,6 +76,25 @@ export const SEASON_SELECT = [
   'clause', 'best_tier',
 ].join(',');
 export const CLAUSE_SELECT = 'contract_key,player_id,kind,season_from,season_to,list_size,list_type,best_tier';
+export const CLAUSE_STATUS_SELECT = 'contract_key,season,status,basis';
+
+// nhl_contract_clause_status (eyewall-pipeline, from nhl-contracts'
+// clause_status.json): per contract-season, 'clause' | 'none' |
+// 'none_likely' | 'unknown', with the basis ('source', 'stated',
+// 'capfriendly_2024', 'ineligible', 'breakdown_without_clause'). A player can
+// have the same deal under two keys (an id-keyed and a name-keyed row), so the
+// most settled answer wins: clause, then none, then none_likely, then unknown.
+const CLAUSE_STATUS_ORDER = ['clause', 'none', 'none_likely', 'unknown'];
+export function clauseStatusFor(rows, season, keys = null) {
+  let best = null;
+  for (const r of rows || []) {
+    if (r.season !== season || (keys && !keys.has(r.contract_key))) continue;
+    const i = CLAUSE_STATUS_ORDER.indexOf(r.status);
+    if (i < 0) continue;
+    if (!best || i < CLAUSE_STATUS_ORDER.indexOf(best.status)) best = { status: r.status, basis: r.basis || null };
+  }
+  return best;
+}
 export const GAP_SELECT = 'player_id,player_name,team,gap,status,last_contract_end';
 export const CAP_SELECT = 'season,cap_ceiling,cap_floor,min_salary,updated_at';
 export const DEAD_CAP_SELECT = 'team,kind,player_name,player_id,counterparty,season,cap_hit_usd,pct,contract_key,event_date,best_tier,flags';
@@ -449,16 +468,27 @@ export async function buildTeamContracts({ get, getAll, team, season, roster }) 
 // newest first, each with its season rows and clauses; `current` is the
 // chosen row for `season` (shapeContract), or null.
 export async function buildPlayerContracts({ get, playerId, season }) {
-  const [contracts, seasonRows, clauseRows] = await Promise.all([
+  const [contracts, seasonRows, clauseRows, statusRows] = await Promise.all([
     readContracts(get, `&player_id=eq.${playerId}&order=start_season.desc.nullslast,signed_at.desc`),
     get(`nhl_contract_seasons?select=${SEASON_SELECT}&player_id=eq.${playerId}&order=season`),
     get(`nhl_contract_clauses?select=${CLAUSE_SELECT}&player_id=eq.${playerId}&order=id`),
+    // The table arrived 2026-11-07 (owner SQL): a failed read leaves every
+    // clauseStatus null instead of failing the route.
+    Promise.resolve()
+      .then(() => get(`nhl_contract_clause_status?select=${CLAUSE_STATUS_SELECT}&player_id=eq.${playerId}`))
+      .catch(() => null),
   ]);
-  const history = contracts.map(c => ({
-    ...shapeContract(c, { season: null, seasonRows: [], clauseRows }),
-    yearsLeft: c.years_left ?? null,
-    seasons: seasonRows.filter(r => r.contract_key === c.contract_key).map(shapeSeasonRow),
-  }));
+  const history = contracts.map(c => {
+    const own = new Set([c.contract_key]);
+    return {
+      ...shapeContract(c, { season: null, seasonRows: [], clauseRows }),
+      yearsLeft: c.years_left ?? null,
+      seasons: seasonRows.filter(r => r.contract_key === c.contract_key).map(r => ({
+        ...shapeSeasonRow(r),
+        clauseStatus: clauseStatusFor(statusRows, r.season, own),
+      })),
+    };
+  });
   const covering = contracts.filter(c => coversSeason(c, season));
   const chosen = pickContract(covering);
   const current = chosen
@@ -469,12 +499,14 @@ export async function buildPlayerContracts({ get, playerId, season }) {
       keys: new Set(covering.map(c => c.contract_key)),
     })
     : null;
+  if (current) current.clauseStatus = clauseStatusFor(statusRows, season, new Set(covering.map(c => c.contract_key)));
   return {
     playerId: Number(playerId),
     season,
     asOf: latestStamp(contracts),
     current,
     history,
+    clauseStatusKnown: statusRows != null,
     unavailable: contracts.length === 0,
   };
 }

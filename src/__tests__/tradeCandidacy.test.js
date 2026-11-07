@@ -71,3 +71,17 @@ describe('summarizeBoard', () => {
     expect(summarizeBoard([])).toEqual({ players: [], asOf: null, deadline: null, generatedAt: null, fitTeam: null })
   })
 })
+
+
+describe('summarizeCandidacy: clause status', () => {
+  it('the player carries the season\'s status; the board does not read it', () => {
+    const row = {
+      player_id: 1, season: 20262027, team: 'CAR', name: 'A', position: 'C', games_played: 40, tier: 'some', rank: 3,
+      signals: [{ code: 'expiring' }], cap_hit: 3_000_000, years_left: 0, clause_kind: null,
+    }
+    const status = [{ contract_key: 'k', season: '2026-27', status: 'none_likely', basis: 'breakdown_without_clause' }]
+    expect(summarizeCandidacy(row, null, status).player.clauseStatus).toEqual({ status: 'none_likely', basis: 'breakdown_without_clause' })
+    expect(summarizeCandidacy(row).player.clauseStatus).toBeNull()
+    expect(summarizeBoard([row]).players[0].clauseStatus).toBeNull()
+  })
+})

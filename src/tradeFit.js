@@ -1,3 +1,5 @@
+import { clauseStatusFor, seasonLabel } from './contracts.js';
+
 // Shape helper for GET /trade-fit (eyewall-pipeline's trade_fit.py ->
 // trade_fit_players + trade_fit). Pure, unit-tested in
 // __tests__/tradeFit.test.js.
@@ -13,7 +15,10 @@
 // { team, tier: 'strong'|'possible'|'long_shot', rank, slot, gap, needMet,
 // windowMet, capState, reasons }, reasons passed through as the pipeline
 // wrote them ([{ code, ...params }], codes translated by the app).
-export function summarizeTradeFit(playerRow, fitRows) {
+// player.clauseStatus: { status, basis } for the fit season from
+// nhl_contract_clause_status (statusRows), or null -- whether "no clause" is
+// known ('none'), likely ('none_likely') or not reported ('unknown').
+export function summarizeTradeFit(playerRow, fitRows, statusRows = null) {
   if (!playerRow) return { player: null, teams: [], generatedAt: null };
   const p = playerRow;
   const player = {
@@ -33,6 +38,7 @@ export function summarizeTradeFit(playerRow, fitRows) {
     expiryTypeDerived: !!p.expiry_type_derived,
     rental: !!p.rental,
     clause: p.clause_kind ? { kind: p.clause_kind, listSize: p.clause_list_size ?? null } : null,
+    clauseStatus: clauseStatusFor(statusRows, seasonLabel(p.season)),
     phase: p.phase === 'offseason' ? 'offseason' : 'in_season',
     rights: !!p.rights,
   };

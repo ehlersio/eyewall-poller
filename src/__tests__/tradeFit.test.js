@@ -52,3 +52,17 @@ describe('summarizeTradeFit', () => {
     expect(summarizeTradeFit(playerRow, [fit('DET', 1, { reasons: null })]).teams[0].reasons).toEqual([])
   })
 })
+
+
+describe('summarizeTradeFit: clause status', () => {
+  it('takes the fit season\'s status, or null', () => {
+    const rows = [
+      { contract_key: 'k', season: '2026-27', status: 'none', basis: 'ineligible' },
+      { contract_key: 'k', season: '2027-28', status: 'unknown', basis: null },
+    ]
+    const p = { ...playerRow, clause_kind: null, clause_list_size: null }
+    expect(summarizeTradeFit(p, [], rows).player.clauseStatus).toEqual({ status: 'none', basis: 'ineligible' })
+    expect(summarizeTradeFit({ ...p, season: 20272028 }, [], rows).player.clauseStatus).toEqual({ status: 'unknown', basis: null })
+    expect(summarizeTradeFit(p, []).player.clauseStatus).toBeNull()
+  })
+})

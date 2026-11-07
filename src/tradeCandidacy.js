@@ -7,7 +7,9 @@
 // 'some') and the signals behind it. Untiered players (no signal, no public
 // cap hit, or below the cuts) aren't shown at all.
 
-function shapePlayer(r) {
+import { clauseStatusFor, seasonLabel } from './contracts.js';
+
+function shapePlayer(r, statusRows = null) {
   return {
     id: r.player_id,
     season: r.season,
@@ -24,6 +26,7 @@ function shapePlayer(r) {
     expiryTypeDerived: !!r.expiry_type_derived,
     extended: !!r.extended,
     clause: r.clause_kind ? { kind: r.clause_kind, listSize: r.clause_list_size ?? null } : null,
+    clauseStatus: clauseStatusFor(statusRows, seasonLabel(r.season)),
   };
 }
 
@@ -44,10 +47,10 @@ function shapeAi(aiRow, row) {
 // player is null when the row is missing or untiered: the app hides the
 // section. ai is the paragraph ({ text, generatedAt }) or null, and always
 // null without a player.
-export function summarizeCandidacy(row, aiRow = null) {
+export function summarizeCandidacy(row, aiRow = null, statusRows = null) {
   if (!shown(row)) return { player: null, ai: null, asOf: null, deadline: null, generatedAt: null };
   return {
-    player: shapePlayer(row),
+    player: shapePlayer(row, statusRows),
     ai: shapeAi(aiRow, row),
     asOf: row.as_of ?? null,
     deadline: row.deadline ?? null,
@@ -61,7 +64,7 @@ export function summarizeCandidacy(row, aiRow = null) {
 // fit tier for him ('strong' | 'possible' | 'long_shot'), or null when he has
 // no fit row (outside the fit population, or he's on that team).
 export function summarizeBoard(rows, fitRows = null, fitTeam = null) {
-  const players = (rows || []).filter(shown).map(shapePlayer);
+  const players = (rows || []).filter(shown).map(r => shapePlayer(r));
   players.sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
   const first = (rows || []).find(shown);
   if (fitTeam) {
