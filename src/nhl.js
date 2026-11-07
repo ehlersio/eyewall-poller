@@ -23,6 +23,7 @@ import { summarizeNextGames, isPlayoffOddsStale } from './playoffOdds.js';
 import { summarizeInjuryLeague } from './injuryImpact.js';
 import { summarizeStarters } from './probableStarters.js';
 import { summarizeProjectedLines } from './projectedLines.js';
+import { summarizeTeamNeeds } from './teamNeeds.js';
 import { summarizeScorecard } from './scorecard.js';
 
 const NHL_BASE   = 'https://api-web.nhle.com/v1';
@@ -4726,6 +4727,40 @@ async function divisionOdds(env, team, latest) {
 
       const data = { team, ...summarizeProjectedLines(rows) };
       return data.basis ? data : json(data); // an empty result isn't cached
+    });
+  }
+
+  // ── Team needs — a team's lineup slots, rated and ranked league-wide ──────────
+  // GET /team-needs?team=CAR
+  // From eyewall-pipeline's team_needs.py (nightly, after projected_lines):
+  // one row per lineup slot -- top-6 / bottom-6 centers and wingers, top-4
+  // and third-pair D, 1A / 1B goalies -- with each player's rating (WAR per
+  // 82, or GSAx per 60 for goalies; this season's at 20+ GP / 10+ for
+  // goalies, else last season's, else unrated), the slot's strength and its
+  // league rank, the bottom third flagged `need`. Response: { team, season,
+  // basis, basisGameId, generatedAt, slots } -- see summarizeTeamNeeds(),
+  // src/teamNeeds.js. No rows (offseason, or before the first projection)
+  // -> basis null, slots []. 1hr KV; neither a failed read (`unavailable:
+  // true`) nor an empty result is cached. `team` is validated before it's
+  // interpolated into the PostgREST filter.
+  if (url.pathname === '/team-needs') {
+    const team = (sbParam(url.searchParams.get('team'), { type: 'abbr', name: 'team' }) || DEFAULT_TEAM_ABBR).toUpperCase();
+    if (!/^[A-Z]{2,3}$/.test(team)) {
+      return badRequest('invalid team');
+    }
+    return cachedJson(env, `nhl:team-needs:${team}`, 3600, async () => {
+      let rows;
+      try {
+        rows = await sbRowsOrThrow(
+          `team_needs?select=season,slot,players,n_players,n_rated,strength,weakest_id,weakest_rating,` +
+          `league_rank,league_teams,need,right_shots,basis,basis_game_id,generated_at&team=eq.${team}`
+        );
+      } catch {
+        return json({ team, ...summarizeTeamNeeds([]), unavailable: true });
+      }
+
+      const data = { team, ...summarizeTeamNeeds(rows) };
+      return data.slots.length ? data : json(data); // an empty result isn't cached
     });
   }
 
