@@ -2962,7 +2962,8 @@ async function handleNHLRoutes(request, env, ctx, url) {
       }
       let data;
       try {
-        data = await buildTeamContracts({ get: sbRowsOrThrow, getAll: sbAllRowsOrThrow, team: tc.abbr, season, roster });
+        const currentSeason = contractSeasonLabel(await resolveNHLSeason(env));
+        data = await buildTeamContracts({ get: sbRowsOrThrow, getAll: sbAllRowsOrThrow, team: tc.abbr, season, roster, currentSeason });
       } catch (e) {
         console.warn(`Contracts ${tc.abbr}: ${e.message}`);
         return json({ team: tc.abbr, season, asOf: null, rosterKnown: !!roster, rows: [], missing: [], summary: null, unavailable: true }, { maxAge: 0 });
@@ -3009,7 +3010,8 @@ async function handleNHLRoutes(request, env, ctx, url) {
         const rosters = await loadAllRosters(env);
         let data;
         try {
-          data = await buildLeagueRosterSummary({ get: sbRowsOrThrow, getAll: sbAllRowsOrThrow, season, rosters });
+          const currentSeason = contractSeasonLabel(await resolveNHLSeason(env));
+          data = await buildLeagueRosterSummary({ get: sbRowsOrThrow, getAll: sbAllRowsOrThrow, season, rosters, currentSeason });
         } catch (e) {
           console.warn(`Contracts roster summary: ${e.message}`);
           const teamsKnown = Object.values(rosters).filter(Boolean).length;

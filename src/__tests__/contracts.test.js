@@ -12,7 +12,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   buildTeamContracts, buildPlayerContracts, buildLeagueSummary, pickContract, seasonCapHit, clauseStatusFor,
   seasonLabel, safeSeasonLabel, yearsLeftFor, coversSeason, shapeCapLimits, capLimitsFor, rosterPlayers,
-  shapeDeadCap, summarizeDeadCap, readDeadCap, capSpaceEstimate, ESTIMATE_NOTES,
+  shapeDeadCap, summarizeDeadCap, readDeadCap, capSpaceEstimate, ESTIMATE_NOTES, ESTIMATE_NOTES_WITH_LTIR,
+  readLtir, summarizeLtir,
   shapeContract, readContracts, contractSelect, _resetContractColumnsForTests, CONTRACT_SELECT, CONTRACT_SELECT_EXTRA,
 } from '../contracts.js'
 
@@ -79,13 +80,19 @@ const DEAD_CAP = [
   { team: 'CAR', kind: 'buyout', player_name: 'Last Year', player_id: null, counterparty: null, season: '2025-26', cap_hit_usd: 900_000, pct: null, contract_key: null, event_date: null, best_tier: 'E', flags: '' },
 ]
 
-function fakeDb({ contracts = CONTRACTS, seasons = SEASONS, clauses = CLAUSES, gaps = GAPS, caps = CAPS, deadCap = DEAD_CAP, clauseStatus = [] } = {}) {
+function fakeDb({ contracts = CONTRACTS, seasons = SEASONS, clauses = CLAUSES, gaps = GAPS, caps = CAPS, deadCap = DEAD_CAP, clauseStatus = [], ltir = [], contractsExtra = [] } = {}) {
+  contracts = [...contracts, ...contractsExtra]
   const calls = []
   const ids = path => (path.match(/player_id=in\.\(([^)]*)\)/) || path.match(/player_id\.in\.\(([^)]*)\)/))?.[1]?.split(',').map(Number) || null
   const eqId = path => Number(path.match(/player_id=eq\.(\d+)/)?.[1]) || null
   const get = async (path) => {
     calls.push(path)
     if (path.startsWith('nhl_cap_limits?')) return caps
+    if (path.startsWith('nhl_ltir?')) {
+      if (ltir === 'missing') throw new Error('relation "public.nhl_ltir" does not exist')
+      const team = path.match(/team=eq\.([A-Z]+)/)?.[1]
+      return ltir.filter(r => r.active && (!team || r.team === team))
+    }
     if (path.startsWith('nhl_dead_cap?')) {
       if (deadCap === 'missing') throw new Error('relation "public.nhl_dead_cap" does not exist')
       const season = path.match(/season=eq\.([\d-]+)/)?.[1]
@@ -222,6 +229,7 @@ describe('buildTeamContracts', () => {
       deadCap: { total: 2_600_000, retained: 1_500_000, buyouts: 1_100_000, count: 3 },
       capSpaceEstimate: 104_000_000 - (9_750_000 + 6_396_063 + 2_000_000) - 2_600_000,
       estimateNotes: ESTIMATE_NOTES,
+      ltir: null, // no current season named: LTIR not read
     })
     expect(out.summary).not.toHaveProperty('space') // never "cap space": an estimate with caveats
   })
@@ -382,6 +390,79 @@ describe('dead cap and the cap-space estimate', () => {
     expect(noRoster.summary.capSpaceEstimate).toBeNull()
     const noCap = await buildTeamContracts({ ...fakeDb({ caps: [] }), team: 'CAR', season: SEASON, roster: ROSTER })
     expect(noCap.summary.capSpaceEstimate).toBeNull()
+  })
+})
+
+// LTIR (nhl_ltir, 2026-11-08): the active stints of the team, their cap hits
+// as an upper bound on relief, PuckPedia's stated relief counted once per
+// post, and the cap hits of LTIR players the NHL roster list leaves out
+// subtracted from the estimate.
+const ltirRow = (player_id, player_name, extra = {}) => ({
+  player_id, player_name, team: 'CAR', since: '2026-10-12', first_seen: '2026-10-12', active: true,
+  stated_relief_usd: null, stated_at: null, stated_source: null, conflicts: null, flags: null, ...extra,
+})
+// On LTIR, signed by BOS, on no roster: only found through the LTIR ids.
+const OFF_ROSTER_LTIR = contract('8470001|BOS|2024-07', 8470001, 'Hurt Defender', 'BOS', { aav_usd: 3_000_000, cap_hit_usd: 3_000_000 })
+const LTIR = [
+  ltirRow(8476958, 'Jaccob Slavin', { stated_relief_usd: 4_000_000, stated_at: '2026-10-12', stated_source: 'bsky:a', flags: 'stated_relief_shared' }),
+  ltirRow(8470001, 'Hurt Defender', { stated_relief_usd: 4_000_000, stated_at: '2026-10-12', stated_source: 'bsky:a', flags: 'stated_relief_shared', conflicts: 'espn_not_listed' }),
+  ltirRow(8470002, 'No Contract', { since: null, first_seen: '2026-11-08', stated_relief_usd: 500_000, stated_at: '2026-11-01', stated_source: 'bsky:b' }),
+  ltirRow(8470003, 'Old Stint', { active: false, stated_relief_usd: 9_000_000, stated_source: 'bsky:c' }),
+]
+
+describe('LTIR', () => {
+  it('readLtir reads active rows for a team, or null when the table is missing', async () => {
+    const db = fakeDb({ ltir: LTIR })
+    const rows = await readLtir(db.get, 'CAR')
+    expect(db.calls.at(-1)).toContain('nhl_ltir?')
+    expect(db.calls.at(-1)).toContain('active=is.true&team=eq.CAR')
+    expect(rows.map(r => r.name)).toEqual(['Jaccob Slavin', 'Hurt Defender', 'No Contract'])
+    expect(rows[1]).toMatchObject({ playerId: 8470001, conflicts: ['espn_not_listed'], flags: ['stated_relief_shared'] })
+    expect(await readLtir(fakeDb({ ltir: 'missing' }).get, 'CAR')).toBeNull()
+  })
+
+  it('summarizeLtir: cap hits are an upper bound, stated relief counted once per post', () => {
+    const rows = LTIR.slice(0, 3).map(r => ({
+      playerId: r.player_id, name: r.player_name, since: r.since, firstSeen: r.first_seen,
+      statedRelief: r.stated_relief_usd, statedAt: r.stated_at, statedSource: r.stated_source, conflicts: [], flags: [],
+    }))
+    const caps = { 8476958: 6_396_063, 8470001: 3_000_000 }
+    const out = summarizeLtir(rows, { capHitOf: id => caps[id] ?? null, rosterOf: id => (id === 8476958 ? 'CAR' : null) })
+    expect(out).toMatchObject({ capHitTotal: 9_396_063, statedRelief: 4_500_000, statedAt: '2026-11-01', offRosterCapHit: 3_000_000 })
+    expect(out.players.map(p => [p.name, p.capHit, p.onRoster])).toEqual([
+      ['Jaccob Slavin', 6_396_063, true], ['Hurt Defender', 3_000_000, false], ['No Contract', null, false],
+    ])
+    expect(summarizeLtir([], { capHitOf: () => null, rosterOf: () => null }))
+      .toEqual({ players: [], capHitTotal: null, statedRelief: null, statedAt: null, offRosterCapHit: 0 })
+  })
+
+  it('the team summary carries ltir, drops no_ltir and counts off-roster LTIR cap hits in the estimate', async () => {
+    const db = fakeDb({ ltir: LTIR, contractsExtra: [OFF_ROSTER_LTIR] })
+    const out = await buildTeamContracts({ ...db, team: 'CAR', season: SEASON, roster: ROSTER, currentSeason: SEASON })
+    const contractsCall = db.calls.find(c => c.startsWith('nhl_contracts?'))
+    expect(contractsCall).toContain('8470001')
+    const { summary } = out
+    expect(summary.ltir).toMatchObject({ capHitTotal: 6_396_063 + 3_000_000, statedRelief: 4_500_000, offRosterCapHit: 3_000_000 })
+    expect(summary.ltir.players.map(p => p.name)).toEqual(['Jaccob Slavin', 'Hurt Defender', 'No Contract'])
+    expect(summary.capSpaceEstimate).toBe(104_000_000 - summary.rosterCapHit - 3_000_000 - 2_600_000)
+    expect(summary.estimateNotes).toEqual(ESTIMATE_NOTES_WITH_LTIR)
+    expect(summary.estimateNotes).not.toContain('no_ltir')
+  })
+
+  it('keeps no_ltir when the table is unreadable, and reads no LTIR for another season', async () => {
+    const missing = await buildTeamContracts({ ...fakeDb({ ltir: 'missing' }), team: 'CAR', season: SEASON, roster: ROSTER, currentSeason: SEASON })
+    expect(missing.summary.ltir).toBeNull()
+    expect(missing.summary.estimateNotes).toEqual(ESTIMATE_NOTES)
+    const db = fakeDb({ ltir: LTIR })
+    const next = await buildTeamContracts({ ...db, team: 'CAR', season: '2027-28', roster: ROSTER, currentSeason: SEASON })
+    expect(db.calls.some(c => c.startsWith('nhl_ltir?'))).toBe(false)
+    expect(next.summary.ltir).toBeNull()
+  })
+
+  it('an empty LTIR list is still known: no_ltir goes, ltir is empty', async () => {
+    const out = await buildTeamContracts({ ...fakeDb({ ltir: [] }), team: 'CAR', season: SEASON, roster: ROSTER, currentSeason: SEASON })
+    expect(out.summary.ltir).toEqual({ players: [], capHitTotal: null, statedRelief: null, statedAt: null, offRosterCapHit: 0 })
+    expect(out.summary.estimateNotes).toEqual(ESTIMATE_NOTES_WITH_LTIR)
   })
 })
 

@@ -36,9 +36,13 @@ const DEAD_CAP = [
   { team: 'CAR', kind: 'buyout', player_name: 'Bought Out', player_id: null, counterparty: null, season: '2026-27', cap_hit_usd: 1_100_000, pct: null, contract_key: null, event_date: null, best_tier: 'E', flags: '' },
   { team: 'TOR', kind: 'retained', player_name: 'Retained', player_id: null, counterparty: 'CAR', season: '2026-27', cap_hit_usd: 500_000, pct: 25, contract_key: null, event_date: null, best_tier: 'D', flags: '' },
 ]
-function fakeDb({ contracts = CONTRACTS, deadCap = DEAD_CAP } = {}) {
+function fakeDb({ contracts = CONTRACTS, deadCap = DEAD_CAP, ltir = null } = {}) {
   const get = async (path) => {
     if (path.startsWith('nhl_cap_limits?')) return [CAP]
+    if (path.startsWith('nhl_ltir?')) {
+      if (ltir == null) throw new Error('relation "public.nhl_ltir" does not exist')
+      return ltir
+    }
     if (path.startsWith('nhl_dead_cap?')) {
       if (deadCap === 'missing') throw new Error('relation does not exist')
       return deadCap
@@ -50,7 +54,37 @@ function fakeDb({ contracts = CONTRACTS, deadCap = DEAD_CAP } = {}) {
   return { get, getAll: get }
 }
 
+const ltirRow = (player_id, player_name, team, extra = {}) => ({
+  player_id, player_name, team, since: '2026-10-01', first_seen: '2026-10-01', active: true,
+  stated_relief_usd: null, stated_at: null, stated_source: null, conflicts: null, flags: null, ...extra,
+})
+
 describe('buildLeagueRosterSummary', () => {
+  it('adds each team\'s LTIR and counts LTIR players on no roster in the estimate', async () => {
+    // Domi: TOR's, on LTIR, on no NHL roster list; Matthews: on LTIR and on TOR's roster
+    const contracts = [...CONTRACTS, { ...base, contract_key: 'f', player_id: 7, player_name: 'Domi', team: 'TOR', aav_usd: 3_750_000, cap_hit_usd: 3_750_000 }]
+    const ltir = [
+      ltirRow(3, 'Matthews', 'TOR'),
+      ltirRow(7, 'Domi', 'TOR', { stated_relief_usd: 3_750_000, stated_at: '2026-09-30', stated_source: 'bsky:x' }),
+    ]
+    const out = await buildLeagueRosterSummary({ ...fakeDb({ contracts, ltir }), season: '2026-27', rosters: ROSTERS, currentSeason: '2026-27' })
+    expect(out.ltirKnown).toBe(true)
+    expect(out.estimateNotes).not.toContain('no_ltir')
+    const tor = out.teams.find(t => t.team === 'TOR')
+    const car = out.teams.find(t => t.team === 'CAR')
+    expect(tor.ltir).toMatchObject({ capHitTotal: 13_250_000 + 3_750_000, statedRelief: 3_750_000, statedAt: '2026-09-30', offRosterCapHit: 3_750_000 })
+    expect(tor.ltir.players.map(p => [p.name, p.onRoster])).toEqual([['Matthews', true], ['Domi', false]])
+    expect(tor.capSpaceEstimate).toBe(104_000_000 - 15_250_000 - 3_750_000 - 500_000)
+    expect(car.ltir).toEqual({ players: [], capHitTotal: null, statedRelief: null, statedAt: null, offRosterCapHit: 0 })
+    // another season, or no table: no ltir, and no_ltir stays
+    const next = await buildLeagueRosterSummary({ ...fakeDb({ contracts, ltir }), season: '2027-28', rosters: ROSTERS, currentSeason: '2026-27' })
+    expect(next.ltirKnown).toBe(false)
+    expect(next.teams.every(t => t.ltir === null)).toBe(true)
+    const none = await buildLeagueRosterSummary({ ...fakeDb(), season: '2026-27', rosters: ROSTERS, currentSeason: '2026-27' })
+    expect(none.ltirKnown).toBe(false)
+    expect(none.estimateNotes).toContain('no_ltir')
+  })
+
   it('totals each roster by the team the player is on today, roster size and figures counted', async () => {
     const out = await buildLeagueRosterSummary({ ...fakeDb(), season: '2026-27', rosters: ROSTERS })
     expect(out).toMatchObject({ season: '2026-27', basis: 'roster', asOf: STAMP, teamsKnown: 2, unavailable: false, capLimits: { ceiling: 104_000_000 } })
