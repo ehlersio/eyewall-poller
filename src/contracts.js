@@ -26,6 +26,14 @@
 //   ESTIMATE_NOTES saying what it leaves out (LTIR, bonus overages,
 //   recapture, partial coverage: `nhl_contract_gaps` says who has no public
 //   figure). The app labels it an estimate, never cap space.
+// - LTIR (nhl_ltir, 2026-11-08): the summaries carry `ltir`, the team's
+//   active long-term IR players with their cap hits (`capHitTotal`, an upper
+//   bound on relief) and the relief PuckPedia stated (`statedRelief`). Relief
+//   is the player's cap hit minus the team's space when he was placed, which
+//   isn't recorded, so it's never added into capSpaceEstimate. LTIR players
+//   still count against the cap, and the NHL's current-roster list leaves some
+//   out (Domi, Krug on 2026-11-08), so the estimate subtracts the cap hits of
+//   LTIR players who are on no roster (`ltir.offRosterCapHit`).
 
 export const CONTRACT_SELECT = [
   'contract_key', 'player_id', 'player_name', 'team', 'signed_at', 'contract_type', 'term_years',
@@ -102,6 +110,96 @@ export const DEAD_CAP_SELECT = 'team,kind,player_name,player_id,counterparty,sea
 // carries retained salary and buyouts only, from public posts and archived
 // pages). The app shows the estimate with these caveats, never as "cap space".
 export const ESTIMATE_NOTES = ['no_ltir', 'no_bonus_overages', 'no_recapture', 'partial_coverage'];
+// The notes once nhl_ltir is readable for the season: LTIR is then shown
+// beside the estimate (as a range), so 'no_ltir' no longer applies.
+export const ESTIMATE_NOTES_WITH_LTIR = ESTIMATE_NOTES.filter(n => n !== 'no_ltir');
+export const LTIR_SELECT = 'player_id,player_name,team,since,first_seen,active,stated_relief_usd,stated_at,stated_source,conflicts,flags';
+
+function splitList(v) {
+  return v ? String(v).split(';').filter(Boolean) : [];
+}
+
+// One active nhl_ltir row as the app sees it.
+export function shapeLtir(row) {
+  return {
+    playerId: row.player_id ?? null,
+    name: row.player_name,
+    team: row.team,
+    since: row.since || null,
+    firstSeen: row.first_seen || null,
+    statedRelief: row.stated_relief_usd ?? null,
+    statedAt: row.stated_at || null,
+    statedSource: row.stated_source || null,
+    conflicts: splitList(row.conflicts),
+    flags: splitList(row.flags),
+  };
+}
+
+// Active LTIR stints (one team, or every team), shaped; null when nhl_ltir
+// can't be read (the migration not run yet, a transient error): the caller
+// then keeps 'no_ltir' in the notes and says `ltir: null`.
+export async function readLtir(get, team = null) {
+  const scope = team ? `&team=eq.${team}` : '';
+  try {
+    const rows = await get(`nhl_ltir?select=${LTIR_SELECT}&active=is.true${scope}&order=team,first_seen`);
+    return (rows || []).map(shapeLtir);
+  } catch (e) {
+    console.warn(`LTIR unreadable for ${team || 'league'}: ${e.message}`);
+    return null;
+  }
+}
+
+// { players, capHitTotal, statedRelief, statedAt, offRosterCapHit } for one
+// team's active LTIR rows. `capHitOf(playerId)` gives the season's cap hit
+// (null when unknown) and `rosterOf(playerId)` the team whose NHL roster
+// lists him (null for none).
+//   capHitTotal      sum of the players' known cap hits: the most relief LTIR
+//                    could give (a team under the cap when it placed them gets
+//                    less); null when no player has a figure
+//   statedRelief     PuckPedia's stated relief, each post counted once (one
+//                    post placing two players states one figure); null when none
+//   statedAt         the latest stated relief's date
+//   offRosterCapHit  cap hits of LTIR players on no NHL roster, which the
+//                    roster cap hit therefore misses
+export function summarizeLtir(rows, { capHitOf, rosterOf }) {
+  const players = [];
+  let capHitTotal = null;
+  let offRosterCapHit = 0;
+  const statedBySource = new Map();
+  for (const r of rows || []) {
+    const capHit = r.playerId != null ? capHitOf(r.playerId) : null;
+    const roster = r.playerId != null ? rosterOf(r.playerId) : null;
+    if (capHit != null) {
+      capHitTotal = (capHitTotal || 0) + capHit;
+      if (!roster) offRosterCapHit += capHit;
+    }
+    if (r.statedRelief != null) {
+      const key = r.statedSource || `${r.playerId}|${r.statedAt}`;
+      const prev = statedBySource.get(key);
+      if (!prev || (r.statedAt || '') > (prev.statedAt || '')) statedBySource.set(key, r);
+    }
+    players.push({
+      playerId: r.playerId,
+      name: r.name,
+      capHit,
+      since: r.since,
+      firstSeen: r.firstSeen,
+      onRoster: roster != null,
+      statedRelief: r.statedRelief,
+      statedAt: r.statedAt,
+      conflicts: r.conflicts,
+    });
+  }
+  players.sort((a, b) => (b.capHit || 0) - (a.capHit || 0) || String(a.name).localeCompare(String(b.name)));
+  const stated = [...statedBySource.values()];
+  return {
+    players,
+    capHitTotal,
+    statedRelief: stated.length ? stated.reduce((s, r) => s + r.statedRelief, 0) : null,
+    statedAt: stated.reduce((m, r) => (r.statedAt && (!m || r.statedAt > m) ? r.statedAt : m), null),
+    offRosterCapHit,
+  };
+}
 
 // Dataset tiers, best first. A-C are official sources (club release,
 // NHL.com, ESPN wire); D-E are reported (PuckPedia posts, archived
@@ -376,11 +474,15 @@ export function shapeCapLimits(capRows, currentSeason) {
 //   summary  { rosterCapHit, rosterCount, rosterWithFigure, offRosterCount,
 //              capLimits, expiring: { ufa, rfa, unknown } }
 //   unavailable  true when there is nothing to show (no rows at all)
-export async function buildTeamContracts({ get, getAll, team, season, roster }) {
+export async function buildTeamContracts({ get, getAll, team, season, roster, currentSeason = null }) {
   const players = rosterPlayers(roster);
   const rosterIds = players.map(p => p.id);
+  // LTIR is a "now" fact: only the current season's view carries it (the caller names it).
+  const ltirRows = currentSeason && season === currentSeason ? await readLtir(get, team) : null;
+  const ltirIds = (ltirRows || []).map(r => r.playerId).filter(id => id != null && !rosterIds.includes(id));
   const spanFilter = `start_season=lte.${season}&end_season=gte.${season}`;
-  const scope = rosterIds.length ? `or=(team.eq.${team},player_id.${inList(rosterIds)})` : `team=eq.${team}`;
+  const scopeIds = [...rosterIds, ...ltirIds];
+  const scope = scopeIds.length ? `or=(team.eq.${team},player_id.${inList(scopeIds)})` : `team=eq.${team}`;
   const contracts = await readContracts(getAll, `&${scope}&${spanFilter}&order=contract_key`);
 
   const byPlayer = new Map();
@@ -436,7 +538,17 @@ export async function buildTeamContracts({ get, getAll, team, season, roster }) 
   const capLimits = capLimitsFor(capRows, season);
   const rosterCapHit = withFigure.reduce((s, r) => s + r.capHit, 0);
   const rosterKnown = rosterIds.length > 0;
-  const estimate = rosterKnown ? capSpaceEstimate(capLimits?.ceiling, rosterCapHit, deadCap?.total) : null;
+  const capHitByPlayer = new Map(rows.map(r => [r.playerId, r.capHit]));
+  const ltir = ltirRows
+    ? summarizeLtir(ltirRows, {
+      capHitOf: id => capHitByPlayer.get(id) ?? null,
+      // the team roster is all this route reads; an LTIR player off it counts as on no roster
+      rosterOf: id => (rosterById.has(id) ? team : null),
+    })
+    : null;
+  const estimate = rosterKnown
+    ? capSpaceEstimate(capLimits?.ceiling, rosterCapHit + (ltir?.offRosterCapHit || 0), deadCap?.total)
+    : null;
   const summary = {
     rosterCapHit,
     rosterCount: players.length,
@@ -447,7 +559,8 @@ export async function buildTeamContracts({ get, getAll, team, season, roster }) 
     expiring: expiringCounts(rosterKnown ? rosterRows : rows),
     deadCap,
     capSpaceEstimate: estimate,
-    estimateNotes: estimate != null ? ESTIMATE_NOTES : null,
+    estimateNotes: estimate != null ? (ltir ? ESTIMATE_NOTES_WITH_LTIR : ESTIMATE_NOTES) : null,
+    ltir,
   };
 
   return {
@@ -603,10 +716,17 @@ export async function buildLeaguePlayers({ get, getAll, season, rosters = {} }) 
 // size, `rosterWithFigure` how many have a public cap hit, `expiring` the
 // roster deals ending after the season, `offRosterCount` the deals the
 // team signed whose player is on no NHL roster (minors, loans), by
-// signing team. Still not cap space (no retained salary, buyouts, LTIR).
+// signing team. `capSpaceEstimate` and `ltir` as in /contracts' summary.
 // Returns { season, basis: 'roster', asOf, capLimits, teamsKnown, teams, unavailable }.
-export async function buildLeagueRosterSummary({ get, getAll, season, rosters = {} }) {
+export async function buildLeagueRosterSummary({ get, getAll, season, rosters = {}, currentSeason = null }) {
   const league = await buildLeaguePlayers({ get, getAll, season, rosters });
+  const ltirRows = currentSeason && season === currentSeason ? await readLtir(get) : null;
+  const ltirByTeam = new Map();
+  for (const r of ltirRows || []) {
+    if (!ltirByTeam.has(r.team)) ltirByTeam.set(r.team, []);
+    ltirByTeam.get(r.team).push(r);
+  }
+  const leagueById = new Map(league.players.map(p => [p.playerId, p]));
   const teams = new Map();
   for (const [abbr, roster] of Object.entries(rosters)) {
     if (!roster) continue;
@@ -637,7 +757,14 @@ export async function buildLeagueRosterSummary({ get, getAll, season, rosters = 
   }
   for (const t of teams.values()) {
     t.deadCap = deadCapRows ? summarizeDeadCap(deadByTeam.get(t.team)).total : null;
-    t.capSpaceEstimate = capSpaceEstimate(league.capLimits?.ceiling, t.rosterCapHit, t.deadCap);
+    t.ltir = ltirRows
+      ? summarizeLtir(ltirByTeam.get(t.team), {
+        capHitOf: id => leagueById.get(id)?.capHit ?? null,
+        rosterOf: id => (leagueById.get(id)?.onRoster ? leagueById.get(id).currentTeam : null),
+      })
+      : null;
+    t.capSpaceEstimate = capSpaceEstimate(
+      league.capLimits?.ceiling, t.rosterCapHit + (t.ltir?.offRosterCapHit || 0), t.deadCap);
   }
   return {
     season,
@@ -646,7 +773,8 @@ export async function buildLeagueRosterSummary({ get, getAll, season, rosters = 
     capLimits: league.capLimits,
     teamsKnown: league.teamsKnown,
     deadCapKnown: deadCapRows != null,
-    estimateNotes: deadCapRows ? ESTIMATE_NOTES : null,
+    ltirKnown: ltirRows != null,
+    estimateNotes: deadCapRows ? (ltirRows ? ESTIMATE_NOTES_WITH_LTIR : ESTIMATE_NOTES) : null,
     teams: [...teams.values()].sort((a, b) => b.rosterCapHit - a.rosterCapHit || a.team.localeCompare(b.team)),
     unavailable: league.unavailable,
   };
