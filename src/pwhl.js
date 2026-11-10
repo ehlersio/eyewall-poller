@@ -101,7 +101,7 @@ export const PWHL_TEAM_CODES = {
 export const PWHL_TEAM_NAMES = {
   1: 'Boston Fleet', 2: 'Minnesota Frost', 3: 'Montréal Victoire', 4: 'New York Sirens',
   5: 'Ottawa Charge', 6: 'Toronto Sceptres', 8: 'Seattle Torrent', 9: 'Vancouver Goldeneyes',
-  10: 'PWHL Detroit', 11: 'PWHL Hamilton', 12: 'PWHL Las Vegas', 13: 'PWHL San Jose',
+  10: 'Detroit Clutch', 11: 'Hamilton Havoc', 12: 'Vegas Vanguards', 13: 'San Jose Sea Lions',
 };
 const PWHL_ID_BY_ABBR = Object.fromEntries(Object.entries(PWHL_TEAM_CODES).map(([id, abbr]) => [abbr, Number(id)]));
 
