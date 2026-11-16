@@ -25,6 +25,7 @@ import { handleAHL, fetchAHLNews, pollAHL, AHL_TEAM_CODES, AHL_HISTORICAL_TEAM_I
 import { handleECHL, ECHL_TEAM_CODES, ECHL_HISTORICAL_TEAM_IDS, fetchECHLNews, pollECHL } from './echl.js';
 import { corsHeaders, json, kvGet, kvPut, cachedJson, errorJson, sbError, badRequest, unauthorized, sbHeaders, SB_URL, SB_ANON, verifyAdminUser, flushAlertLog, sbParam, sbRowsIfTable, secretMatches, readPollSecret, withParamErrors, withHttpCache } from './shared.js';
 import { handleOddsRankings } from './leagueOddsRankings.js';
+import { handlePublicData } from './publicData.js';
 import { handleOps, trackCron, checkCronHealth, readCronHealth, readOpsHealth, OPS_SUBS_KEY } from './ops.js';
 import { maybeDispatchWorkflows } from './dispatch.js';
 import { getSeasonsConfig, refreshSeasonsCache, getAllPWHLSeasonTypes, getAllPWHLSeasons, getAllAHLSeasons, getAllECHLSeasons, resolveNHLSeason } from './seasons.js';
@@ -595,6 +596,11 @@ async function routeRequest(request, env, ctx) {
     if (res) return res;
     return errorJson(404, { error: 'Not found' });
   }
+
+  // League-wide reads for the public API (eyewall-api): /config/teams,
+  // /win-probs, /playoff-odds/league. See publicData.js.
+  const publicData = await handlePublicData(request, env, url);
+  if (publicData) return publicData;
 
   // Playoff odds and power rankings for PWHL/AHL/ECHL (C10/C12): one
   // definition for the three leagues, ahead of their own handlers.
