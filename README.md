@@ -703,6 +703,7 @@ So `/standings`' L10/streak, `/lastgame` and every other `game_state=eq.Final` r
 
 - [eyewallanalytics](https://github.com/ehlersio/eyewallanalytics) — React/Vite web app (Cloudflare Pages) and the Capacitor iOS app (`ios/`: native push, the Live Activity widget's `GameActivityAttributes.swift`)
 - [eyewall-pipeline](https://github.com/ehlersio/eyewall-pipeline) — Python data pipeline (GitHub Actions; its daily workflows and social posts are dispatched on time by this Worker — see [Pipeline scheduling](#pipeline-scheduling))
+- [eyewall-api](https://github.com/ehlersio/eyewall-api) — the public API at [api.eyewallanalytics.com](https://api.eyewallanalytics.com/docs) (OpenAPI 3.1): EyeWall's own models for other apps, read from this Worker over a Service Binding through `publicData.js`'s league-wide routes and the existing read routes
 - [react-hockey-rink](https://github.com/ehlersio/react-hockey-rink) — the rink/shot-map library (its `SHOT_AREAS`/`shotArea` define the NHL shot areas the app bins `/pwhl/league-goalie-shots` into, and name the areas `/nhl/edge/goalie` returns)
 
 ---
