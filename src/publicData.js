@@ -17,6 +17,11 @@
 //     { league, season, runDate, stale, teams: [row] } -- every team's row
 //     from the latest nightly run (playoff_odds / {league}_playoff_odds).
 //     1hr KV.
+//   GET /nhl/power-rankings/league[?season=]
+//     { season, runDate, teams: [{ team, rank, prior_rank }] } -- every
+//     team from the latest power_rankings_narratives run (eyewall-pipeline's
+//     power_rankings.py), the league-wide view the per-team /power-rankings
+//     doesn't give. Narratives stay on the per-team route. 1hr KV.
 //
 // A missing table or a failed read answers the empty shape with
 // `unavailable: true`, uncached, like leagueOddsRankings.js.
@@ -146,9 +151,32 @@ async function leaguePlayoffOdds(env, league, url) {
   });
 }
 
+async function nhlPowerRankingsLeague(env, url) {
+  const season = sbParam(url.searchParams.get('season'), { type: 'int', name: 'season' });
+  const empty = { season: season ? Number(season) : null, runDate: null, teams: [] };
+  return cachedJson(env, `public:nhl-power-rankings:${season || 'latest'}`, ODDS_TTL, async () => {
+    try {
+      const bySeason = season ? `&season=eq.${season}` : '';
+      const [run] = await rows(`power_rankings_narratives?select=season,generated_date${bySeason}&order=generated_date.desc&limit=1`);
+      if (!run) return json(empty);
+      const teams = await rows(
+        `power_rankings_narratives?select=team,rank,prior_rank&season=eq.${run.season}` +
+        `&generated_date=eq.${run.generated_date}&order=rank.asc&limit=100`
+      );
+      if (!teams.length) return json(empty);
+      return { season: Number(run.season), runDate: run.generated_date, teams };
+    } catch (e) {
+      if (!(e instanceof ReadFailed)) throw e;
+      console.warn(`[nhl] league power-rankings unavailable: ${e.message}`);
+      return json({ ...empty, unavailable: true });
+    }
+  });
+}
+
 // The Response for one of the routes above, or null for any other path.
 export async function handlePublicData(request, env, url) {
   const route = url.pathname;
+  if (request.method === 'GET' && route === '/nhl/power-rankings/league') return nhlPowerRankingsLeague(env, url);
   if (request.method !== 'GET' ||
       (route !== '/config/teams' && route !== '/win-probs' && route !== '/playoff-odds/league')) {
     return null;
