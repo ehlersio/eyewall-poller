@@ -50,12 +50,12 @@ const RANKINGS_HISTORY = 28;
 const RANKINGS_LIMIT_MAX = 100;
 export const ODDS_STALE_HOURS = 48;
 
-const ODDS_BASE_COLUMNS = 'season_id,team_id,run_date,make_playoffs_pct,win_division_pct,' +
+export const ODDS_BASE_COLUMNS ='season_id,team_id,run_date,make_playoffs_pct,win_division_pct,' +
   'proj_points_p10,proj_points_p50,proj_points_p90,current_points,games_remaining,sims,format';
 // games_played (eyewall-pipeline#217, P15) comes from an owner-run
 // migration that may land after this deploys: until then PostgREST answers
 // 400 for the unknown column, and the read is retried once without it.
-const ODDS_COLUMNS = `${ODDS_BASE_COLUMNS},games_played`;
+export const ODDS_COLUMNS =`${ODDS_BASE_COLUMNS},games_played`;
 
 // run_date is the pipeline's America/New_York date; noon UTC keeps the age
 // from flipping on time zones.
