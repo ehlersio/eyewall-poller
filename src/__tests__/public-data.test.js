@@ -175,3 +175,36 @@ describe('GET /playoff-odds/league', () => {
     expect((await (await get('/playoff-odds/league?league=nhl')).json()).stale).toBe(true)
   })
 })
+
+describe('GET /nhl/power-rankings/league', () => {
+  it('every team from the latest run, best first', async () => {
+    const env = makeEnv()
+    mockSupabase([
+      { match: 'power_rankings_narratives?select=season,generated_date', rows: [{ season: 20262027, generated_date: '2026-11-16' }] },
+      { match: 'power_rankings_narratives?select=team,rank,prior_rank', rows: [
+        { team: 'CAR', rank: 1, prior_rank: 1 }, { team: 'COL', rank: 2, prior_rank: 3 },
+      ] },
+    ])
+    const res = await get('/nhl/power-rankings/league', env)
+    expect(await res.json()).toEqual({
+      season: 20262027, runDate: '2026-11-16',
+      teams: [{ team: 'CAR', rank: 1, prior_rank: 1 }, { team: 'COL', rank: 2, prior_rank: 3 }],
+    })
+    expect(urls()[1]).toContain('season=eq.20262027&generated_date=eq.2026-11-16')
+    expect(env.CACHE._store.has('public:nhl-power-rankings:latest')).toBe(true)
+  })
+
+  it('a season filter, and no run: empty, uncached', async () => {
+    const env = makeEnv()
+    mockSupabase([])
+    const body = await (await get('/nhl/power-rankings/league?season=20212022', env)).json()
+    expect(body).toEqual({ season: 20212022, runDate: null, teams: [] })
+    expect(urls()[0]).toContain('season=eq.20212022')
+    expect(env.CACHE._store.size).toBe(0)
+  })
+
+  it('a failed read answers unavailable', async () => {
+    mockSupabase([{ match: 'power_rankings_narratives', status: 500, rows: [] }])
+    expect((await (await get('/nhl/power-rankings/league')).json()).unavailable).toBe(true)
+  })
+})
