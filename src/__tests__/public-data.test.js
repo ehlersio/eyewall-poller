@@ -208,3 +208,69 @@ describe('GET /nhl/power-rankings/league', () => {
     expect((await (await get('/nhl/power-rankings/league')).json()).unavailable).toBe(true)
   })
 })
+
+describe('GET /game-shot-xg', () => {
+  const nhlRow = (gameId, team, situation = 'all') => ({
+    game_id: gameId, season: 20262027, game_type: 2, game_date: '2026-11-18', team,
+    opponent: team === 'NJD' ? 'MTL' : 'NJD', is_home: team === 'MTL', situation,
+    attempts: 48, goals: 2, xg: 3.888, model: 'logistic-2026-11-18', updated_at: '2026-11-19T09:00:00Z',
+  })
+
+  it('NHL by date reads game_shot_xg (never game_xg) and caches', async () => {
+    const env = makeEnv()
+    mockSupabase([{ match: 'game_shot_xg?', rows: [nhlRow(2026020345, 'MTL'), nhlRow(2026020345, 'NJD')] }])
+    const res = await get('/game-shot-xg?league=nhl&date=2026-11-18', env)
+    const body = await res.json()
+    expect(body.rows).toHaveLength(2)
+    expect(body.season).toBe(20262027)
+    expect(urls()[0]).toContain('/rest/v1/game_shot_xg?')
+    expect(urls()[0]).toContain('game_date=eq.2026-11-18')
+    expect(urls().some(u => u.includes('/rest/v1/game_xg?'))).toBe(false)
+    expect(env.CACHE._store.has('public:game-shot-xg:nhl:2026-11-18')).toBe(true)
+  })
+
+  it('HockeyTech by gameId reads {league}_game_shot_xg', async () => {
+    mockSupabase([{ match: 'pwhl_game_shot_xg?', rows: [{ game_id: 210, season_id: 8, team_id: 1 }] }])
+    const res = await get('/game-shot-xg?league=pwhl&gameId=210')
+    expect((await res.json()).rows).toHaveLength(1)
+    expect(urls()[0]).toContain('/rest/v1/pwhl_game_shot_xg?')
+    expect(urls()[0]).toContain('game_id=eq.210')
+  })
+
+  it('a season pages past 1,000 rows in a fixed order', async () => {
+    const page = n => Array.from({ length: n }, (_, i) => nhlRow(2026020000 + i, 'CAR'))
+    mockSupabase([{ match: 'game_shot_xg?', rows: u => (u.includes('offset=0') ? page(1000) : page(7)) }])
+    const body = await (await get('/game-shot-xg?league=nhl&season=20262027')).json()
+    expect(body.rows).toHaveLength(1007)
+    expect(urls()).toHaveLength(2)
+    expect(urls()[0]).toContain('order=game_id.asc,team.asc,situation.asc')
+    expect(urls()[1]).toContain('offset=1000')
+  })
+
+  it('season=latest resolves the newest season in the table', async () => {
+    mockSupabase([
+      { match: 'select=season_id&order=season_id.desc', rows: [{ season_id: 94 }] },
+      { match: 'ahl_game_shot_xg?select=game_id', rows: [{ game_id: 1, season_id: 94, team_id: 5 }] },
+    ])
+    const body = await (await get('/game-shot-xg?league=ahl&season=latest')).json()
+    expect(body.season).toBe(94)
+    expect(urls()[1]).toContain('season_id=eq.94')
+  })
+
+  it('empty answers are not cached; failures say unavailable', async () => {
+    const env = makeEnv()
+    mockSupabase([])
+    expect(await (await get('/game-shot-xg?league=echl&date=2026-11-18', env)).json())
+      .toEqual({ league: 'echl', season: null, rows: [] })
+    mockSupabase([{ match: 'game_shot_xg', status: 503, rows: [] }])
+    expect((await (await get('/game-shot-xg?league=nhl&date=2026-11-17', env)).json()).unavailable).toBe(true)
+    expect(env.CACHE._store.size).toBe(0)
+  })
+
+  it('400 without a selector or with bad values', async () => {
+    expect((await get('/game-shot-xg?league=nhl')).status).toBe(400)
+    expect((await get('/game-shot-xg?league=nhl&date=yesterday')).status).toBe(400)
+    expect((await get('/game-shot-xg?league=nhl&season=2026-27')).status).toBe(400)
+    expect((await get('/game-shot-xg?league=khl&date=2026-11-18')).status).toBe(400)
+  })
+})
