@@ -598,7 +598,7 @@ async function routeRequest(request, env, ctx) {
   }
 
   // League-wide reads for the public API (eyewall-api): /config/teams,
-  // /win-probs, /playoff-odds/league. See publicData.js.
+  // /win-probs, /playoff-odds/league, /game-shot-xg. See publicData.js.
   const publicData = await handlePublicData(request, env, url);
   if (publicData) return publicData;
 

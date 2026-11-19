@@ -22,6 +22,14 @@
 //     team from the latest power_rankings_narratives run (eyewall-pipeline's
 //     power_rankings.py), the league-wide view the per-team /power-rankings
 //     doesn't give. Narratives stay on the per-team route. 1hr KV.
+//   GET /game-shot-xg?league=...&date=YYYY-MM-DD | &gameId=N | &season=N|latest
+//     { league, season, rows: [row] } -- each team's xG per game from
+//     EyeWall's own shot models (eyewall-pipeline's game_shot_xg.py):
+//     game_shot_xg for the NHL (rows per team for situation 'all' and
+//     '5v5'), {league}_game_shot_xg for the others (one row per team).
+//     `season` (NHL season or HockeyTech season id, or `latest`) pages past
+//     PostgREST's 1,000-row cap for the bulk files. Never MoneyPuck's
+//     game_xg. 1hr KV; empty answers aren't cached.
 //
 // A missing table or a failed read answers the empty shape with
 // `unavailable: true`, uncached, like leagueOddsRankings.js.
@@ -39,6 +47,8 @@ export const PUBLIC_LEAGUES = ['nhl', 'pwhl', 'ahl', 'echl'];
 const WIN_PROBS_TTL = 1800;
 const ODDS_TTL = 3600;
 const TEAMS_MAX_AGE = 3600;
+const SHOT_XG_TTL = 3600;
+const PAGE = 1000;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const NHL_ODDS_COLUMNS = 'team,season,run_date,playoff_pct,division_pct,proj_points,points_p10,points_p90,' +
@@ -47,6 +57,11 @@ const NHL_WIN_PROB_COLUMNS = 'game_id,game_date,game_type,season,home_team,away_
   'home_rating,away_rating,home_win_prob,run_date';
 const HT_WIN_PROB_COLUMNS = 'game_id,season_id,game_date,home_team_id,away_team_id,' +
   'home_rating,away_rating,home_win_prob,run_date';
+
+const NHL_SHOT_XG_COLUMNS = 'game_id,season,game_type,game_date,team,opponent,is_home,situation,' +
+  'attempts,goals,xg,model,updated_at';
+const HT_SHOT_XG_COLUMNS = 'game_id,season_id,season_type,game_date,team_id,opponent_id,is_home,' +
+  'attempts,goals,xg,model,updated_at';
 
 class ReadFailed extends Error {}
 
@@ -173,17 +188,72 @@ async function nhlPowerRankingsLeague(env, url) {
   });
 }
 
+// Every row of a filtered read, paged in a fixed order (`path` has its
+// select, filter and order; limit/offset are added here).
+async function allRows(path, maxPages = 20) {
+  const out = [];
+  for (let page = 0; page < maxPages; page++) {
+    const batch = await rows(`${path}&limit=${PAGE}&offset=${page * PAGE}`);
+    out.push(...batch);
+    if (batch.length < PAGE) return out;
+  }
+  throw new ReadFailed(`more than ${maxPages * PAGE} rows`);
+}
+
+async function gameShotXg(env, league, url) {
+  const rawDate = url.searchParams.get('date');
+  const gameId = sbParam(url.searchParams.get('gameId'), { type: 'int', name: 'gameId' });
+  const rawSeason = url.searchParams.get('season');
+  const latest = rawSeason === 'latest';
+  const season = latest ? null : sbParam(rawSeason, { type: 'int', name: 'season' });
+  if (rawDate && !DATE_RE.test(rawDate)) return badRequest('date must be YYYY-MM-DD');
+  if (!rawDate && !gameId && !season && !latest) return badRequest('date, gameId or season required');
+  const nhl = league === 'nhl';
+  const tableName = nhl ? 'game_shot_xg' : `${league}_game_shot_xg`;
+  const cols = nhl ? NHL_SHOT_XG_COLUMNS : HT_SHOT_XG_COLUMNS;
+  const seasonCol = nhl ? 'season' : 'season_id';
+  const order = nhl ? 'game_id.asc,team.asc,situation.asc' : 'game_id.asc,team_id.asc';
+  const key = gameId ? `g${gameId}` : rawDate ? rawDate : `s${latest ? 'latest' : season}`;
+  const empty = { league, season: season ? Number(season) : null, rows: [] };
+
+  return cachedJson(env, `public:game-shot-xg:${league}:${key}`, SHOT_XG_TTL, async () => {
+    try {
+      let filter;
+      let resolvedSeason = season ? Number(season) : null;
+      if (gameId) filter = `game_id=eq.${gameId}`;
+      else if (rawDate) filter = `game_date=eq.${rawDate}`;
+      else {
+        if (latest) {
+          const [top] = await rows(`${tableName}?select=${seasonCol}&order=${seasonCol}.desc&limit=1`);
+          if (!top) return json(empty, { maxAge: 0 });
+          resolvedSeason = Number(top[seasonCol]);
+        }
+        filter = `${seasonCol}=eq.${resolvedSeason}`;
+      }
+      const found = await allRows(`${tableName}?select=${cols}&${filter}&order=${order}`);
+      if (!found.length) return json({ ...empty, season: resolvedSeason }, { maxAge: 0 });
+      return { league, season: resolvedSeason ?? Number(found[0][seasonCol]), rows: found };
+    } catch (e) {
+      if (!(e instanceof ReadFailed)) throw e;
+      console.warn(`[${league}] game-shot-xg unavailable: ${e.message}`);
+      return json({ ...empty, unavailable: true });
+    }
+  });
+}
+
 // The Response for one of the routes above, or null for any other path.
 export async function handlePublicData(request, env, url) {
   const route = url.pathname;
   if (request.method === 'GET' && route === '/nhl/power-rankings/league') return nhlPowerRankingsLeague(env, url);
   if (request.method !== 'GET' ||
-      (route !== '/config/teams' && route !== '/win-probs' && route !== '/playoff-odds/league')) {
+      (route !== '/config/teams' && route !== '/win-probs' && route !== '/playoff-odds/league' &&
+        route !== '/game-shot-xg')) {
     return null;
   }
   const league = leagueParam(url);
   if (!league) return badRequest(`league must be one of ${PUBLIC_LEAGUES.join(', ')}`);
   if (route === '/config/teams') return json({ league, teams: leagueTeams(league) }, { maxAge: TEAMS_MAX_AGE });
   if (route === '/win-probs') return winProbs(env, league, url);
+  if (route === '/game-shot-xg') return gameShotXg(env, league, url);
   return leaguePlayoffOdds(env, league, url);
 }
