@@ -2452,14 +2452,28 @@ async function handleNHLRoutes(request, env, ctx, url) {
         'games_played,war,rapm,rapm_toi_min,ev_off_pct,xgf_per60,xga_per60,hdca_per60,' +
         'goals_per60,a1_per60,pp_icetime,pk_icetime,game_score';
 
+      // rapm_off/rapm_def: the stint RAPM design's offence and defence
+      // (eyewall-pipeline rapm_stints.py, 2026-11-20). They come from an
+      // owner-run migration (docs/sql/2026-11-20_rapm_off_def.sql); until it
+      // has run PostgREST rejects the select, so the read is retried without
+      // them and the rows carry none.
+      const OFF_DEF = ',rapm_off,rapm_def';
+
       // Paged: 2025-26 has 939 skaters with WAR, a season or two from the
       // 1,000-row cap that would silently drop the rest from the Stats tab.
-      async function fetchAnalytics(forSeason) {
+      async function fetchAnalyticsWith(forSeason, extra) {
         const [rows, poRows] = await Promise.all([
-          sbAllRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.2&war=not.is.null&select=${ANA_COLS}&order=player_id.asc`),
-          sbAllRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.3&select=${PO_COLS}&order=player_id.asc`).catch(() => []),
+          sbAllRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.2&war=not.is.null&select=${ANA_COLS}${extra}&order=player_id.asc`),
+          sbAllRowsOrThrow(`player_seasons?season=eq.${forSeason}&game_type=eq.3&select=${PO_COLS}${extra}&order=player_id.asc`).catch(() => []),
         ]);
         return { rows, poRows };
+      }
+      async function fetchAnalytics(forSeason) {
+        try {
+          return await fetchAnalyticsWith(forSeason, OFF_DEF);
+        } catch {
+          return fetchAnalyticsWith(forSeason, '');
+        }
       }
 
       let rows, poRows;
