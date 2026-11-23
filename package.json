@@ -14,7 +14,7 @@
     "@eslint/js": "^10.0.1",
     "eslint": "^10.15.0",
     "vitest": "^5.1.0",
-    "wrangler": "^4.161.0"
+    "wrangler": "^4.165.0"
   },
   "allowScripts": {
     "esbuild": false,
